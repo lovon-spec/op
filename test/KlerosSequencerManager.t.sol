@@ -33,6 +33,9 @@ contract KlerosSequencerManagerTest is Test {
     event GuardianSet(address indexed newGuardian);
 
     function setUp() public {
+        // Set a reasonable block timestamp to avoid underflow in constructor
+        vm.warp(EPOCH_DURATION + 1);
+
         // Deploy mocks
         systemConfig = new MockSystemConfig();
         curate = new MockCurate();
@@ -376,8 +379,13 @@ contract KlerosSequencerManagerTest is Test {
         curate.setClearingRequested(manager.itemIDFor(charlie));
         manager.syncRemoveSequencer(charlie);
 
-        // currentIndex should wrap to 0
-        assertEq(manager.currentIndex(), 0);
+        // currentIndex should reset to max (meaning next rotation starts from 0)
+        assertEq(manager.currentIndex(), type(uint256).max);
+
+        // Verify next rotation selects alice (index 0)
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        manager.rotateSequencer();
+        assertEq(manager.currentSequencer(), alice);
     }
 
     // ============ Guardian Tests ============

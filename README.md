@@ -74,6 +74,52 @@ forge build
 forge test
 ```
 
+## Local Demo
+
+Run a complete demonstration of the sequencer rotation lifecycle on a local Anvil testnet:
+
+### Quick Start
+
+```bash
+# Terminal 1: Start Anvil
+anvil --port 8546
+
+# Terminal 2: Run the demo script
+./script/run_demo.sh
+```
+
+### Manual Demo
+
+```bash
+# Start Anvil
+anvil --port 8546
+
+# Deploy contracts with test sequencers
+forge script script/DeployLocal.s.sol:DeployLocal --rpc-url http://127.0.0.1:8546 --broadcast
+
+# Check current sequencer
+cast call <MANAGER_ADDRESS> "currentSequencer()(address)" --rpc-url http://127.0.0.1:8546
+
+# Wait for epoch (60 seconds by default) and rotate
+cast send <MANAGER_ADDRESS> "rotateSequencer()" --rpc-url http://127.0.0.1:8546 --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+```
+
+### Simulated Demo (Fast)
+
+Run the complete lifecycle in simulation mode (no waiting for epochs):
+
+```bash
+forge script script/Demo.s.sol:Demo --rpc-url http://127.0.0.1:8546 -vvvv
+```
+
+This demonstrates:
+1. Contract deployment
+2. Sequencer registration in Curate
+3. Syncing sequencers to manager
+4. Epoch-based rotation
+5. Challenge and removal of misbehaving sequencer
+6. Guardian pause/unpause
+
 ## Deployment
 
 1. Deploy a Kleros Curate Classic TCR with your constitution parameters
@@ -153,6 +199,35 @@ The "boot-on-challenge" behavior is intentionally conservative. Potential mitiga
 - If active set becomes empty, rotation emits `RotationSkippedNoValidSequencer`
 - Contract self-cleans invalid entries during rotation
 - Guardian can pause in emergencies
+
+## OP Stack Integration
+
+The KlerosSequencerManager is designed to integrate with the OP Stack by controlling the `SystemConfig.batcherHash`. Here's how it works with the OP Stack components:
+
+### How It Integrates
+
+1. **op-batcher**: The batch submitter reads `batcherHash` from `SystemConfig` to determine which address is authorized to submit batches. When `KlerosSequencerManager.rotateSequencer()` is called, it updates this hash to point to the new authorized sequencer.
+
+2. **op-node**: The derivation pipeline validates that batch transactions come from the address specified in `batcherHash`. Only batches from the currently authorized sequencer are considered canonical.
+
+3. **No Client Modifications**: This design works with standard OP Stack clients. The `KlerosSequencerManager` only modifies L1 contract state that the clients already read.
+
+### Deployment with OP Stack
+
+1. Deploy your OP Stack chain with standard `SystemConfig`
+2. Deploy `KlerosSequencerManager` with the `SystemConfig` address
+3. Transfer `SystemConfig` ownership to `KlerosSequencerManager`
+4. Configure your op-batcher instances with the sequencer private keys
+5. Register each sequencer address in the Kleros Curate registry
+6. Set up a keeper to call `rotateSequencer()` each epoch
+
+### Epoch-Based Rotation
+
+Each epoch (configurable, e.g., 1 hour), a keeper calls `rotateSequencer()`:
+- The manager selects the next valid sequencer in round-robin order
+- Updates `SystemConfig.batcherHash` to the new sequencer's address
+- The new sequencer's op-batcher can now submit canonical batches
+- Previous sequencer's batches are no longer accepted by derivation
 
 ## Constitution Example
 

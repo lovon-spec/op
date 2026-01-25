@@ -159,8 +159,19 @@ contract KlerosSequencerManager {
         guardian = _guardian;
         emit GuardianSet(_guardian);
 
+        // Initialize currentIndex to max so first rotation selects index 0
+        // (max + 1) % len = 0 due to overflow wrapping
+        currentIndex = type(uint256).max;
+
         // Allow immediate first rotation if set is populated.
-        lastRotationTimestamp = block.timestamp - _epochDuration;
+        // Use unchecked to handle case where block.timestamp < _epochDuration
+        unchecked {
+            if (block.timestamp >= _epochDuration) {
+                lastRotationTimestamp = block.timestamp - _epochDuration;
+            } else {
+                lastRotationTimestamp = 0;
+            }
+        }
     }
 
     // ============ Modifiers ============
@@ -250,6 +261,8 @@ contract KlerosSequencerManager {
      */
     function currentSequencer() external view returns (address) {
         if (activeSequencers.length == 0) return address(0);
+        // Handle case where no rotation has happened yet (currentIndex == max)
+        if (currentIndex >= activeSequencers.length) return address(0);
         return activeSequencers[currentIndex];
     }
 
@@ -321,7 +334,11 @@ contract KlerosSequencerManager {
         // Bounded search for a valid sequencer
         while (checks < initialLen && activeSequencers.length > 0) {
             uint256 len = activeSequencers.length;
-            uint256 candidateIndex = (currentIndex + 1) % len;
+            uint256 candidateIndex;
+            // Use unchecked to handle overflow when currentIndex is max
+            unchecked {
+                candidateIndex = (currentIndex + 1) % len;
+            }
             address candidate = activeSequencers[candidateIndex];
 
             if (isRegisteredInRegistry(candidate)) {
@@ -368,7 +385,8 @@ contract KlerosSequencerManager {
         uint256 lastIdx = activeSequencers.length - 1;
 
         // If removing an element before currentIndex, shift currentIndex left
-        if (idx < currentIndex) {
+        // But only if currentIndex is within bounds (not max from initialization)
+        if (currentIndex < activeSequencers.length && idx < currentIndex) {
             currentIndex -= 1;
         }
 
@@ -385,9 +403,9 @@ contract KlerosSequencerManager {
 
         // Reset currentIndex if array is empty or index is out of bounds
         if (activeSequencers.length == 0) {
-            currentIndex = 0;
+            currentIndex = type(uint256).max;
         } else if (currentIndex >= activeSequencers.length) {
-            currentIndex = 0;
+            currentIndex = type(uint256).max;
         }
 
         emit SequencerRemoved(sequencer);
