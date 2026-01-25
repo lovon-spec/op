@@ -9,6 +9,9 @@ import {ICurate} from "../../src/interfaces/ICurate.sol";
  * @dev Simulates the core functionality needed for testing the sequencer manager:
  *      - Item registration and status tracking
  *      - Status transitions (Absent -> Registered, Registered -> ClearingRequested, etc.)
+ *
+ * For the Constitutional L2, operators are registered as tuples (batcher, unsafeSigner).
+ * Use registerOperatorDirectly() for convenient operator registration in tests.
  */
 contract MockCurate is ICurate {
     struct Item {
@@ -43,6 +46,57 @@ contract MockCurate is ICurate {
     function setItemStatus(bytes32 _itemID, Status _status) external {
         items[_itemID].status = _status;
         emit ItemStatusChanged(_itemID, _status);
+    }
+
+    /**
+     * @notice Registers an operator tuple directly (helper for testing).
+     * @param batcher The batcher address.
+     * @param unsafeSigner The unsafe block signer address.
+     */
+    function registerOperatorDirectly(address batcher, address unsafeSigner) external {
+        bytes memory data = abi.encode(batcher, unsafeSigner);
+        bytes32 itemID = keccak256(abi.encodePacked(data));
+        require(items[itemID].status == Status.Absent, "Operator already exists");
+
+        items[itemID] = Item({data: data, status: Status.Registered, numberOfRequests: 1});
+        itemList.push(itemID);
+
+        emit ItemAdded(itemID, data);
+        emit ItemStatusChanged(itemID, Status.Registered);
+    }
+
+    /**
+     * @notice Sets clearing requested for an operator (simulates challenge).
+     * @param batcher The batcher address.
+     * @param unsafeSigner The unsafe block signer address.
+     */
+    function setOperatorClearingRequested(address batcher, address unsafeSigner) external {
+        bytes memory data = abi.encode(batcher, unsafeSigner);
+        bytes32 itemID = keccak256(abi.encodePacked(data));
+        require(items[itemID].status == Status.Registered, "Operator not registered");
+
+        items[itemID].status = Status.ClearingRequested;
+        items[itemID].numberOfRequests++;
+        emit ItemStatusChanged(itemID, Status.ClearingRequested);
+    }
+
+    /**
+     * @notice Removes an operator (sets to Absent).
+     * @param batcher The batcher address.
+     * @param unsafeSigner The unsafe block signer address.
+     */
+    function removeOperatorDirectly(address batcher, address unsafeSigner) external {
+        bytes memory data = abi.encode(batcher, unsafeSigner);
+        bytes32 itemID = keccak256(abi.encodePacked(data));
+        items[itemID].status = Status.Absent;
+        emit ItemStatusChanged(itemID, Status.Absent);
+    }
+
+    /**
+     * @notice Helper to compute operator item ID.
+     */
+    function operatorItemId(address batcher, address unsafeSigner) external pure returns (bytes32) {
+        return keccak256(abi.encodePacked(abi.encode(batcher, unsafeSigner)));
     }
 
     /**

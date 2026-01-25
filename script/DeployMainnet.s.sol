@@ -11,6 +11,12 @@ import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
  * IMPORTANT: This deploys to mainnet with real value at stake.
  * Double-check all parameters before deploying.
  *
+ * CRITICAL: Operators are tuples of (batcher, unsafeSigner). OP Stack requires:
+ *   1. batcher - EOA that posts batches to L1 (sets SystemConfig.batcherHash)
+ *   2. unsafeSigner - Key that signs unsafe blocks on P2P (sets SystemConfig.unsafeBlockSigner)
+ *
+ * Both keys are rotated atomically to prevent half-rotated states.
+ *
  * Usage:
  *   source .env.mainnet
  *   forge script script/DeployMainnet.s.sol:DeployMainnet \
@@ -46,9 +52,9 @@ contract DeployMainnet is Script {
         address guardian = vm.envAddress("GUARDIAN");
 
         console2.log("");
-        console2.log("╔══════════════════════════════════════════════════════════════╗");
-        console2.log("║        MAINNET DEPLOYMENT - CONSTITUTIONAL L2                 ║");
-        console2.log("╚══════════════════════════════════════════════════════════════╝");
+        console2.log("================================================================");
+        console2.log("       MAINNET DEPLOYMENT - CONSTITUTIONAL L2                   ");
+        console2.log("================================================================");
         console2.log("");
         console2.log("Configuration:");
         console2.log("  Registry (Kleros Curate):", registry);
@@ -70,9 +76,10 @@ contract DeployMainnet is Script {
         console2.log("");
         console2.log("IMPORTANT: Verify the following before proceeding:");
         console2.log("  1. Registry is a valid Kleros Curate TCR with correct policy");
-        console2.log("  2. SystemConfig is the correct OP Stack contract");
-        console2.log("  3. Guardian is a secure multisig (not an EOA)");
-        console2.log("  4. Epoch duration is appropriate for your use case");
+        console2.log("  2. TCR item type is tuple (address batcher, address unsafeSigner)");
+        console2.log("  3. SystemConfig is the correct OP Stack contract");
+        console2.log("  4. Guardian is a secure multisig (not an EOA)");
+        console2.log("  5. Epoch duration is appropriate for your use case");
         console2.log("");
 
         vm.startBroadcast();
@@ -87,9 +94,9 @@ contract DeployMainnet is Script {
         vm.stopBroadcast();
 
         console2.log("");
-        console2.log("╔══════════════════════════════════════════════════════════════╗");
-        console2.log("║                    DEPLOYMENT COMPLETE                        ║");
-        console2.log("╚══════════════════════════════════════════════════════════════╝");
+        console2.log("================================================================");
+        console2.log("                   DEPLOYMENT COMPLETE                          ");
+        console2.log("================================================================");
         console2.log("");
         console2.log("KlerosSequencerManager:", address(manager));
         console2.log("");
@@ -106,16 +113,22 @@ contract DeployMainnet is Script {
         console2.log("");
         console2.log("3. REGISTER OPERATORS in Kleros Curate:");
         console2.log("   - Visit https://curate.kleros.io/");
-        console2.log("   - Submit operator addresses with required deposit");
+        console2.log("   - Submit operator TUPLES: (batcher, unsafeSigner)");
+        console2.log("   - Item data format: abi.encode(batcher, unsafeSigner)");
         console2.log("   - Wait for challenge period to pass");
         console2.log("");
         console2.log("4. SYNC OPERATORS to the manager:");
         console2.log("   cast send", address(manager));
-        console2.log('     "syncAddSequencer(address)" <operator>');
+        console2.log('     "syncAddOperator(address,address)" <batcher> <unsafeSigner>');
         console2.log("");
         console2.log("5. SET UP KEEPER for automatic rotation:");
         console2.log("   - Use Gelato, Chainlink Automation, or custom keeper");
-        console2.log("   - Call rotateSequencer() every", epochDuration, "seconds");
+        console2.log("   - Call rotateOperator() every", epochDuration, "seconds");
+        console2.log("");
+        console2.log("6. DEPLOY SELF-ACTIVATION AGENTS:");
+        console2.log("   - Each operator must run a self-activation agent");
+        console2.log("   - Agent watches isCurrentOperator() and starts/stops services");
+        console2.log("   - See agent/ directory for reference implementation");
         console2.log("");
     }
 }

@@ -11,8 +11,6 @@
 #   docker compose up -d                    # Start L1 + deploy contracts
 #   docker compose --profile l2 up -d       # Also start L2 stack (experimental)
 
-version: "3.8"
-
 services:
   # =============================================================
   # L1: Local Ethereum (Anvil)

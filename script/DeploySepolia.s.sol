@@ -12,6 +12,9 @@ import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
  * - Kleros Curate on Sepolia (or mock if not available)
  * - OP Stack SystemConfig on Sepolia
  *
+ * IMPORTANT: Operators are now tuples of (batcher, unsafeSigner).
+ * Both keys must be registered together in Kleros Curate.
+ *
  * Usage:
  *   source .env.sepolia
  *   forge script script/DeploySepolia.s.sol:DeploySepolia \
@@ -76,12 +79,14 @@ contract DeploySepolia is Script {
         console2.log("1. Transfer SystemConfig ownership to the manager:");
         console2.log("   cast send", systemConfig, '"transferOwnership(address)"', address(manager));
         console2.log("");
-        console2.log("2. Register sequencer operators in Kleros Curate");
+        console2.log("2. Register operator tuples in Kleros Curate:");
+        console2.log("   Each operator must register BOTH their batcher and unsafeSigner addresses");
+        console2.log("   Registry item format: abi.encode(batcher, unsafeSigner)");
         console2.log("");
         console2.log("3. Sync registered operators to the manager:");
-        console2.log("   cast send", address(manager), '"syncAddSequencer(address)"', "<operator>");
+        console2.log("   cast send", address(manager), '"syncAddOperator(address,address)"', "<batcher> <unsafeSigner>");
         console2.log("");
-        console2.log("4. Set up a keeper to call rotateSequencer() each epoch");
+        console2.log("4. Set up a keeper to call rotateOperator() each epoch");
         console2.log("");
     }
 }
