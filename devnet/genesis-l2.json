@@ -16,12 +16,10 @@
     "grayGlacierBlock": 0,
     "mergeNetsplitBlock": 0,
     "shanghaiTime": 0,
-    "cancunTime": 0,
     "bedrockBlock": 0,
     "regolithTime": 0,
     "canyonTime": 0,
-    "ecotoneTime": 0,
-    "fjordTime": 0,
+    "deltaTime": 0,
     "optimism": {
       "eip1559Elasticity": 6,
       "eip1559Denominator": 50,
