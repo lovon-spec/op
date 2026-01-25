@@ -116,8 +116,10 @@ services:
         cp devnet/genesis-l2.json docker/config/genesis-l2.json
         echo "Copied L2 genesis"
 
-        # Generate L1 chain config for Anvil (required by op-node v1.16+)
-        # Must be in genesis.json format with "config" wrapper
+        # Generate L1 chain config for Anvil devnet ONLY (required by op-node v1.16+)
+        # NOTE: For Sepolia/mainnet deployment, remove --rollup.l1-chain-config flag
+        # from op-node - it will use the built-in superchain registry instead.
+        # Anvil doesn't support blobs, so we disable Cancun (no cancunTime field)
         printf '%s\n' '{' > docker/config/l1-chain-config.json
         printf '%s\n' '  "config": {' >> docker/config/l1-chain-config.json
         printf '%s\n' '    "chainId": 31337,' >> docker/config/l1-chain-config.json
@@ -131,14 +133,10 @@ services:
         printf '%s\n' '    "istanbulBlock": 0,' >> docker/config/l1-chain-config.json
         printf '%s\n' '    "berlinBlock": 0,' >> docker/config/l1-chain-config.json
         printf '%s\n' '    "londonBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '    "arrowGlacierBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '    "grayGlacierBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '    "mergeNetsplitBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '    "shanghaiTime": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '    "cancunTime": 0' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "shanghaiTime": 0' >> docker/config/l1-chain-config.json
         printf '%s\n' '  }' >> docker/config/l1-chain-config.json
         printf '%s\n' '}' >> docker/config/l1-chain-config.json
-        echo "Generated L1 chain config"
+        echo "Generated L1 chain config (Anvil devnet - pre-Cancun)"
 
         # Get L1 block info for rollup config
         sleep 2  # Wait for block to finalize
