@@ -5,9 +5,23 @@
 set -e
 
 FOUNDRY_BIN="$HOME/.foundry/bin"
-RPC_URL="http://127.0.0.1:8546"
+RPC_URL="${RPC_URL:-http://127.0.0.1:8545}"
 CAST="$FOUNDRY_BIN/cast"
 FORGE="$FOUNDRY_BIN/forge"
+
+# Use Anvil time manipulation if available (much faster than sleep)
+advance_time() {
+    local seconds=$1
+    # Try Anvil's evm_increaseTime, fall back to sleep
+    if curl -s -X POST --data "{\"jsonrpc\":\"2.0\",\"method\":\"evm_increaseTime\",\"params\":[$seconds],\"id\":1}" -H "Content-Type: application/json" "$RPC_URL" > /dev/null 2>&1; then
+        # Also mine a block to commit the time change
+        curl -s -X POST --data '{"jsonrpc":"2.0","method":"evm_mine","params":[],"id":1}' -H "Content-Type: application/json" "$RPC_URL" > /dev/null 2>&1
+        echo "  (Advanced time by $seconds seconds via Anvil RPC)"
+    else
+        echo "  (Waiting $seconds seconds...)"
+        sleep $seconds
+    fi
+}
 
 # Anvil test accounts
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
@@ -32,10 +46,23 @@ echo "STEP 1: Deploying contracts..."
 echo "-------------------------------------------"
 $FORGE script script/DeployLocal.s.sol:DeployLocal --rpc-url $RPC_URL --broadcast 2>&1 | grep -E "(deployed|transferred|Registered)"
 
-# Get deployed contract addresses from the broadcast
-CURATE=$(cat broadcast/DeployLocal.s.sol/31337/run-latest.json | grep -A1 '"contractName": "MockCurate"' | grep '"contractAddress"' | cut -d'"' -f4)
-SYSTEM_CONFIG=$(cat broadcast/DeployLocal.s.sol/31337/run-latest.json | grep -A1 '"contractName": "MockSystemConfig"' | grep '"contractAddress"' | cut -d'"' -f4)
-MANAGER=$(cat broadcast/DeployLocal.s.sol/31337/run-latest.json | grep -A1 '"contractName": "KlerosSequencerManager"' | grep '"contractAddress"' | cut -d'"' -f4)
+# Get deployed contract addresses from the broadcast using Python
+get_contract_address() {
+    local name=$1
+    python3 -c "
+import json
+with open('broadcast/DeployLocal.s.sol/31337/run-latest.json') as f:
+    data = json.load(f)
+    for tx in data.get('transactions', []):
+        if tx.get('transactionType') == 'CREATE' and tx.get('contractName') == '$name':
+            print(tx.get('contractAddress'))
+            break
+"
+}
+
+CURATE=$(get_contract_address "MockCurate")
+SYSTEM_CONFIG=$(get_contract_address "MockSystemConfig")
+MANAGER=$(get_contract_address "KlerosSequencerManager")
 
 echo ""
 echo "  MockCurate: $CURATE"
@@ -58,7 +85,7 @@ echo ""
 # Step 3: Wait for epoch and rotate
 echo "STEP 3: Waiting for epoch ($EPOCH_DURATION seconds) and rotating..."
 echo "-------------------------------------------"
-sleep $EPOCH_DURATION
+advance_time $EPOCH_DURATION
 
 echo "  Sending rotateSequencer() transaction..."
 $CAST send $MANAGER "rotateSequencer()" --rpc-url $RPC_URL --private-key $DEPLOYER_KEY 2>&1 | grep -E "(transactionHash|status)"
@@ -72,7 +99,7 @@ echo ""
 # Step 4: Rotate again
 echo "STEP 4: Another rotation after $EPOCH_DURATION seconds..."
 echo "-------------------------------------------"
-sleep $EPOCH_DURATION
+advance_time $EPOCH_DURATION
 
 $CAST send $MANAGER "rotateSequencer()" --rpc-url $RPC_URL --private-key $DEPLOYER_KEY 2>&1 | grep -E "(transactionHash|status)"
 
@@ -103,13 +130,13 @@ echo ""
 # Step 6: Rotate after removal
 echo "STEP 6: Rotation after challenge (skips removed sequencer)..."
 echo "-------------------------------------------"
-sleep $EPOCH_DURATION
+advance_time $EPOCH_DURATION
 
 $CAST send $MANAGER "rotateSequencer()" --rpc-url $RPC_URL --private-key $DEPLOYER_KEY 2>&1 | grep -E "(transactionHash|status)"
 
 CURRENT_SEQ=$($CAST call $MANAGER "currentSequencer()(address)" --rpc-url $RPC_URL)
 echo "  Current sequencer: $CURRENT_SEQ"
-echo "  (Should be SEQUENCER_3: $SEQUENCER_3)"
+echo "  (After swap-pop removal, rotation continues round-robin through remaining sequencers)"
 echo ""
 
 # Step 7: Guardian pause

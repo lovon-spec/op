@@ -218,25 +218,30 @@ contract Demo is Script {
         console2.log("STEP 7: Rotation after challenge...");
         console2.log("-------------------------------------------");
 
+        // After SEQUENCER_2 removal via swap-pop:
+        // - activeSequencers = [SEQUENCER_1, SEQUENCER_3]
+        // - currentIndex still points to position where SEQUENCER_2 was (now SEQUENCER_3)
+
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
 
         vm.startBroadcast(DEPLOYER_KEY);
 
         console2.log("  Current sequencer before rotation:", manager.currentSequencer());
+        console2.log("  (This is SEQUENCER_3 which took SEQUENCER_2's position via swap-pop)");
 
         manager.rotateSequencer();
 
         console2.log("  >>> Rotation executed!");
         console2.log("  New current sequencer:", manager.currentSequencer());
-        console2.log("  Should be SEQUENCER_3 (skipped removed SEQUENCER_2):", SEQUENCER_3);
+        console2.log("  Should be SEQUENCER_1 (next in round-robin):", SEQUENCER_1);
 
-        // Wait and rotate again to show it wraps back to SEQUENCER_1
+        // Wait and rotate again to show it wraps back to SEQUENCER_3
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
         manager.rotateSequencer();
 
         console2.log("  >>> Another rotation...");
         console2.log("  Current sequencer:", manager.currentSequencer());
-        console2.log("  Should wrap back to SEQUENCER_1:", SEQUENCER_1);
+        console2.log("  Should be SEQUENCER_3:", SEQUENCER_3);
 
         vm.stopBroadcast();
         console2.log("");

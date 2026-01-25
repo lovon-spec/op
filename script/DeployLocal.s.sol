@@ -30,7 +30,7 @@ contract DeployLocal is Script {
     address constant SEQUENCER_3 = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
     address constant GUARDIAN = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65;
 
-    uint256 constant EPOCH_DURATION = 60; // 1 minute for testing
+    uint256 constant EPOCH_DURATION = 10; // 10 seconds for demo
 
     MockCurate public curate;
     MockSystemConfig public systemConfig;
