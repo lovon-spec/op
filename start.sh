@@ -79,8 +79,8 @@ wait_for_deployment() {
 }
 
 get_address() {
-    docker compose exec -T deployer cat /app/.deployments/addresses.json 2>/dev/null | \
-        python3 -c "import sys,json; print(json.load(sys.stdin).get('$1', ''))" 2>/dev/null || echo ""
+    # Read address from individual .address file (no Python/jq needed)
+    docker compose exec -T deployer cat /app/.deployments/"$1".address 2>/dev/null || echo ""
 }
 
 start_local() {

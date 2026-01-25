@@ -62,34 +62,45 @@ services:
           --private-key $$PRIVATE_KEY \
           --broadcast
 
-        # Extract and save addresses
+        # Extract and save addresses using shell (no Python needed)
         echo "=== Extracting contract addresses ==="
-        python3 << 'PYTHON'
-        import json
-        import os
+        mkdir -p .deployments
 
-        # Read deployment artifacts
-        with open('broadcast/DeployLocal.s.sol/31337/run-latest.json') as f:
-            data = json.load(f)
+        # Parse deployment JSON with grep/sed (works without jq/python)
+        DEPLOY_FILE="broadcast/DeployLocal.s.sol/31337/run-latest.json"
 
-        addresses = {}
-        for tx in data.get('transactions', []):
-            if tx.get('transactionType') == 'CREATE':
-                name = tx.get('contractName')
-                addr = tx.get('contractAddress')
-                if name and addr:
-                    addresses[name] = addr
-                    print(f"  {name}: {addr}")
+        # Extract contract names and addresses from CREATE transactions
+        # The JSON has format: "contractName": "Name", ... "contractAddress": "0x..."
+        echo "{" > .deployments/addresses.json
 
-        os.makedirs('.deployments', exist_ok=True)
-        with open('.deployments/addresses.json', 'w') as f:
-            json.dump(addresses, f, indent=2)
+        # Use awk to extract CREATE transactions and their details
+        awk '
+          /"transactionType"[[:space:]]*:[[:space:]]*"CREATE"/ { in_create=1 }
+          in_create && /"contractName"[[:space:]]*:/ {
+            gsub(/.*"contractName"[[:space:]]*:[[:space:]]*"/, "")
+            gsub(/".*/, "")
+            name=$0
+          }
+          in_create && /"contractAddress"[[:space:]]*:/ {
+            gsub(/.*"contractAddress"[[:space:]]*:[[:space:]]*"/, "")
+            gsub(/".*/, "")
+            addr=$0
+            if (name && addr) {
+              if (count > 0) printf ",\n" >> ".deployments/addresses.json"
+              printf "  \"%s\": \"%s\"", name, addr >> ".deployments/addresses.json"
+              # Also write individual address files
+              print addr > ".deployments/" name ".address"
+              printf "  %s: %s\n", name, addr
+              count++
+            }
+            in_create=0
+            name=""
+            addr=""
+          }
+        ' "$$DEPLOY_FILE"
 
-        # Also write individual files for shell scripts
-        for name, addr in addresses.items():
-            with open(f'.deployments/{name}.address', 'w') as f:
-                f.write(addr)
-        PYTHON
+        echo "" >> .deployments/addresses.json
+        echo "}" >> .deployments/addresses.json
 
         echo ""
         echo "=== Deployment Complete ==="
