@@ -134,13 +134,13 @@ services:
         printf '%s\n' '    "berlinBlock": 0,' >> docker/config/l1-chain-config.json
         printf '%s\n' '    "londonBlock": 0,' >> docker/config/l1-chain-config.json
         printf '%s\n' '    "shanghaiTime": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '    "cancunTime": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "cancunTime": 9999999999,' >> docker/config/l1-chain-config.json
         printf '%s\n' '    "blobSchedule": {' >> docker/config/l1-chain-config.json
         printf '%s\n' '      "cancun": {"target": 3, "max": 6}' >> docker/config/l1-chain-config.json
         printf '%s\n' '    }' >> docker/config/l1-chain-config.json
         printf '%s\n' '  }' >> docker/config/l1-chain-config.json
         printf '%s\n' '}' >> docker/config/l1-chain-config.json
-        echo "Generated L1 chain config (Anvil devnet with blob schedule)"
+        echo "Generated L1 chain config (Anvil devnet - pre-Cancun, no beacon needed)"
 
         # Get L1 block info for rollup config
         sleep 2  # Wait for block to finalize
