@@ -3,13 +3,14 @@
 # This provides a complete local development environment for the Constitutional L2.
 #
 # Quick Start:
-#   ./start.sh              # Start everything
+#   ./start.sh              # Start L1 + deploy contracts
+#   ./start.sh l2           # Start full L2 stack
 #   ./start.sh demo         # Run rotation demo
 #   ./start.sh stop         # Stop everything
 #
 # Manual usage:
 #   docker compose up -d                    # Start L1 + deploy contracts
-#   docker compose --profile l2 up -d       # Also start L2 stack (experimental)
+#   docker compose --profile l2 up -d       # Also start L2 stack
 
 services:
   # =============================================================
@@ -69,7 +70,6 @@ services:
         DEPLOY_FILE="broadcast/DeployLocal.s.sol/31337/run-latest.json"
 
         # Extract contract names and addresses from CREATE transactions
-        # The JSON has format: "contractName": "Name", ... "contractAddress": "0x..."
         echo "{" > .deployments/addresses.json
 
         # Use awk to extract CREATE transactions and their details
@@ -78,16 +78,15 @@ services:
           in_create && /"contractName"[[:space:]]*:/ {
             gsub(/.*"contractName"[[:space:]]*:[[:space:]]*"/, "")
             gsub(/".*/, "")
-            name=$0
+            name=$$0
           }
           in_create && /"contractAddress"[[:space:]]*:/ {
             gsub(/.*"contractAddress"[[:space:]]*:[[:space:]]*"/, "")
             gsub(/".*/, "")
-            addr=$0
+            addr=$$0
             if (name && addr) {
               if (count > 0) printf ",\n" >> ".deployments/addresses.json"
               printf "  \"%s\": \"%s\"", name, addr >> ".deployments/addresses.json"
-              # Also write individual address files
               print addr > ".deployments/" name ".address"
               printf "  %s: %s\n", name, addr
               count++
@@ -101,19 +100,86 @@ services:
         echo "" >> .deployments/addresses.json
         echo "}" >> .deployments/addresses.json
 
+        # Generate L2 configuration
+        echo ""
+        echo "=== Generating L2 Configuration ==="
+        mkdir -p docker/config
+
+        # Generate JWT secret
+        if [ ! -f docker/config/jwt.txt ]; then
+          head -c 32 /dev/urandom | xxd -p -c 32 > docker/config/jwt.txt
+          echo "Generated JWT secret"
+        fi
+
+        # Copy L2 genesis
+        cp devnet/genesis-l2.json docker/config/genesis-l2.json
+        echo "Copied L2 genesis"
+
+        # Get L1 block info for rollup config
+        sleep 2  # Wait for block to finalize
+        L1_BLOCK=$$(cast block-number --rpc-url $$L1_RPC)
+        L1_HASH=$$(cast block $$L1_BLOCK --rpc-url $$L1_RPC --json | grep -o '"hash":"0x[0-9a-fA-F]*"' | head -1 | cut -d'"' -f4)
+        L1_TIME=$$(cast block $$L1_BLOCK --rpc-url $$L1_RPC --json | grep -o '"timestamp":"0x[0-9a-fA-F]*"' | head -1 | cut -d'"' -f4)
+        L1_TIME_DEC=$$((L1_TIME))
+
+        SYSTEM_CONFIG=$$(cat .deployments/MockSystemConfig.address 2>/dev/null || echo "0x0000000000000000000000000000000000000000")
+        BATCHER=$$(cat .deployments/addresses.json | grep -o '"batcher_1"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+
+        # Generate rollup.json
+        cat > docker/config/rollup.json << ROLLUP
+        {
+          "genesis": {
+            "l1": {
+              "hash": "$$L1_HASH",
+              "number": $$L1_BLOCK
+            },
+            "l2": {
+              "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "number": 0
+            },
+            "l2_time": $$L1_TIME_DEC,
+            "system_config": {
+              "batcherAddr": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+              "overhead": "0x0000000000000000000000000000000000000000000000000000000000000834",
+              "scalar": "0x00000000000000000000000000000000000000000000000000000000000f4240",
+              "gasLimit": 30000000
+            }
+          },
+          "block_time": 2,
+          "max_sequencer_drift": 600,
+          "seq_window_size": 3600,
+          "channel_timeout": 300,
+          "l1_chain_id": 31337,
+          "l2_chain_id": 42069,
+          "regolith_time": 0,
+          "canyon_time": 0,
+          "delta_time": 0,
+          "ecotone_time": 0,
+          "fjord_time": 0,
+          "batch_inbox_address": "0xff00000000000000000000000000000000042069",
+          "deposit_contract_address": "0x0000000000000000000000000000000000000000",
+          "l1_system_config_address": "$$SYSTEM_CONFIG",
+          "protocol_versions_address": "0x0000000000000000000000000000000000000000"
+        }
+        ROLLUP
+        echo "Generated rollup.json"
+
         echo ""
         echo "=== Deployment Complete ==="
         echo ""
-        echo "Contract addresses saved to .deployments/"
-        echo ""
         echo "L1 RPC: http://localhost:8545"
+        echo "Contract addresses saved to .deployments/"
+        echo "L2 config saved to docker/config/"
+        echo ""
+        echo "To start L2:"
+        echo "  docker compose --profile l2 up -d"
         echo ""
 
         # Keep running so addresses are accessible
         tail -f /dev/null
 
   # =============================================================
-  # L2 Execution (op-geth) - Experimental
+  # L2 Execution (op-geth)
   # =============================================================
   op-geth:
     image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-geth:v1.101411.1
@@ -121,25 +187,25 @@ services:
     volumes:
       - op-geth-data:/data
       - ./docker/config:/config:ro
-      - jwt-secret:/jwt
-    environment:
-      - GETH_DATADIR=/data
     depends_on:
       - deployer
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        # Wait for config
+        set -e
+        echo "Waiting for L2 genesis config..."
         while [ ! -f /config/genesis-l2.json ]; do
-          echo "Waiting for L2 genesis..."
           sleep 2
         done
+        echo "Found genesis config"
 
-        # Initialize if needed
-        if [ ! -d /data/geth ]; then
+        # Initialize geth if needed
+        if [ ! -d /data/geth/chaindata ]; then
+          echo "Initializing op-geth..."
           geth init --datadir /data /config/genesis-l2.json
         fi
 
+        echo "Starting op-geth..."
         exec geth \
           --datadir /data \
           --http --http.addr 0.0.0.0 --http.port 8545 \
@@ -148,39 +214,48 @@ services:
           --ws --ws.addr 0.0.0.0 --ws.port 8546 \
           --ws.origins "*" --ws.api "debug,eth,txpool,net,engine" \
           --authrpc.addr 0.0.0.0 --authrpc.port 8551 \
-          --authrpc.vhosts "*" --authrpc.jwtsecret /jwt/jwt.txt \
+          --authrpc.vhosts "*" --authrpc.jwtsecret /config/jwt.txt \
           --syncmode full --nodiscover --maxpeers 0 \
           --networkid 42069 --gcmode archive \
           --rollup.disabletxpoolgossip
     ports:
       - "9545:8545"
       - "9546:8546"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8545"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
 
   # =============================================================
-  # L2 Consensus (op-node) - Experimental
+  # L2 Consensus (op-node)
   # =============================================================
   op-node:
     image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.10.1
     profiles: ["l2"]
     volumes:
       - ./docker/config:/config:ro
-      - jwt-secret:/jwt
     environment:
       - L1_RPC=http://l1:8545
     depends_on:
-      - op-geth
+      op-geth:
+        condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        set -e
+        echo "Waiting for rollup config..."
         while [ ! -f /config/rollup.json ]; do
-          echo "Waiting for rollup config..."
           sleep 2
         done
+        echo "Found rollup config"
 
+        echo "Starting op-node..."
         exec op-node \
           --l1 $$L1_RPC \
           --l2 http://op-geth:8551 \
-          --l2.jwt-secret /jwt/jwt.txt \
+          --l2.jwt-secret /config/jwt.txt \
           --rollup.config /config/rollup.json \
           --sequencer.enabled \
           --sequencer.l1-confs 0 \
@@ -191,7 +266,7 @@ services:
       - "9547:8547"
 
   # =============================================================
-  # Batcher (op-batcher) - Experimental
+  # Batcher (op-batcher)
   # =============================================================
   op-batcher:
     image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.10.1
@@ -200,13 +275,17 @@ services:
       - L1_RPC=http://l1:8545
       - L2_RPC=http://op-geth:8545
       - ROLLUP_RPC=http://op-node:8547
+      # Batcher private key (Account 1 from Anvil)
       - BATCHER_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
     depends_on:
       - op-node
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        sleep 10
+        echo "Waiting for op-node to be ready..."
+        sleep 15
+
+        echo "Starting op-batcher..."
         exec op-batcher \
           --l1-eth-rpc $$L1_RPC \
           --l2-eth-rpc $$L2_RPC \
@@ -220,4 +299,3 @@ services:
 
 volumes:
   op-geth-data:
-  jwt-secret:
