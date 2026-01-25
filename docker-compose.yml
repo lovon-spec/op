@@ -157,7 +157,12 @@ services:
         printf '%s\n' '  "batch_inbox_address": "0xfF00000000000000000000000000000000042069",' >> docker/config/rollup.json
         printf '%s\n' '  "deposit_contract_address": "0xDeaDDeAddeAdDeAdDEAdDeaDDeADDEAdDeAd0001",' >> docker/config/rollup.json
         printf '%s\n' "  \"l1_system_config_address\": \"$$SYSTEM_CONFIG\"," >> docker/config/rollup.json
-        printf '%s\n' '  "protocol_versions_address": "0x0000000000000000000000000000000000000000"' >> docker/config/rollup.json
+        printf '%s\n' '  "protocol_versions_address": "0x0000000000000000000000000000000000000000",' >> docker/config/rollup.json
+        printf '%s\n' '  "chain_op_config": {' >> docker/config/rollup.json
+        printf '%s\n' '    "eip1559Elasticity": 6,' >> docker/config/rollup.json
+        printf '%s\n' '    "eip1559Denominator": 50,' >> docker/config/rollup.json
+        printf '%s\n' '    "eip1559DenominatorCanyon": 250' >> docker/config/rollup.json
+        printf '%s\n' '  }' >> docker/config/rollup.json
         printf '%s\n' '}' >> docker/config/rollup.json
         echo "Generated rollup.json"
 
