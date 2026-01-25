@@ -29,10 +29,41 @@ cd op
 ./start.sh
 ```
 
-This starts a complete constitutional L2:
+This starts L1 with governance contracts:
 - **L1**: Local Anvil chain (localhost:8545)
 - **Governance**: KlerosSequencerManager with mock Kleros registry
 - **Operators**: 3 test operators registered and ready for rotation
+
+### Start Full L2 Stack
+
+To run the complete L2 with op-geth, op-node, and op-batcher:
+
+```bash
+./start.sh l2
+```
+
+This starts:
+| Service | URL | Description |
+|---------|-----|-------------|
+| L1 RPC | http://localhost:8545 | Anvil (chain ID: 31337) |
+| L2 RPC | http://localhost:9545 | op-geth (chain ID: 42069) |
+| L2 WS | ws://localhost:9546 | WebSocket endpoint |
+| Rollup RPC | http://localhost:9547 | op-node |
+
+### Send a Transaction on L2
+
+```bash
+# Check L2 is running
+cast chain-id --rpc-url http://localhost:9545
+
+# Send ETH on L2
+cast send --rpc-url http://localhost:9545 \
+  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+  --value 0.1ether 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+
+# Check L2 block number
+cast block-number --rpc-url http://localhost:9545
+```
 
 ### Try the Operator Rotation Demo
 
@@ -43,9 +74,10 @@ This starts a complete constitutional L2:
 ### View Status and Logs
 
 ```bash
-./start.sh status   # Show service status
-./start.sh logs     # Stream logs
+./start.sh status   # Show L1 and L2 status
+./start.sh logs     # Stream logs from all services
 ./start.sh stop     # Stop all services
+./start.sh clean    # Clean all data and start fresh
 ```
 
 ## Architecture
@@ -355,15 +387,22 @@ op/
 │       └── MockSystemConfig.sol      # Test SystemConfig mock
 ├── script/
 │   ├── DeployLocal.s.sol             # Local Anvil deployment
+│   ├── DeployL2.s.sol                # Full OP Stack L2 deployment
 │   ├── DeploySepolia.s.sol           # Sepolia deployment
-│   └── DeployMainnet.s.sol           # Mainnet deployment
+│   ├── DeployMainnet.s.sol           # Mainnet deployment
+│   └── Demo.s.sol                    # Interactive demo script
+├── devnet/
+│   ├── genesis-l2.json               # L2 genesis configuration
+│   └── generate-configs.sh           # Config generation helper
+├── docker/
+│   └── config/                       # Generated L2 configs (jwt, rollup.json)
 ├── agent/
 │   ├── self_activation_agent.py      # Reference agent implementation
 │   ├── config.example.yaml           # Agent configuration template
 │   ├── requirements.txt              # Python dependencies
 │   └── README.md                     # Agent documentation
-├── docker-compose.yml                # Full OP Stack setup
-├── start.sh                          # One-command startup
+├── docker-compose.yml                # Full OP Stack setup (L1 + L2)
+├── start.sh                          # One-command startup script
 ├── Makefile                          # Development commands
 ├── .env.example                      # Environment template
 ├── .env.sepolia.example              # Sepolia config template

@@ -41,7 +41,7 @@ contract DeployL2 is Script {
     uint64 constant L2_BLOCK_TIME = 2;
 
     // Batch inbox (standard OP Stack address format)
-    address constant BATCH_INBOX = 0xff00000000000000000000000000000000042069;
+    address constant BATCH_INBOX = 0xFf00000000000000000000000000000000042069;
 
     function run() external {
         uint256 deployerPrivateKey = vm.envOr(
