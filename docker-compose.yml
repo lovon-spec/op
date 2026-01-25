@@ -183,7 +183,7 @@ services:
   # L2 Execution (op-geth)
   # =============================================================
   op-geth:
-    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-geth:v1.101411.1
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-geth:latest
     profiles: ["l2"]
     volumes:
       - op-geth-data:/data
@@ -233,7 +233,7 @@ services:
   # L2 Consensus (op-node)
   # =============================================================
   op-node:
-    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.10.1
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:latest
     profiles: ["l2"]
     volumes:
       - ./docker/config:/config:ro
@@ -270,7 +270,7 @@ services:
   # Batcher (op-batcher)
   # =============================================================
   op-batcher:
-    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.10.1
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:latest
     profiles: ["l2"]
     environment:
       - L1_RPC=http://l1:8545
