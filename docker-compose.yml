@@ -116,6 +116,29 @@ services:
         cp devnet/genesis-l2.json docker/config/genesis-l2.json
         echo "Copied L2 genesis"
 
+        # Generate L1 chain config for Anvil (required by op-node v1.16+)
+        printf '%s\n' '{' > docker/config/l1-chain-config.json
+        printf '%s\n' '  "chainId": 31337,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "homesteadBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "eip150Block": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "eip155Block": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "eip158Block": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "byzantiumBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "constantinopleBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "petersburgBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "istanbulBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "berlinBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "londonBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "arrowGlacierBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "grayGlacierBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "mergeNetsplitBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "shanghaiTime": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "cancunTime": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "terminalTotalDifficulty": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "terminalTotalDifficultyPassed": true' >> docker/config/l1-chain-config.json
+        printf '%s\n' '}' >> docker/config/l1-chain-config.json
+        echo "Generated L1 chain config"
+
         # Get L1 block info for rollup config
         sleep 2  # Wait for block to finalize
         L1_BLOCK=$$(cast block-number --rpc-url $$L1_RPC)
@@ -298,10 +321,6 @@ services:
         echo ""
         echo "===================="
 
-        echo "=== op-node help (checking for chain spec flags) ==="
-        op-node --help 2>&1 | grep -i "chain\|spec\|genesis" || true
-        echo "==="
-
         echo "Starting op-node..."
         exec op-node \
           --l1 $$L1_RPC \
@@ -309,6 +328,7 @@ services:
           --l2 http://op-geth:8551 \
           --l2.jwt-secret /config/jwt.txt \
           --rollup.config /tmp/rollup.json \
+          --rollup.l1-chain-config /config/l1-chain-config.json \
           --override.ecotone 2281580442 \
           --override.fjord 2281580442 \
           --override.granite 2281580442 \
