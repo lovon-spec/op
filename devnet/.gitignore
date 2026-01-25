@@ -1,0 +1,10 @@
+# Exclude cloned repos (too large)
+optimism/
+op-geth/
+
+# Exclude runtime data
+data/
+logs/
+
+# Keep config
+!config/
