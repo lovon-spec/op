@@ -11,6 +11,8 @@
 #   ./start.sh status       # Show status
 #   ./start.sh demo         # Run rotation demo
 #   ./start.sh clean        # Clean all data and start fresh
+#   ./start.sh sepolia-fork # Test on forked Sepolia (no ETH needed)
+#   ./start.sh sepolia      # Deploy to real Sepolia (requires .env.sepolia)
 #
 
 set -e
@@ -45,6 +47,11 @@ print_usage() {
     echo "  status    Show current status"
     echo "  demo      Run sequencer rotation demo"
     echo "  clean     Clean all data and start fresh"
+    echo ""
+    echo "Sepolia Commands:"
+    echo "  sepolia-fork  Start forked Sepolia locally (no ETH needed)"
+    echo "  sepolia       Deploy to real Sepolia (requires .env.sepolia)"
+    echo ""
     echo "  help      Show this help message"
     echo ""
 }
@@ -387,6 +394,172 @@ run_demo() {
     echo ""
 }
 
+# =============================================================
+# Sepolia Functions
+# =============================================================
+
+COMPOSE_SEPOLIA="docker compose -f docker-compose.yml -f docker-compose.sepolia.yml"
+
+start_sepolia_fork() {
+    print_header
+    echo -e "${GREEN}Starting Constitutional L2 on forked Sepolia...${NC}"
+    echo -e "${YELLOW}(Local testing mode - no real ETH needed)${NC}"
+    echo ""
+
+    # Check for Sepolia RPC URL
+    local SEPOLIA_RPC="${SEPOLIA_RPC_URL:-https://rpc.sepolia.org}"
+    echo "Using Sepolia RPC: $SEPOLIA_RPC"
+    echo ""
+
+    # Start L1 (forked Sepolia) and deployer
+    echo "Step 1/3: Forking Sepolia and deploying contracts..."
+    SEPOLIA_RPC_URL="$SEPOLIA_RPC" $COMPOSE_SEPOLIA up -d l1 deployer
+
+    if ! wait_for_deployment; then
+        echo -e "${RED}Deployment failed. Check logs with: ./start.sh logs${NC}"
+        exit 1
+    fi
+
+    # Wait for L2 config
+    echo "Step 2/3: Waiting for L2 configuration..."
+    if ! wait_for_l2_config; then
+        echo -e "${RED}L2 config generation failed.${NC}"
+        exit 1
+    fi
+
+    # Start L2 services
+    echo "Step 3/3: Starting L2 services..."
+    SEPOLIA_RPC_URL="$SEPOLIA_RPC" $COMPOSE_SEPOLIA --profile l2 up -d
+
+    # Wait for L2
+    if ! wait_for_l2; then
+        echo -e "${YELLOW}L2 may still be starting. Check logs.${NC}"
+    fi
+
+    local MANAGER=$(get_address "KlerosSequencerManager")
+    local CURATE=$(get_address "MockCurate")
+    local SYSCONFIG=$(get_address "MockSystemConfig")
+
+    echo ""
+    echo -e "${GREEN}================================================================${NC}"
+    echo -e "${GREEN}  Constitutional L2 - Forked Sepolia is running!${NC}"
+    echo -e "${GREEN}================================================================${NC}"
+    echo ""
+    echo "Endpoints:"
+    echo "  L1 RPC:     http://localhost:8545  (forked Sepolia, chain ID: 11155111)"
+    echo "  L2 RPC:     http://localhost:9545  (op-geth, chain ID: 42069)"
+    echo "  L2 WS:      ws://localhost:9546"
+    echo "  Rollup RPC: http://localhost:9547  (op-node)"
+    echo ""
+    echo "Contracts (on forked Sepolia):"
+    echo "  KlerosSequencerManager: $MANAGER"
+    echo "  MockCurate:             $CURATE"
+    echo "  MockSystemConfig:       $SYSCONFIG"
+    echo ""
+    echo -e "${CYAN}This is a LOCAL FORK of Sepolia for testing.${NC}"
+    echo "Transactions are free but don't persist to real Sepolia."
+    echo ""
+    echo "To deploy to real Sepolia:"
+    echo "  1. Create .env.sepolia with your credentials"
+    echo "  2. Run: ./start.sh sepolia"
+    echo ""
+}
+
+start_sepolia_real() {
+    print_header
+    echo -e "${GREEN}Deploying Constitutional L2 to Sepolia...${NC}"
+    echo -e "${RED}(Real deployment - uses testnet ETH)${NC}"
+    echo ""
+
+    # Check for .env.sepolia
+    if [ ! -f ".env.sepolia" ]; then
+        echo -e "${RED}Error: .env.sepolia not found${NC}"
+        echo ""
+        echo "Create .env.sepolia with:"
+        echo "  SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY"
+        echo "  SEPOLIA_BEACON_URL=https://ethereum-sepolia-beacon-api.publicnode.com"
+        echo "  DEPLOYER_PRIVATE_KEY=0x...  (funded with ~0.5 SepoliaETH)"
+        echo "  SEQUENCER_PRIVATE_KEY=0x..."
+        echo "  BATCHER_PRIVATE_KEY=0x..."
+        echo ""
+        exit 1
+    fi
+
+    # Source the env file
+    set -a
+    source .env.sepolia
+    set +a
+
+    # Validate required vars
+    if [ -z "$SEPOLIA_RPC_URL" ] || [ -z "$DEPLOYER_PRIVATE_KEY" ]; then
+        echo -e "${RED}Error: Missing required variables in .env.sepolia${NC}"
+        echo "Required: SEPOLIA_RPC_URL, DEPLOYER_PRIVATE_KEY"
+        exit 1
+    fi
+
+    echo "Using Sepolia RPC: $SEPOLIA_RPC_URL"
+    echo ""
+
+    echo -e "${YELLOW}WARNING: This will deploy contracts to real Sepolia!${NC}"
+    echo "Press Ctrl+C to cancel, or wait 5 seconds to continue..."
+    sleep 5
+
+    # For real Sepolia, we need beacon for blobs
+    export USE_BEACON=true
+
+    # Start with real Sepolia config
+    echo "Step 1/3: Deploying contracts to Sepolia..."
+    $COMPOSE_SEPOLIA up -d l1 deployer
+
+    if ! wait_for_deployment; then
+        echo -e "${RED}Deployment failed. Check logs.${NC}"
+        exit 1
+    fi
+
+    echo "Step 2/3: Waiting for L2 configuration..."
+    if ! wait_for_l2_config; then
+        echo -e "${RED}L2 config generation failed.${NC}"
+        exit 1
+    fi
+
+    echo "Step 3/3: Starting L2 services..."
+    $COMPOSE_SEPOLIA --profile l2 up -d
+
+    if ! wait_for_l2; then
+        echo -e "${YELLOW}L2 may still be starting. Check logs.${NC}"
+    fi
+
+    local MANAGER=$(get_address "KlerosSequencerManager")
+
+    echo ""
+    echo -e "${GREEN}================================================================${NC}"
+    echo -e "${GREEN}  Constitutional L2 - Deployed to Sepolia!${NC}"
+    echo -e "${GREEN}================================================================${NC}"
+    echo ""
+    echo "Endpoints:"
+    echo "  L1 (Sepolia): $SEPOLIA_RPC_URL"
+    echo "  L2 RPC:       http://localhost:9545"
+    echo ""
+    echo "Contracts (on Sepolia):"
+    echo "  KlerosSequencerManager: $MANAGER"
+    echo ""
+    echo -e "${GREEN}Your L2 is now running on Sepolia!${NC}"
+    echo ""
+}
+
+stop_sepolia() {
+    echo "Stopping Sepolia services..."
+    $COMPOSE_SEPOLIA --profile l2 down
+    echo -e "${GREEN}All services stopped${NC}"
+}
+
+clean_sepolia() {
+    echo "Cleaning Sepolia data..."
+    $COMPOSE_SEPOLIA --profile l2 down -v
+    rm -rf .deployments docker/config/*.json docker/config/jwt.txt
+    echo -e "${GREEN}All Sepolia data cleaned${NC}"
+}
+
 # Main
 check_docker
 
@@ -411,6 +584,19 @@ case "${1:-local}" in
         ;;
     demo)
         run_demo
+        ;;
+    # Sepolia commands
+    sepolia-fork|fork)
+        start_sepolia_fork
+        ;;
+    sepolia)
+        start_sepolia_real
+        ;;
+    sepolia-stop)
+        stop_sepolia
+        ;;
+    sepolia-clean)
+        clean_sepolia
         ;;
     help|--help|-h)
         print_usage

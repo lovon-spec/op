@@ -1,0 +1,315 @@
+# Constitutional L2 - Sepolia Deployment
+#
+# This extends docker-compose.yml for Sepolia (testnet) deployment.
+#
+# MODES:
+#   1. Fork Mode (local testing, no ETH needed):
+#      ./start.sh sepolia-fork
+#
+#   2. Real Sepolia (requires funded wallet):
+#      Create .env.sepolia with your credentials, then:
+#      ./start.sh sepolia
+#
+# Required .env.sepolia for real deployment:
+#   SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+#   SEPOLIA_BEACON_URL=https://ethereum-sepolia-beacon-api.publicnode.com
+#   DEPLOYER_PRIVATE_KEY=0x...  (funded with ~0.5 SepoliaETH)
+#   SEQUENCER_PRIVATE_KEY=0x... (can be same as deployer for testing)
+#   BATCHER_PRIVATE_KEY=0x...   (can be same as deployer for testing)
+
+services:
+  # =============================================================
+  # L1: Sepolia (Fork or Real)
+  # =============================================================
+  l1:
+    image: ghcr.io/foundry-rs/foundry:latest
+    entrypoint: ["anvil"]
+    command:
+      - "--host=0.0.0.0"
+      - "--port=8545"
+      - "--fork-url=${SEPOLIA_RPC_URL:-https://rpc.sepolia.org}"
+      - "--fork-block-number=${FORK_BLOCK:-latest}"
+      - "--block-time=12"
+      - "--accounts=10"
+      - "--balance=10000"
+      # Anvil will use Sepolia's chain ID (11155111) when forking
+    ports:
+      - "8545:8545"
+    healthcheck:
+      test: ["CMD", "cast", "chain-id", "--rpc-url", "http://localhost:8545"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  # =============================================================
+  # Contract Deployer (Sepolia)
+  # =============================================================
+  deployer:
+    image: ghcr.io/foundry-rs/foundry:latest
+    working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      - L1_RPC=http://l1:8545
+      # Use provided key or default Anvil account (for fork mode)
+      - PRIVATE_KEY=${DEPLOYER_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
+      - L1_CHAIN_ID=11155111
+    depends_on:
+      l1:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "=== Building contracts ==="
+        forge build
+
+        echo "=== Deploying to Sepolia (or fork) ==="
+        forge script script/DeployLocal.s.sol:DeployLocal \
+          --rpc-url $$L1_RPC \
+          --private-key $$PRIVATE_KEY \
+          --broadcast
+
+        # Extract and save addresses
+        echo "=== Extracting contract addresses ==="
+        mkdir -p .deployments
+
+        # Find the correct deployment file (chain ID 11155111 for Sepolia)
+        DEPLOY_FILE="broadcast/DeployLocal.s.sol/$$L1_CHAIN_ID/run-latest.json"
+        if [ ! -f "$$DEPLOY_FILE" ]; then
+          echo "Deployment file not found at $$DEPLOY_FILE"
+          echo "Checking available files..."
+          ls -la broadcast/DeployLocal.s.sol/ || true
+          # Fallback to any chain ID
+          DEPLOY_FILE=$$(ls broadcast/DeployLocal.s.sol/*/run-latest.json 2>/dev/null | head -1)
+        fi
+        echo "Using deployment file: $$DEPLOY_FILE"
+
+        echo "{" > .deployments/addresses.json
+        awk '
+          /"transactionType"[[:space:]]*:[[:space:]]*"CREATE"/ { in_create=1 }
+          in_create && /"contractName"[[:space:]]*:/ {
+            gsub(/.*"contractName"[[:space:]]*:[[:space:]]*"/, "")
+            gsub(/".*/, "")
+            name=$$0
+          }
+          in_create && /"contractAddress"[[:space:]]*:/ {
+            gsub(/.*"contractAddress"[[:space:]]*:[[:space:]]*"/, "")
+            gsub(/".*/, "")
+            addr=$$0
+            if (name && addr) {
+              if (count > 0) printf ",\n" >> ".deployments/addresses.json"
+              printf "  \"%s\": \"%s\"", name, addr >> ".deployments/addresses.json"
+              print addr > ".deployments/" name ".address"
+              printf "  %s: %s\n", name, addr
+              count++
+            }
+            in_create=0
+            name=""
+            addr=""
+          }
+        ' "$$DEPLOY_FILE"
+        echo "" >> .deployments/addresses.json
+        echo "}" >> .deployments/addresses.json
+
+        # Generate L2 configuration
+        echo ""
+        echo "=== Generating L2 Configuration ==="
+        mkdir -p docker/config
+
+        # Generate JWT secret
+        if [ ! -f docker/config/jwt.txt ]; then
+          head -c 32 /dev/urandom | od -A n -t x1 | tr -d ' \n' > docker/config/jwt.txt
+          echo "" >> docker/config/jwt.txt
+          echo "Generated JWT secret"
+        fi
+
+        # Get L1 block info FIRST (needed for L2 genesis timestamp)
+        sleep 2
+        L1_BLOCK=$$(cast block-number --rpc-url $$L1_RPC)
+        L1_HASH=$$(cast block $$L1_BLOCK --rpc-url $$L1_RPC --json | grep -o '"hash":"0x[0-9a-fA-F]*"' | head -1 | cut -d'"' -f4)
+        L1_TIME=$$(cast block $$L1_BLOCK --rpc-url $$L1_RPC --json | grep -o '"timestamp":"0x[0-9a-fA-F]*"' | head -1 | cut -d'"' -f4)
+        L1_TIME_DEC=$$((L1_TIME))
+        echo "L1 origin: block $$L1_BLOCK, hash $$L1_HASH, time $$L1_TIME_DEC"
+
+        # Copy L2 genesis and update timestamp
+        cp devnet/genesis-l2.json docker/config/genesis-l2.json
+        L1_TIME_HEX=$$(printf '0x%x' $$L1_TIME_DEC)
+        sed -i "s/\"timestamp\":[[:space:]]*\"0x[0-9a-fA-F]*\"/\"timestamp\": \"$$L1_TIME_HEX\"/" docker/config/genesis-l2.json
+        echo "Updated L2 genesis timestamp to $$L1_TIME_HEX ($$L1_TIME_DEC)"
+
+        # For Sepolia fork, we still need L1 chain config since forked Anvil isn't in superchain registry
+        # Using Sepolia's actual fork times
+        printf '%s\n' '{' > docker/config/l1-chain-config.json
+        printf '%s\n' '  "config": {' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "chainId": 11155111,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "homesteadBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "eip150Block": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "eip155Block": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "eip158Block": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "byzantiumBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "constantinopleBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "petersburgBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "istanbulBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "berlinBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "londonBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "shanghaiTime": 1677557088,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "cancunTime": 1706655072,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "blobSchedule": {' >> docker/config/l1-chain-config.json
+        printf '%s\n' '      "cancun": {"target": 3, "max": 6}' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    }' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  }' >> docker/config/l1-chain-config.json
+        printf '%s\n' '}' >> docker/config/l1-chain-config.json
+        echo "Generated L1 chain config (Sepolia)"
+
+        SYSTEM_CONFIG=$$(cat .deployments/MockSystemConfig.address 2>/dev/null || echo "0x0000000000000000000000000000000000000000")
+
+        # Generate rollup.json for Sepolia
+        printf '%s\n' '{' > docker/config/rollup.json
+        printf '%s\n' '  "genesis": {' >> docker/config/rollup.json
+        printf '%s\n' '    "l1": {' >> docker/config/rollup.json
+        printf '%s\n' "      \"hash\": \"$$L1_HASH\"," >> docker/config/rollup.json
+        printf '%s\n' "      \"number\": $$L1_BLOCK" >> docker/config/rollup.json
+        printf '%s\n' '    },' >> docker/config/rollup.json
+        printf '%s\n' '    "l2": {' >> docker/config/rollup.json
+        printf '%s\n' '      "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",' >> docker/config/rollup.json
+        printf '%s\n' '      "number": 0' >> docker/config/rollup.json
+        printf '%s\n' '    },' >> docker/config/rollup.json
+        printf '%s\n' "    \"l2_time\": $$L1_TIME_DEC," >> docker/config/rollup.json
+        printf '%s\n' '    "system_config": {' >> docker/config/rollup.json
+        printf '%s\n' '      "batcherAddr": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",' >> docker/config/rollup.json
+        printf '%s\n' '      "overhead": "0x0000000000000000000000000000000000000000000000000000000000000834",' >> docker/config/rollup.json
+        printf '%s\n' '      "scalar": "0x00000000000000000000000000000000000000000000000000000000000f4240",' >> docker/config/rollup.json
+        printf '%s\n' '      "gasLimit": 30000000' >> docker/config/rollup.json
+        printf '%s\n' '    }' >> docker/config/rollup.json
+        printf '%s\n' '  },' >> docker/config/rollup.json
+        printf '%s\n' '  "block_time": 2,' >> docker/config/rollup.json
+        printf '%s\n' '  "max_sequencer_drift": 600,' >> docker/config/rollup.json
+        printf '%s\n' '  "seq_window_size": 3600,' >> docker/config/rollup.json
+        printf '%s\n' '  "channel_timeout": 300,' >> docker/config/rollup.json
+        printf '%s\n' '  "l1_chain_id": 11155111,' >> docker/config/rollup.json
+        printf '%s\n' '  "l2_chain_id": 42069,' >> docker/config/rollup.json
+        printf '%s\n' '  "regolith_time": 0,' >> docker/config/rollup.json
+        printf '%s\n' '  "canyon_time": 0,' >> docker/config/rollup.json
+        printf '%s\n' '  "delta_time": 0,' >> docker/config/rollup.json
+        printf '%s\n' '  "batch_inbox_address": "0xfF00000000000000000000000000000000042069",' >> docker/config/rollup.json
+        printf '%s\n' '  "deposit_contract_address": "0xDeaDDeAddeAdDeAdDEAdDeaDDeADDEAdDeAd0001",' >> docker/config/rollup.json
+        printf '%s\n' "  \"l1_system_config_address\": \"$$SYSTEM_CONFIG\"," >> docker/config/rollup.json
+        printf '%s\n' '  "protocol_versions_address": "0x0000000000000000000000000000000000000000",' >> docker/config/rollup.json
+        printf '%s\n' '  "chain_op_config": {' >> docker/config/rollup.json
+        printf '%s\n' '    "eip1559Elasticity": 6,' >> docker/config/rollup.json
+        printf '%s\n' '    "eip1559Denominator": 50,' >> docker/config/rollup.json
+        printf '%s\n' '    "eip1559DenominatorCanyon": 250' >> docker/config/rollup.json
+        printf '%s\n' '  }' >> docker/config/rollup.json
+        printf '%s\n' '}' >> docker/config/rollup.json
+        echo "Generated rollup.json (Sepolia)"
+
+        echo ""
+        echo "=== Sepolia Deployment Complete ==="
+        echo ""
+        echo "L1 RPC: http://localhost:8545 (forked Sepolia)"
+        echo "L1 Chain ID: 11155111"
+        echo "Contract addresses saved to .deployments/"
+        echo ""
+        echo "To start L2:"
+        echo "  docker compose -f docker-compose.yml -f docker-compose.sepolia.yml --profile l2 up -d"
+        echo ""
+
+        tail -f /dev/null
+
+  # =============================================================
+  # L2 Consensus (op-node) - Sepolia config
+  # =============================================================
+  op-node:
+    environment:
+      - L1_RPC=http://l1:8545
+      # For fork mode, still runs pre-ecotone since forked Anvil has no beacon
+      # For real Sepolia: set SEPOLIA_BEACON_URL and USE_BEACON=true
+      - USE_BEACON=${USE_BEACON:-false}
+      - L1_BEACON=${SEPOLIA_BEACON_URL:-}
+      - SEQUENCER_KEY=${SEQUENCER_PRIVATE_KEY:-0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a}
+    command:
+      - |
+        set -e
+        echo "Waiting for rollup config..."
+        while [ ! -f /config/rollup.json ]; do
+          sleep 2
+        done
+        echo "Found rollup config"
+
+        echo "Waiting for op-geth RPC..."
+        until wget -qO- http://op-geth:8545 -T 2 2>/dev/null; do
+          sleep 2
+        done
+
+        echo "Getting L2 genesis hash from op-geth..."
+        GENESIS_HASH=""
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          GENESIS_HASH=$$(wget -qO- --post-data='{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x0",false],"id":1}' \
+            --header='Content-Type: application/json' http://op-geth:8545 2>/dev/null | \
+            grep -o '"hash":"0x[0-9a-fA-F]*"' | head -1 | cut -d'"' -f4)
+          if [ -n "$$GENESIS_HASH" ] && [ "$$GENESIS_HASH" != "null" ]; then
+            break
+          fi
+          echo "Waiting for genesis hash (attempt $$i)..."
+          sleep 3
+        done
+
+        if [ -z "$$GENESIS_HASH" ]; then
+          echo "ERROR: Could not get L2 genesis hash"
+          exit 1
+        fi
+        echo "L2 Genesis Hash: $$GENESIS_HASH"
+
+        cp /config/rollup.json /tmp/rollup.json
+        sed -i 's|"hash"[[:space:]]*:[[:space:]]*"0x0\{64\}"|"hash": "'"$$GENESIS_HASH"'"|g' /tmp/rollup.json
+
+        echo "=== Rollup config ==="
+        cat /tmp/rollup.json
+        echo ""
+
+        echo "Starting op-node (Sepolia mode)..."
+
+        # Build command based on whether beacon is available
+        if [ "$$USE_BEACON" = "true" ] && [ -n "$$L1_BEACON" ]; then
+          echo "Using beacon API: $$L1_BEACON"
+          exec op-node \
+            --l1 $$L1_RPC \
+            --l1.trustrpc \
+            --l1.beacon $$L1_BEACON \
+            --l2 http://op-geth:8551 \
+            --l2.jwt-secret /config/jwt.txt \
+            --rollup.config /tmp/rollup.json \
+            --sequencer.enabled \
+            --sequencer.l1-confs 4 \
+            --p2p.disable \
+            --p2p.sequencer.key $$SEQUENCER_KEY \
+            --rpc.addr 0.0.0.0 --rpc.port 8547 \
+            --log.level info
+        else
+          echo "No beacon API - running pre-ecotone (fork mode)"
+          exec op-node \
+            --l1 $$L1_RPC \
+            --l1.trustrpc \
+            --l2 http://op-geth:8551 \
+            --l2.jwt-secret /config/jwt.txt \
+            --rollup.config /tmp/rollup.json \
+            --rollup.l1-chain-config /config/l1-chain-config.json \
+            --sequencer.enabled \
+            --sequencer.l1-confs 0 \
+            --p2p.disable \
+            --p2p.sequencer.key $$SEQUENCER_KEY \
+            --rpc.addr 0.0.0.0 --rpc.port 8547 \
+            --log.level info
+        fi
+
+  # =============================================================
+  # Batcher (op-batcher) - Sepolia config
+  # =============================================================
+  op-batcher:
+    environment:
+      - L1_RPC=http://l1:8545
+      - L2_RPC=http://op-geth:8545
+      - ROLLUP_RPC=http://op-node:8547
+      - BATCHER_PRIVATE_KEY=${BATCHER_PRIVATE_KEY:-0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d}
