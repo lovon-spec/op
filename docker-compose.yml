@@ -292,6 +292,7 @@ services:
           --l1 $$L1_RPC \
           --l2 http://op-geth:8551 \
           --l2.jwt-secret /config/jwt.txt \
+          --l2.genesis /config/genesis-l2.json \
           --rollup.config /tmp/rollup.json \
           --sequencer.enabled \
           --sequencer.l1-confs 0 \
