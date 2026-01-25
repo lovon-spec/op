@@ -135,9 +135,7 @@ services:
         printf '%s\n' '    "grayGlacierBlock": 0,' >> docker/config/l1-chain-config.json
         printf '%s\n' '    "mergeNetsplitBlock": 0,' >> docker/config/l1-chain-config.json
         printf '%s\n' '    "shanghaiTime": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '    "cancunTime": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '    "terminalTotalDifficulty": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '    "terminalTotalDifficultyPassed": true' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "cancunTime": 0' >> docker/config/l1-chain-config.json
         printf '%s\n' '  }' >> docker/config/l1-chain-config.json
         printf '%s\n' '}' >> docker/config/l1-chain-config.json
         echo "Generated L1 chain config"
