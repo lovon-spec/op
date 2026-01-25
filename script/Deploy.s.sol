@@ -6,13 +6,16 @@ import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
 
 /**
  * @title Deploy
- * @notice Deployment script for KlerosSequencerManager.
+ * @notice Deployment script for KlerosSequencerManager - LOCAL ONLY.
+ *
+ * IMPORTANT: This script is restricted to local Anvil deployment (chain ID 31337).
+ * Do NOT deploy to L1 mainnet or testnets like Sepolia.
  *
  * Usage:
+ *   anvil &
  *   forge script script/Deploy.s.sol:Deploy \
- *     --rpc-url $RPC_URL \
+ *     --rpc-url http://127.0.0.1:8545 \
  *     --broadcast \
- *     --verify \
  *     -vvvv
  *
  * Required environment variables:
@@ -23,7 +26,16 @@ import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
  *   - GUARDIAN: Address of guardian (can be 0x0 to disable)
  */
 contract Deploy is Script {
+    // Only allow deployment on local Anvil (chain ID 31337)
+    uint256 constant LOCAL_CHAIN_ID = 31337;
+
     function run() external {
+        // Enforce local-only deployment
+        require(
+            block.chainid == LOCAL_CHAIN_ID,
+            "Deploy: This script is restricted to local Anvil (chain ID 31337). Do NOT deploy to mainnet or testnets."
+        );
+
         // Load configuration from environment
         address registry = vm.envAddress("REGISTRY");
         address systemConfig = vm.envAddress("SYSTEM_CONFIG");

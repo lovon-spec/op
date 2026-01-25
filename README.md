@@ -1,6 +1,8 @@
-# Kleros-Governed Decentralized Sequencer (OP Stack)
+# Kleros-Governed Decentralized Sequencer (OP Stack) - Local Demo
 
-A decentralized sequencer management system for OP Stack chains, using Kleros Curate Classic for operator curation and subjective dispute resolution.
+A proof-of-concept decentralized sequencer management system for OP Stack chains, using Kleros Curate Classic for operator curation and subjective dispute resolution.
+
+**IMPORTANT: This project is for local testing and demonstration only. All deployment scripts are restricted to local Anvil (chain ID 31337) and will reject deployment to L1 mainnet or testnets like Sepolia.**
 
 ## Overview
 
@@ -120,38 +122,28 @@ This demonstrates:
 5. Challenge and removal of misbehaving sequencer
 6. Guardian pause/unpause
 
-## Deployment
+## Deployment (Local Only)
 
-1. Deploy a Kleros Curate Classic TCR with your constitution parameters
-2. Deploy `KlerosSequencerManager`:
+**IMPORTANT**: This project is designed for local testing and demonstration only. All deployments should be done on a local Anvil instance (chain ID 31337). The deployment scripts include safeguards that prevent deployment to L1 mainnet or testnets like Sepolia.
+
+### Local Deployment with DeployLocal
+
+For local testing, use the `DeployLocal` script which deploys mock contracts:
 
 ```bash
-export PRIVATE_KEY=<your-private-key>
-export REGISTRY=<kleros-curate-address>
-export SYSTEM_CONFIG=<op-stack-system-config-address>
-export EPOCH_DURATION=3600  # 1 hour
-export GUARDIAN=<guardian-address>
+# Start Anvil
+anvil --port 8546
 
-forge script script/Deploy.s.sol:Deploy \
-  --rpc-url $RPC_URL \
-  --broadcast \
-  --verify \
-  -vvvv
+# Deploy all contracts with test sequencers
+forge script script/DeployLocal.s.sol:DeployLocal --rpc-url http://127.0.0.1:8546 --broadcast
 ```
 
-3. Transfer ownership of OP Stack `SystemConfig` to the deployed manager:
-
-```solidity
-systemConfig.transferOwnership(managerAddress);
-```
-
-4. Add operators:
-
-```solidity
-manager.syncAddSequencer(operatorAddress);
-```
-
-5. Set up a keeper to call `rotateSequencer()` each epoch
+This automatically:
+1. Deploys MockCurate (simulating Kleros registry)
+2. Deploys MockSystemConfig (simulating OP Stack SystemConfig)
+3. Deploys KlerosSequencerManager
+4. Registers 3 test sequencers
+5. Transfers ownership and performs first rotation
 
 ## Key Functions
 
@@ -212,14 +204,14 @@ The KlerosSequencerManager is designed to integrate with the OP Stack by control
 
 3. **No Client Modifications**: This design works with standard OP Stack clients. The `KlerosSequencerManager` only modifies L1 contract state that the clients already read.
 
-### Deployment with OP Stack
+### Local Testing with OP Stack Components
 
-1. Deploy your OP Stack chain with standard `SystemConfig`
-2. Deploy `KlerosSequencerManager` with the `SystemConfig` address
-3. Transfer `SystemConfig` ownership to `KlerosSequencerManager`
-4. Configure your op-batcher instances with the sequencer private keys
-5. Register each sequencer address in the Kleros Curate registry
-6. Set up a keeper to call `rotateSequencer()` each epoch
+For local testing, the `DeployLocal` script provides mock versions of the required OP Stack and Kleros components:
+
+1. **MockSystemConfig**: Simulates the OP Stack `SystemConfig` contract
+2. **MockCurate**: Simulates the Kleros Curate Classic registry
+
+This allows you to test the full sequencer rotation lifecycle without deploying to any real network.
 
 ### Epoch-Based Rotation
 

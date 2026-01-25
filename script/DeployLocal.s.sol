@@ -8,7 +8,10 @@ import {MockCurate} from "../test/mocks/MockCurate.sol";
 
 /**
  * @title DeployLocal
- * @notice Deployment script for local Anvil testing.
+ * @notice Deployment script for local Anvil testing - LOCAL ONLY.
+ *
+ * IMPORTANT: This script is restricted to local Anvil deployment (chain ID 31337).
+ * Do NOT deploy to L1 mainnet or testnets like Sepolia.
  *
  * This deploys:
  * - MockCurate (simulating Kleros Curate Classic)
@@ -22,6 +25,9 @@ import {MockCurate} from "../test/mocks/MockCurate.sol";
  *   forge script script/DeployLocal.s.sol:DeployLocal --rpc-url http://127.0.0.1:8545 --broadcast
  */
 contract DeployLocal is Script {
+    // Only allow on local Anvil (chain ID 31337)
+    uint256 constant LOCAL_CHAIN_ID = 31337;
+
     // Test accounts from Anvil's default mnemonic
     // "test test test test test test test test test test test junk"
     address constant DEPLOYER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
@@ -37,6 +43,12 @@ contract DeployLocal is Script {
     KlerosSequencerManager public manager;
 
     function run() external {
+        // Enforce local-only deployment
+        require(
+            block.chainid == LOCAL_CHAIN_ID,
+            "DeployLocal: This script is restricted to local Anvil (chain ID 31337). Do NOT deploy to mainnet or testnets."
+        );
+
         uint256 deployerPrivateKey = vm.envOr(
             "PRIVATE_KEY",
             uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80)

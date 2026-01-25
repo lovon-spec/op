@@ -8,7 +8,10 @@ import {MockCurate} from "../test/mocks/MockCurate.sol";
 
 /**
  * @title Demo
- * @notice Demonstrates the full sequencer rotation lifecycle.
+ * @notice Demonstrates the full sequencer rotation lifecycle - LOCAL ONLY.
+ *
+ * IMPORTANT: This script is restricted to local Anvil deployment (chain ID 31337).
+ * Do NOT run on L1 mainnet or testnets like Sepolia.
  *
  * This script shows:
  * 1. Deployment of all contracts
@@ -23,6 +26,9 @@ import {MockCurate} from "../test/mocks/MockCurate.sol";
  *   forge script script/Demo.s.sol:Demo --rpc-url http://127.0.0.1:8545 --broadcast -vvvv
  */
 contract Demo is Script {
+    // Only allow on local Anvil (chain ID 31337)
+    uint256 constant LOCAL_CHAIN_ID = 31337;
+
     // Test accounts from Anvil's default mnemonic
     uint256 constant DEPLOYER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     uint256 constant SEQUENCER_1_KEY = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
@@ -45,9 +51,15 @@ contract Demo is Script {
     KlerosSequencerManager public manager;
 
     function run() external {
+        // Enforce local-only execution
+        require(
+            block.chainid == LOCAL_CHAIN_ID,
+            "Demo: This script is restricted to local Anvil (chain ID 31337). Do NOT run on mainnet or testnets."
+        );
+
         console2.log("");
         console2.log("===========================================");
-        console2.log("  KLEROS SEQUENCER MANAGER DEMO");
+        console2.log("  KLEROS SEQUENCER MANAGER DEMO (LOCAL)");
         console2.log("===========================================");
         console2.log("");
 
