@@ -332,6 +332,7 @@ services:
           --override.fjord 2281580442 \
           --override.granite 2281580442 \
           --override.holocene 2281580442 \
+          --override.pectrablobschedule 2281580442 \
           --sequencer.enabled \
           --sequencer.l1-confs 0 \
           --p2p.disable \
