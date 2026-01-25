@@ -164,8 +164,16 @@ print_header "PHASE 3: Generating L2 Genesis"
 JWT_SECRET=$(openssl rand -hex 32)
 echo "$JWT_SECRET" > "$DATA_DIR/jwt.txt"
 
+# Get L1 block info for timestamp alignment
+L1_BLOCK=$(cast block latest --rpc-url "$L1_RPC" --json 2>/dev/null)
+L1_HASH=$(echo "$L1_BLOCK" | python3 -c "import sys,json; print(json.load(sys.stdin)['hash'])")
+L1_NUMBER=$(echo "$L1_BLOCK" | python3 -c "import sys,json; print(int(json.load(sys.stdin)['number'], 16))")
+L1_TIMESTAMP=$(echo "$L1_BLOCK" | python3 -c "import sys,json; print(int(json.load(sys.stdin)['timestamp'], 16))")
+L1_TIMESTAMP_HEX=$(printf "0x%x" $L1_TIMESTAMP)
+
 # Create L2 genesis with full OP Stack config
-cat > "$CONFIG_DIR/genesis-l2.json" << 'GENESIS'
+# Note: ecotone/fjord/granite disabled as they require a beacon node for blob support
+cat > "$CONFIG_DIR/genesis-l2.json" << GENESIS
 {
   "config": {
     "chainId": 42069,
@@ -184,15 +192,10 @@ cat > "$CONFIG_DIR/genesis-l2.json" << 'GENESIS'
     "grayGlacierBlock": 0,
     "mergeNetsplitBlock": 0,
     "shanghaiTime": 0,
-    "cancunTime": 0,
     "terminalTotalDifficulty": 0,
-    "terminalTotalDifficultyPassed": true,
     "bedrockBlock": 0,
     "regolithTime": 0,
     "canyonTime": 0,
-    "ecotoneTime": 0,
-    "fjordTime": 0,
-    "graniteTime": 0,
     "optimism": {
       "eip1559Elasticity": 6,
       "eip1559Denominator": 50,
@@ -200,7 +203,7 @@ cat > "$CONFIG_DIR/genesis-l2.json" << 'GENESIS'
     }
   },
   "nonce": "0x0",
-  "timestamp": "0x0",
+  "timestamp": "$L1_TIMESTAMP_HEX",
   "extraData": "0x",
   "gasLimit": "0x1c9c380",
   "difficulty": "0x0",
@@ -249,12 +252,12 @@ $OP_GETH \
     --http.port 9545 \
     --http.corsdomain "*" \
     --http.vhosts "*" \
-    --http.api "web3,debug,eth,txpool,net,engine" \
+    --http.api "web3,debug,eth,txpool,net,engine,miner" \
     --ws \
     --ws.addr "0.0.0.0" \
     --ws.port 9546 \
     --ws.origins "*" \
-    --ws.api "debug,eth,txpool,net,engine" \
+    --ws.api "debug,eth,txpool,net,engine,miner" \
     --authrpc.addr "0.0.0.0" \
     --authrpc.port 8551 \
     --authrpc.vhosts "*" \
@@ -274,12 +277,12 @@ echo -e "  ${GREEN}✓${NC} op-geth running on $L2_RPC"
 # ============================================================
 print_header "PHASE 5: Starting L2 Consensus (op-node)"
 
-# Create rollup config
-L1_BLOCK=$(cast block latest --rpc-url "$L1_RPC" --json 2>/dev/null)
-L1_HASH=$(echo "$L1_BLOCK" | python3 -c "import sys,json; print(json.load(sys.stdin)['hash'])")
-L1_NUMBER=$(echo "$L1_BLOCK" | python3 -c "import sys,json; print(int(json.load(sys.stdin)['number'], 16))")
-L1_TIMESTAMP=$(echo "$L1_BLOCK" | python3 -c "import sys,json; print(int(json.load(sys.stdin)['timestamp'], 16))")
+# Get the L2 genesis hash from the initialized op-geth
+L2_GENESIS_HASH=$($OP_GETH --datadir "$DATA_DIR/geth" --exec 'eth.getBlock(0).hash' console 2>/dev/null | tr -d '"')
+echo "  L2 genesis hash: $L2_GENESIS_HASH"
 
+# Create rollup config
+# Note: ecotone/fjord disabled as they require a beacon node for blob support
 cat > "$CONFIG_DIR/rollup.json" << ROLLUP
 {
   "genesis": {
@@ -288,14 +291,14 @@ cat > "$CONFIG_DIR/rollup.json" << ROLLUP
       "number": $L1_NUMBER
     },
     "l2": {
-      "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "hash": "$L2_GENESIS_HASH",
       "number": 0
     },
     "l2_time": $L1_TIMESTAMP,
     "system_config": {
       "batcherAddr": "$SEQ1_ADDR",
-      "overhead": "0x0834",
-      "scalar": "0x0f4240",
+      "overhead": "0x0000000000000000000000000000000000000000000000000000000000000834",
+      "scalar": "0x00000000000000000000000000000000000000000000000000000000000f4240",
       "gasLimit": 30000000
     }
   },
@@ -307,14 +310,55 @@ cat > "$CONFIG_DIR/rollup.json" << ROLLUP
   "l2_chain_id": 42069,
   "regolith_time": 0,
   "canyon_time": 0,
-  "batch_inbox_address": "0xff00000000000000000000000000042069",
-  "deposit_contract_address": "0x0000000000000000000000000000000000000000",
-  "l1_system_config_address": "$SYSTEM_CONFIG"
+  "delta_time": 0,
+  "batch_inbox_address": "0xff00000000000000000000000000000000042069",
+  "deposit_contract_address": "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF",
+  "l1_system_config_address": "$SYSTEM_CONFIG",
+  "chain_op_config": {
+    "eip1559Elasticity": 6,
+    "eip1559Denominator": 50,
+    "eip1559DenominatorCanyon": 250
+  }
 }
 ROLLUP
 
 echo -e "  ${GREEN}✓${NC} Rollup config created"
 echo "  L1 genesis block: $L1_NUMBER ($L1_HASH)"
+
+# Create L1 chain config for Anvil (required for unknown chain IDs)
+# Must be wrapped in "config" object and use correct field names
+cat > "$CONFIG_DIR/l1-chain-config.json" << 'L1CONFIG'
+{
+  "config": {
+    "chainId": 31337,
+    "homesteadBlock": 0,
+    "eip150Block": 0,
+    "eip155Block": 0,
+    "eip158Block": 0,
+    "byzantiumBlock": 0,
+    "constantinopleBlock": 0,
+    "petersburgBlock": 0,
+    "istanbulBlock": 0,
+    "muirGlacierBlock": 0,
+    "berlinBlock": 0,
+    "londonBlock": 0,
+    "arrowGlacierBlock": 0,
+    "grayGlacierBlock": 0,
+    "mergeNetsplitBlock": 0,
+    "shanghaiTime": 0,
+    "cancunTime": 0,
+    "terminalTotalDifficulty": 0,
+    "blobSchedule": {
+      "cancun": {
+        "target": 3,
+        "max": 6,
+        "baseFeeUpdateFraction": 3338477
+      }
+    }
+  }
+}
+L1CONFIG
+echo -e "  ${GREEN}✓${NC} L1 chain config created"
 
 # Start op-node in sequencer mode
 $OP_NODE \
@@ -322,6 +366,7 @@ $OP_NODE \
     --l2 "$L2_ENGINE" \
     --l2.jwt-secret "$DATA_DIR/jwt.txt" \
     --rollup.config "$CONFIG_DIR/rollup.json" \
+    --rollup.l1-chain-config "$CONFIG_DIR/l1-chain-config.json" \
     --sequencer.enabled \
     --sequencer.l1-confs 0 \
     --p2p.disable \
@@ -338,6 +383,7 @@ echo -e "  ${GREEN}✓${NC} op-node running (sequencer mode)"
 print_header "PHASE 6: Starting Batcher (op-batcher)"
 
 # Start op-batcher for the current sequencer
+# Throttle disabled (0 limits) to avoid miner API issues with Anvil
 $OP_BATCHER \
     --l1-eth-rpc "$L1_RPC" \
     --l2-eth-rpc "$L2_RPC" \
@@ -347,6 +393,8 @@ $OP_BATCHER \
     --num-confirmations 1 \
     --safe-abort-nonce-too-low-count 3 \
     --private-key "$SEQ1_KEY" \
+    --throttle.block-size-lower-limit 0 \
+    --throttle.block-size-upper-limit 0 \
     --log.level info \
     > "$LOG_DIR/op-batcher.log" 2>&1 &
 PIDS+=($!)
