@@ -298,6 +298,10 @@ services:
         echo ""
         echo "===================="
 
+        echo "=== op-node help (checking for chain spec flags) ==="
+        op-node --help 2>&1 | grep -i "chain\|spec\|genesis" || true
+        echo "==="
+
         echo "Starting op-node..."
         exec op-node \
           --l1 $$L1_RPC \
