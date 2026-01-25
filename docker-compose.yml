@@ -117,25 +117,28 @@ services:
         echo "Copied L2 genesis"
 
         # Generate L1 chain config for Anvil (required by op-node v1.16+)
+        # Must be in genesis.json format with "config" wrapper
         printf '%s\n' '{' > docker/config/l1-chain-config.json
-        printf '%s\n' '  "chainId": 31337,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "homesteadBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "eip150Block": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "eip155Block": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "eip158Block": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "byzantiumBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "constantinopleBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "petersburgBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "istanbulBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "berlinBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "londonBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "arrowGlacierBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "grayGlacierBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "mergeNetsplitBlock": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "shanghaiTime": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "cancunTime": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "terminalTotalDifficulty": 0,' >> docker/config/l1-chain-config.json
-        printf '%s\n' '  "terminalTotalDifficultyPassed": true' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  "config": {' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "chainId": 31337,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "homesteadBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "eip150Block": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "eip155Block": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "eip158Block": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "byzantiumBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "constantinopleBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "petersburgBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "istanbulBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "berlinBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "londonBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "arrowGlacierBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "grayGlacierBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "mergeNetsplitBlock": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "shanghaiTime": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "cancunTime": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "terminalTotalDifficulty": 0,' >> docker/config/l1-chain-config.json
+        printf '%s\n' '    "terminalTotalDifficultyPassed": true' >> docker/config/l1-chain-config.json
+        printf '%s\n' '  }' >> docker/config/l1-chain-config.json
         printf '%s\n' '}' >> docker/config/l1-chain-config.json
         echo "Generated L1 chain config"
 
