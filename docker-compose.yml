@@ -126,43 +126,49 @@ services:
         SYSTEM_CONFIG=$$(cat .deployments/MockSystemConfig.address 2>/dev/null || echo "0x0000000000000000000000000000000000000000")
         BATCHER=$$(cat .deployments/addresses.json | grep -o '"batcher_1"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
 
-        # Generate rollup.json
-        cat > docker/config/rollup.json << ROLLUP
-        {
-          "genesis": {
-            "l1": {
-              "hash": "$$L1_HASH",
-              "number": $$L1_BLOCK
-            },
-            "l2": {
-              "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-              "number": 0
-            },
-            "l2_time": $$L1_TIME_DEC,
-            "system_config": {
-              "batcherAddr": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-              "overhead": "0x0000000000000000000000000000000000000000000000000000000000000834",
-              "scalar": "0x00000000000000000000000000000000000000000000000000000000000f4240",
-              "gasLimit": 30000000
-            }
-          },
-          "block_time": 2,
-          "max_sequencer_drift": 600,
-          "seq_window_size": 3600,
-          "channel_timeout": 300,
-          "l1_chain_id": 31337,
-          "l2_chain_id": 42069,
-          "regolith_time": 0,
-          "canyon_time": 0,
-          "delta_time": 0,
-          "ecotone_time": 0,
-          "fjord_time": 0,
-          "batch_inbox_address": "0xff00000000000000000000000000000000042069",
-          "deposit_contract_address": "0x0000000000000000000000000000000000000000",
-          "l1_system_config_address": "$$SYSTEM_CONFIG",
-          "protocol_versions_address": "0x0000000000000000000000000000000000000000"
-        }
-        ROLLUP
+        # Generate rollup.json (no leading spaces - heredoc must be unindented)
+        cat > docker/config/rollup.json << 'ROLLUP'
+{
+  "genesis": {
+    "l1": {
+      "hash": "L1_HASH_PLACEHOLDER",
+      "number": 0
+    },
+    "l2": {
+      "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "number": 0
+    },
+    "l2_time": 0,
+    "system_config": {
+      "batcherAddr": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "overhead": "0x0000000000000000000000000000000000000000000000000000000000000834",
+      "scalar": "0x00000000000000000000000000000000000000000000000000000000000f4240",
+      "gasLimit": 30000000
+    }
+  },
+  "block_time": 2,
+  "max_sequencer_drift": 600,
+  "seq_window_size": 3600,
+  "channel_timeout": 300,
+  "l1_chain_id": 31337,
+  "l2_chain_id": 42069,
+  "regolith_time": 0,
+  "canyon_time": 0,
+  "delta_time": 0,
+  "ecotone_time": 0,
+  "fjord_time": 0,
+  "batch_inbox_address": "0xfF00000000000000000000000000000000042069",
+  "deposit_contract_address": "0x0000000000000000000000000000000000000000",
+  "l1_system_config_address": "SYSTEM_CONFIG_PLACEHOLDER",
+  "protocol_versions_address": "0x0000000000000000000000000000000000000000"
+}
+ROLLUP
+
+        # Replace placeholders with actual values
+        sed -i "s|L1_HASH_PLACEHOLDER|$$L1_HASH|g" docker/config/rollup.json
+        sed -i "s|\"number\": 0|\"number\": $$L1_BLOCK|" docker/config/rollup.json
+        sed -i "s|\"l2_time\": 0|\"l2_time\": $$L1_TIME_DEC|" docker/config/rollup.json
+        sed -i "s|SYSTEM_CONFIG_PLACEHOLDER|$$SYSTEM_CONFIG|g" docker/config/rollup.json
         echo "Generated rollup.json"
 
         echo ""
