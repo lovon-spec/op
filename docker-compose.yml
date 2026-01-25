@@ -206,6 +206,11 @@ services:
           geth init --datadir /data /config/genesis-l2.json
         fi
 
+        # Export genesis block hash for op-node
+        echo "Getting genesis block hash..."
+        geth --datadir /data --exec 'console.log("GENESIS_HASH:" + eth.getBlock(0).hash)' console 2>/dev/null | grep "GENESIS_HASH:" | cut -d: -f2 > /config/genesis-hash.txt || true
+
+        # Fallback: compute from geth attach after starting
         echo "Starting op-geth..."
         exec geth \
           --datadir /data \
@@ -252,12 +257,42 @@ services:
         done
         echo "Found rollup config"
 
+        # Wait for op-geth to be ready and get genesis hash
+        echo "Waiting for op-geth RPC..."
+        until wget -qO- http://op-geth:8545 -T 2 2>/dev/null; do
+          sleep 2
+        done
+
+        echo "Getting L2 genesis hash from op-geth..."
+        GENESIS_HASH=""
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          GENESIS_HASH=$$(wget -qO- --post-data='{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x0",false],"id":1}' \
+            --header='Content-Type: application/json' http://op-geth:8545 2>/dev/null | \
+            grep -o '"hash":"0x[0-9a-fA-F]*"' | head -1 | cut -d'"' -f4)
+          if [ -n "$$GENESIS_HASH" ] && [ "$$GENESIS_HASH" != "null" ]; then
+            break
+          fi
+          echo "Waiting for genesis hash (attempt $$i)..."
+          sleep 3
+        done
+
+        if [ -z "$$GENESIS_HASH" ]; then
+          echo "ERROR: Could not get L2 genesis hash"
+          exit 1
+        fi
+        echo "L2 Genesis Hash: $$GENESIS_HASH"
+
+        # Update rollup.json with correct L2 genesis hash
+        # The JSON has "l2": { "hash": "0x000..." } which needs updating
+        cp /config/rollup.json /tmp/rollup.json
+        sed -i 's|"hash"[[:space:]]*:[[:space:]]*"0x0\{64\}"|"hash": "'"$$GENESIS_HASH"'"|g' /tmp/rollup.json
+
         echo "Starting op-node..."
         exec op-node \
           --l1 $$L1_RPC \
           --l2 http://op-geth:8551 \
           --l2.jwt-secret /config/jwt.txt \
-          --rollup.config /config/rollup.json \
+          --rollup.config /tmp/rollup.json \
           --sequencer.enabled \
           --sequencer.l1-confs 0 \
           --p2p.disable \
