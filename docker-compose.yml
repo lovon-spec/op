@@ -112,9 +112,20 @@ services:
           echo "Generated JWT secret"
         fi
 
-        # Copy L2 genesis
+        # Get L1 block info for rollup config FIRST (needed for L2 genesis timestamp)
+        sleep 2  # Wait for block to finalize
+        L1_BLOCK=$$(cast block-number --rpc-url $$L1_RPC)
+        L1_HASH=$$(cast block $$L1_BLOCK --rpc-url $$L1_RPC --json | grep -o '"hash":"0x[0-9a-fA-F]*"' | head -1 | cut -d'"' -f4)
+        L1_TIME=$$(cast block $$L1_BLOCK --rpc-url $$L1_RPC --json | grep -o '"timestamp":"0x[0-9a-fA-F]*"' | head -1 | cut -d'"' -f4)
+        L1_TIME_DEC=$$((L1_TIME))
+        echo "L1 origin: block $$L1_BLOCK, hash $$L1_HASH, time $$L1_TIME_DEC"
+
+        # Copy L2 genesis and update timestamp to match L1 origin
+        # This ensures L2 genesis time matches rollup.json l2_time
         cp devnet/genesis-l2.json docker/config/genesis-l2.json
-        echo "Copied L2 genesis"
+        L1_TIME_HEX=$$(printf '0x%x' $$L1_TIME_DEC)
+        sed -i "s/\"timestamp\":[[:space:]]*\"0x[0-9a-fA-F]*\"/\"timestamp\": \"$$L1_TIME_HEX\"/" docker/config/genesis-l2.json
+        echo "Updated L2 genesis timestamp to $$L1_TIME_HEX ($$L1_TIME_DEC)"
 
         # Generate L1 chain config for Anvil devnet ONLY (required by op-node v1.16+)
         # NOTE: For Sepolia/mainnet deployment, remove --rollup.l1-chain-config flag
@@ -142,13 +153,7 @@ services:
         printf '%s\n' '}' >> docker/config/l1-chain-config.json
         echo "Generated L1 chain config (Anvil devnet - pre-Cancun, no beacon needed)"
 
-        # Get L1 block info for rollup config
-        sleep 2  # Wait for block to finalize
-        L1_BLOCK=$$(cast block-number --rpc-url $$L1_RPC)
-        L1_HASH=$$(cast block $$L1_BLOCK --rpc-url $$L1_RPC --json | grep -o '"hash":"0x[0-9a-fA-F]*"' | head -1 | cut -d'"' -f4)
-        L1_TIME=$$(cast block $$L1_BLOCK --rpc-url $$L1_RPC --json | grep -o '"timestamp":"0x[0-9a-fA-F]*"' | head -1 | cut -d'"' -f4)
-        L1_TIME_DEC=$$((L1_TIME))
-
+        # L1_BLOCK, L1_HASH, L1_TIME, L1_TIME_DEC already set above
         SYSTEM_CONFIG=$$(cat .deployments/MockSystemConfig.address 2>/dev/null || echo "0x0000000000000000000000000000000000000000")
         BATCHER=$$(cat .deployments/addresses.json | grep -o '"batcher_1"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4 || echo "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
 
