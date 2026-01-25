@@ -1,0 +1,216 @@
+# Constitutional L2 - Docker Compose
+#
+# This provides a complete local development environment for the Constitutional L2.
+#
+# Quick Start:
+#   ./start.sh              # Start everything
+#   ./start.sh demo         # Run rotation demo
+#   ./start.sh stop         # Stop everything
+#
+# Manual usage:
+#   docker compose up -d                    # Start L1 + deploy contracts
+#   docker compose --profile l2 up -d       # Also start L2 stack (experimental)
+
+version: "3.8"
+
+services:
+  # =============================================================
+  # L1: Local Ethereum (Anvil)
+  # =============================================================
+  l1:
+    image: ghcr.io/foundry-rs/foundry:latest
+    entrypoint: ["anvil"]
+    command:
+      - "--host=0.0.0.0"
+      - "--port=8545"
+      - "--chain-id=31337"
+      - "--block-time=2"
+      - "--accounts=10"
+      - "--balance=10000"
+    ports:
+      - "8545:8545"
+    healthcheck:
+      test: ["CMD", "cast", "chain-id", "--rpc-url", "http://localhost:8545"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  # =============================================================
+  # Contract Deployer
+  # =============================================================
+  deployer:
+    image: ghcr.io/foundry-rs/foundry:latest
+    working_dir: /app
+    volumes:
+      - ./:/app
+      - deployments:/app/.deployments
+    environment:
+      - L1_RPC=http://l1:8545
+      - PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+    depends_on:
+      l1:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "=== Building contracts ==="
+        forge build
+
+        echo "=== Deploying to L1 ==="
+        forge script script/DeployLocal.s.sol:DeployLocal \
+          --rpc-url $$L1_RPC \
+          --private-key $$PRIVATE_KEY \
+          --broadcast
+
+        # Extract and save addresses
+        echo "=== Extracting contract addresses ==="
+        python3 << 'PYTHON'
+        import json
+        import os
+
+        # Read deployment artifacts
+        with open('broadcast/DeployLocal.s.sol/31337/run-latest.json') as f:
+            data = json.load(f)
+
+        addresses = {}
+        for tx in data.get('transactions', []):
+            if tx.get('transactionType') == 'CREATE':
+                name = tx.get('contractName')
+                addr = tx.get('contractAddress')
+                if name and addr:
+                    addresses[name] = addr
+                    print(f"  {name}: {addr}")
+
+        os.makedirs('.deployments', exist_ok=True)
+        with open('.deployments/addresses.json', 'w') as f:
+            json.dump(addresses, f, indent=2)
+
+        # Also write individual files for shell scripts
+        for name, addr in addresses.items():
+            with open(f'.deployments/{name}.address', 'w') as f:
+                f.write(addr)
+        PYTHON
+
+        echo ""
+        echo "=== Deployment Complete ==="
+        echo ""
+        echo "Contract addresses saved to .deployments/"
+        echo ""
+        echo "L1 RPC: http://localhost:8545"
+        echo ""
+
+        # Keep running so addresses are accessible
+        tail -f /dev/null
+
+  # =============================================================
+  # L2 Execution (op-geth) - Experimental
+  # =============================================================
+  op-geth:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-geth:v1.101411.1
+    profiles: ["l2"]
+    volumes:
+      - op-geth-data:/data
+      - ./docker/config:/config:ro
+      - jwt-secret:/jwt
+    environment:
+      - GETH_DATADIR=/data
+    depends_on:
+      - deployer
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # Wait for config
+        while [ ! -f /config/genesis-l2.json ]; do
+          echo "Waiting for L2 genesis..."
+          sleep 2
+        done
+
+        # Initialize if needed
+        if [ ! -d /data/geth ]; then
+          geth init --datadir /data /config/genesis-l2.json
+        fi
+
+        exec geth \
+          --datadir /data \
+          --http --http.addr 0.0.0.0 --http.port 8545 \
+          --http.corsdomain "*" --http.vhosts "*" \
+          --http.api "web3,debug,eth,txpool,net,engine" \
+          --ws --ws.addr 0.0.0.0 --ws.port 8546 \
+          --ws.origins "*" --ws.api "debug,eth,txpool,net,engine" \
+          --authrpc.addr 0.0.0.0 --authrpc.port 8551 \
+          --authrpc.vhosts "*" --authrpc.jwtsecret /jwt/jwt.txt \
+          --syncmode full --nodiscover --maxpeers 0 \
+          --networkid 42069 --gcmode archive \
+          --rollup.disabletxpoolgossip
+    ports:
+      - "9545:8545"
+      - "9546:8546"
+
+  # =============================================================
+  # L2 Consensus (op-node) - Experimental
+  # =============================================================
+  op-node:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.10.1
+    profiles: ["l2"]
+    volumes:
+      - ./docker/config:/config:ro
+      - jwt-secret:/jwt
+    environment:
+      - L1_RPC=http://l1:8545
+    depends_on:
+      - op-geth
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while [ ! -f /config/rollup.json ]; do
+          echo "Waiting for rollup config..."
+          sleep 2
+        done
+
+        exec op-node \
+          --l1 $$L1_RPC \
+          --l2 http://op-geth:8551 \
+          --l2.jwt-secret /jwt/jwt.txt \
+          --rollup.config /config/rollup.json \
+          --sequencer.enabled \
+          --sequencer.l1-confs 0 \
+          --p2p.disable \
+          --rpc.addr 0.0.0.0 --rpc.port 8547 \
+          --log.level info
+    ports:
+      - "9547:8547"
+
+  # =============================================================
+  # Batcher (op-batcher) - Experimental
+  # =============================================================
+  op-batcher:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.10.1
+    profiles: ["l2"]
+    environment:
+      - L1_RPC=http://l1:8545
+      - L2_RPC=http://op-geth:8545
+      - ROLLUP_RPC=http://op-node:8547
+      - BATCHER_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+    depends_on:
+      - op-node
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 10
+        exec op-batcher \
+          --l1-eth-rpc $$L1_RPC \
+          --l2-eth-rpc $$L2_RPC \
+          --rollup-rpc $$ROLLUP_RPC \
+          --poll-interval 1s \
+          --sub-safety-margin 4 \
+          --num-confirmations 1 \
+          --safe-abort-nonce-too-low-count 3 \
+          --private-key $$BATCHER_PRIVATE_KEY \
+          --log.level info
+
+volumes:
+  deployments:
+  op-geth-data:
+  jwt-secret:

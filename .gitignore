@@ -10,5 +10,22 @@ out/
 # Docs
 docs/
 
-# Dotenv file
+# Environment files (NEVER commit real keys!)
 .env
+.env.local
+.env.sepolia
+.env.mainnet
+.env.*.local
+
+# Docker data
+docker/config/*.json
+docker/data/
+.deployments/
+
+# Runtime files
+*.log
+*.pid
+
+# OS files
+.DS_Store
+Thumbs.db

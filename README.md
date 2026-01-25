@@ -1,242 +1,438 @@
-# Kleros-Governed Decentralized Sequencer (OP Stack)
+# Constitutional L2 - OP Stack with Kleros Governance
 
-A decentralized sequencer management system for OP Stack chains, using Kleros Curate Classic for operator curation and subjective dispute resolution.
+A fully decentralized Layer 2 rollup based on the OP Stack (Superchain), with constitutional governance powered by Kleros subjective dispute resolution.
 
-## Overview
+## What is a Constitutional L2?
 
-This architecture decentralizes control of an OP Stack chain operator by separating:
+A Constitutional L2 is an Optimistic Rollup where sequencer operation is governed by a **constitution** - a set of rules that operators must follow, enforced through decentralized dispute resolution rather than code alone.
 
-- **Judgment / legitimacy** → **Kleros** (a curated registry with subjective dispute resolution)
-- **Execution / enforcement** → **OP Stack L1 governance contract** (`SystemConfig`)
+**Key Features:**
+- **Decentralized Sequencer Rotation**: Multiple operators take turns producing blocks
+- **Subjective Rule Enforcement**: Operators can be challenged for violating constitutional rules
+- **Kleros Dispute Resolution**: Human jurors decide disputes, enabling nuanced enforcement
+- **OP Stack Compatible**: Works with standard OP Stack infrastructure (op-geth, op-node, op-batcher)
 
-The key insight is that the OP Stack's `SystemConfig.batcherHash` is a privileged identity: it controls which L1 sender is considered the valid batch submitter for the chain's canonical transaction data derivation.
+## Quick Start
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose
+- [Foundry](https://book.getfoundry.sh/getting-started/installation) (for development)
+
+### Start Local Devnet (One Command)
+
+```bash
+git clone <repository-url>
+cd op
+./start.sh
+```
+
+This starts a complete constitutional L2:
+- **L1**: Local Anvil chain (localhost:8545)
+- **L2**: op-geth + op-node (localhost:9545)
+- **Governance**: KlerosSequencerManager with mock Kleros registry
+
+### Try the Sequencer Rotation Demo
+
+```bash
+./start.sh demo
+```
+
+### View Status and Logs
+
+```bash
+./start.sh status   # Show service status
+./start.sh logs     # Stream logs
+./start.sh stop     # Stop all services
+```
 
 ## Architecture
 
-### Contracts
+```
+                                    CONSTITUTIONAL L2 ARCHITECTURE
 
-1. **Registry (Kleros Curate Classic)**: Standard Kleros GeneralizedTCR deployed on Ethereum L1
-   - Item type: `Address` (operator's L1 address, ABI-encoded)
-   - Deposits: configurable (e.g., 32 ETH to deter bad operators)
-   - Constitution: text policy document stored on IPFS
-
-2. **Manager (KlerosSequencerManager)**: Custom contract that:
-   - Owns the OP Stack `SystemConfig`
-   - Maintains a local active set of addresses that are accepted in the registry
-   - Rotates the active operator address each epoch
-   - Calls `SystemConfig.setBatcherHash(...)` to set the canonical batch submitter
-
-## How It Works
-
-### 1. Registration (Stake/Deposit)
-
-1. Alice submits her L1 operator address to the Kleros TCR with a deposit
-2. During the challenge period, the community may challenge if Alice is unfit
-3. If no successful challenge occurs, the item becomes **Registered**
-
-### 2. Activation (Sync into Manager)
-
-Anyone calls `syncAddSequencer(alice)`:
-- Manager checks the Kleros registry status
-- If `Registered`, adds Alice to the local `activeSequencers` set
-
-### 3. Rotation (Scheduled Authority Assignment)
-
-Any keeper/bot calls `rotateSequencer()` once per epoch:
-- Manager selects the next valid operator in the active set
-- Sets `SystemConfig.batcherHash` to that operator's address (V0 format)
-- This makes the selected operator the canonical batch submitter
-
-### 4. Slashing / Boot (Subjective Enforcement)
-
-If an operator misbehaves (MEV extraction, censorship, delays):
-
-1. Someone challenges them in the Kleros TCR with evidence
-2. Status changes to `ClearingRequested` (no longer `Registered`)
-3. Anyone calls `syncRemoveSequencer(alice)`
-4. Manager removes Alice from the active set immediately
-5. Kleros resolves the dispute; if guilty, stake is slashed
-
-## Installation
-
-```bash
-# Clone the repository
-git clone <repository-url>
-cd op
-
-# Install dependencies
-forge install
-
-# Build
-forge build
-
-# Run tests
-forge test
+    ┌─────────────────────────────────────────────────────────────────────────────────┐
+    │                                    L1 (Ethereum)                                 │
+    │  ┌──────────────────┐    ┌────────────────────────┐    ┌──────────────────────┐ │
+    │  │   Kleros Curate  │───▶│  KlerosSequencerManager│───▶│  OP SystemConfig     │ │
+    │  │   (Registry)     │    │  (Governance Bridge)   │    │  (batcherHash)       │ │
+    │  └──────────────────┘    └────────────────────────┘    └──────────────────────┘ │
+    │         │                          │                            │               │
+    │         │ Operators               │ rotateSequencer()          │ Authorizes    │
+    │         │ Register/               │ syncAdd/Remove()           │               │
+    │         │ Get Challenged          │                            │               │
+    └─────────│──────────────────────────│────────────────────────────│───────────────┘
+              │                          │                            │
+              ▼                          ▼                            ▼
+    ┌─────────────────────────────────────────────────────────────────────────────────┐
+    │                              Sequencer Operators                                │
+    │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                       │
+    │  │  Operator A  │    │  Operator B  │    │  Operator C  │    ...                │
+    │  │  op-batcher  │    │  op-batcher  │    │  op-batcher  │                       │
+    │  └──────────────┘    └──────────────┘    └──────────────┘                       │
+    │         │                   │                   │                               │
+    │         └───────────────────┴───────────────────┘                               │
+    │                             │ Only authorized batcher                           │
+    │                             │ can submit valid batches                          │
+    │                             ▼                                                   │
+    │  ┌──────────────────────────────────────────────────────────────────────────┐  │
+    │  │                          L2 Chain (op-geth + op-node)                     │  │
+    │  │                                                                           │  │
+    │  │   op-node reads batcherHash from SystemConfig                             │  │
+    │  │   Only accepts batches from the authorized sequencer                      │  │
+    │  │                                                                           │  │
+    │  └──────────────────────────────────────────────────────────────────────────┘  │
+    └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Local Demo
+### How It Works
 
-Run a complete demonstration of the sequencer rotation lifecycle on a local Anvil testnet:
+1. **Operators Register**: Sequencer operators submit their addresses to Kleros Curate with a deposit
+2. **Community Curation**: During the challenge period, anyone can dispute unfit operators
+3. **Sync to Manager**: Approved operators are synced to the KlerosSequencerManager
+4. **Epoch Rotation**: Each epoch, a keeper rotates to the next operator in round-robin order
+5. **Batch Submission**: Only the current operator's batches are accepted by op-node
+6. **Constitutional Enforcement**: Misbehaving operators can be challenged and removed
 
-### Quick Start
+### The Constitution
 
-```bash
-# Terminal 1: Start Anvil
-anvil --port 8546
+The constitution defines rules that operators must follow, enforced through Kleros dispute resolution:
 
-# Terminal 2: Run the demo script
-./script/run_demo.sh
+```
+Example Constitutional Rules:
+
+1. TRANSACTION ORDERING
+   - Operators SHALL NOT reorder transactions for personal profit (sandwiching, frontrunning)
+   - Transactions MUST be included in submission order within a reasonable time
+
+2. CENSORSHIP RESISTANCE
+   - Operators SHALL NOT systematically exclude valid transactions
+   - Operators SHALL NOT discriminate based on sender address
+
+3. LIVENESS
+   - Operators MUST submit batches within their assigned epoch
+   - Operators MUST maintain >99% uptime during their rotation
+
+4. INTEGRITY
+   - Operators SHALL NOT submit invalid state roots
+   - Operators SHALL NOT collude to harm users
 ```
 
-### Manual Demo
-
-```bash
-# Start Anvil
-anvil --port 8546
-
-# Deploy contracts with test sequencers
-forge script script/DeployLocal.s.sol:DeployLocal --rpc-url http://127.0.0.1:8546 --broadcast
-
-# Check current sequencer
-cast call <MANAGER_ADDRESS> "currentSequencer()(address)" --rpc-url http://127.0.0.1:8546
-
-# Wait for epoch (60 seconds by default) and rotate
-cast send <MANAGER_ADDRESS> "rotateSequencer()" --rpc-url http://127.0.0.1:8546 --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-```
-
-### Simulated Demo (Fast)
-
-Run the complete lifecycle in simulation mode (no waiting for epochs):
-
-```bash
-forge script script/Demo.s.sol:Demo --rpc-url http://127.0.0.1:8546 -vvvv
-```
-
-This demonstrates:
-1. Contract deployment
-2. Sequencer registration in Curate
-3. Syncing sequencers to manager
-4. Epoch-based rotation
-5. Challenge and removal of misbehaving sequencer
-6. Guardian pause/unpause
+When an operator violates these rules:
+1. Anyone can challenge them in Kleros Curate with evidence
+2. The operator's status changes to `ClearingRequested`
+3. Anyone calls `syncRemoveSequencer()` to immediately remove them
+4. Kleros jurors vote on the dispute
+5. If guilty, the operator loses their stake
 
 ## Deployment
 
-1. Deploy a Kleros Curate Classic TCR with your constitution parameters
-2. Deploy `KlerosSequencerManager`:
+### Local Development
 
 ```bash
-export PRIVATE_KEY=<your-private-key>
-export REGISTRY=<kleros-curate-address>
-export SYSTEM_CONFIG=<op-stack-system-config-address>
-export EPOCH_DURATION=3600  # 1 hour
-export GUARDIAN=<guardian-address>
+# Start local devnet
+./start.sh local
 
-forge script script/Deploy.s.sol:Deploy \
-  --rpc-url $RPC_URL \
+# Interact with contracts
+cast call <MANAGER> "currentSequencer()(address)" --rpc-url http://localhost:8545
+cast call <MANAGER> "getActiveSequencers()(address[])" --rpc-url http://localhost:8545
+```
+
+### Sepolia Testnet
+
+1. **Configure Environment**
+
+```bash
+cp .env.sepolia.example .env.sepolia
+# Edit .env.sepolia with your values:
+# - L1_RPC: Your Sepolia RPC endpoint
+# - REGISTRY: Kleros Curate address (deploy or use existing)
+# - SYSTEM_CONFIG: Your OP Stack SystemConfig address
+# - DEPLOYER_PRIVATE_KEY: Funded Sepolia account
+```
+
+2. **Deploy Contracts**
+
+```bash
+source .env.sepolia
+forge script script/DeploySepolia.s.sol:DeploySepolia \
+  --rpc-url $L1_RPC \
+  --broadcast \
+  --verify
+```
+
+3. **Transfer SystemConfig Ownership**
+
+```bash
+# Current SystemConfig owner must execute:
+cast send $SYSTEM_CONFIG "transferOwnership(address)" $MANAGER_ADDRESS \
+  --rpc-url $L1_RPC \
+  --private-key $OWNER_PRIVATE_KEY
+```
+
+4. **Register Operators in Kleros**
+
+Visit https://curate.kleros.io/ and submit operator addresses to your registry.
+
+5. **Sync Operators**
+
+```bash
+cast send $MANAGER_ADDRESS "syncAddSequencer(address)" $OPERATOR_ADDRESS \
+  --rpc-url $L1_RPC \
+  --private-key $DEPLOYER_PRIVATE_KEY
+```
+
+6. **Start L2 Services**
+
+```bash
+./start.sh sepolia
+```
+
+### Mainnet Deployment
+
+**Prerequisites:**
+- Kleros Curate TCR deployed with your constitution
+- OP Stack L1 contracts deployed
+- Guardian multisig set up
+- Keeper infrastructure ready
+
+1. **Configure Environment**
+
+```bash
+cp .env.mainnet.example .env.mainnet
+# Fill in all values - see comments in file
+```
+
+2. **Deploy with Extra Verification**
+
+```bash
+source .env.mainnet
+forge script script/DeployMainnet.s.sol:DeployMainnet \
+  --rpc-url $L1_RPC \
   --broadcast \
   --verify \
+  --slow \
   -vvvv
 ```
 
-3. Transfer ownership of OP Stack `SystemConfig` to the deployed manager:
+3. **Complete Post-Deployment Steps**
+
+See output from deployment script for:
+- SystemConfig ownership transfer
+- Operator registration
+- Keeper setup
+
+## Smart Contracts
+
+### KlerosSequencerManager
+
+The bridge between Kleros governance and OP Stack execution.
 
 ```solidity
-systemConfig.transferOwnership(managerAddress);
+// Core state
+ICurate public immutable registry;      // Kleros Curate registry
+ISystemConfig public immutable systemConfig; // OP Stack SystemConfig
+uint256 public immutable epochDuration; // Rotation interval
+
+// Sync functions (anyone can call)
+function syncAddSequencer(address seq) external;
+function syncRemoveSequencer(address seq) external;
+
+// Rotation (anyone can call, once per epoch)
+function rotateSequencer() external;
+function poke() external; // Alias for keepers
+
+// Guardian (emergency controls)
+function setPaused(bool paused) external;
+function setGuardian(address newGuardian) external;
+
+// View functions
+function currentSequencer() external view returns (address);
+function getActiveSequencers() external view returns (address[] memory);
+function activeSequencerCount() external view returns (uint256);
+function timeUntilNextRotation() external view returns (uint256);
+function isRegisteredInRegistry(address seq) external view returns (bool);
 ```
 
-4. Add operators:
+### Interfaces
+
+- **ICurate**: Kleros Curate Classic (GeneralizedTCR)
+- **ISystemConfig**: OP Stack SystemConfig (setBatcherHash)
+- **IArbitrator/IArbitrable**: ERC-792 arbitration standard
+
+## OP Stack Integration
+
+### How batcherHash Works
+
+The OP Stack uses `SystemConfig.batcherHash` to authorize batch submitters:
+
+1. **op-batcher** reads `batcherHash` before submitting batches
+2. **op-node** validates that batch transactions come from the authorized address
+3. **KlerosSequencerManager** updates `batcherHash` on each rotation
+
+### Batcher Hash Format
+
+The V0 format stores the address as the low 20 bytes of a bytes32:
 
 ```solidity
-manager.syncAddSequencer(operatorAddress);
+bytes32 batcherHash = bytes32(uint256(uint160(sequencerAddress)));
 ```
 
-5. Set up a keeper to call `rotateSequencer()` each epoch
+### Running Multiple Batchers
 
-## Key Functions
+For high availability, run one op-batcher per registered operator:
 
-### Sync Functions
+```yaml
+# docker-compose.override.yml
+services:
+  op-batcher-1:
+    extends: op-batcher
+    environment:
+      BATCHER_PRIVATE_KEY: ${OPERATOR_1_KEY}
 
-- `syncAddSequencer(address)`: Add a registered sequencer to the active set
-- `syncRemoveSequencer(address)`: Remove a no-longer-registered sequencer
+  op-batcher-2:
+    extends: op-batcher
+    environment:
+      BATCHER_PRIVATE_KEY: ${OPERATOR_2_KEY}
+```
 
-### Rotation
+Only the currently authorized batcher's submissions will be accepted.
 
-- `rotateSequencer()`: Rotate to the next valid sequencer (once per epoch)
-- `poke()`: Alias for `rotateSequencer()`
+## Keeper Integration
 
-### View Functions
+Set up automatic rotation using Gelato, Chainlink Automation, or a custom keeper.
 
-- `activeSequencerCount()`: Number of active sequencers
-- `getActiveSequencers()`: Array of all active sequencer addresses
-- `currentSequencer()`: Currently selected sequencer
-- `isRegisteredInRegistry(address)`: Check if address is registered in Kleros
-- `timeUntilNextRotation()`: Seconds until next rotation is allowed
+### Gelato Web3 Functions
 
-### Guardian Functions
+```javascript
+const { ethers } = require("ethers");
 
-- `setPaused(bool)`: Pause/unpause the contract
-- `setGuardian(address)`: Transfer guardian role
+Web3Function.onRun(async (context) => {
+  const { userArgs, provider } = context;
+
+  const manager = new ethers.Contract(
+    userArgs.managerAddress,
+    ["function timeUntilNextRotation() view returns (uint256)",
+     "function rotateSequencer()"],
+    provider
+  );
+
+  const timeLeft = await manager.timeUntilNextRotation();
+  if (timeLeft > 0) {
+    return { canExec: false, message: `${timeLeft}s until rotation` };
+  }
+
+  return {
+    canExec: true,
+    callData: manager.interface.encodeFunctionData("rotateSequencer")
+  };
+});
+```
+
+### Chainlink Automation
+
+```solidity
+contract SequencerKeeper is AutomationCompatibleInterface {
+    KlerosSequencerManager public manager;
+
+    function checkUpkeep(bytes calldata)
+        external view returns (bool upkeepNeeded, bytes memory)
+    {
+        upkeepNeeded = manager.timeUntilNextRotation() == 0;
+    }
+
+    function performUpkeep(bytes calldata) external {
+        manager.rotateSequencer();
+    }
+}
+```
 
 ## Security Considerations
 
 ### Bounded Operations
-
 - All loops are bounded to prevent DoS
 - O(1) add/remove using swap-pop pattern
 - Safe `currentIndex` handling during removals
 
 ### Griefing Mitigation
-
-The "boot-on-challenge" behavior is intentionally conservative. Potential mitigations:
-- Higher challenge bond at TCR layer
-- Only boot on `ClearingRequested` (current behavior)
-- Add review delay or quorum threshold
-- Maintain "active" vs "standby" pools
-
-### Liveness
-
-- If active set becomes empty, rotation emits `RotationSkippedNoValidSequencer`
-- Contract self-cleans invalid entries during rotation
+- High deposit requirement in Kleros deters frivolous challenges
+- "Boot on challenge" is conservative - operator removed only when actively challenged
 - Guardian can pause in emergencies
 
-## OP Stack Integration
+### Liveness Guarantees
+- If all operators become invalid, rotation emits `RotationSkippedNoValidSequencer`
+- Contract self-cleans invalid entries during rotation
+- Guardian provides emergency control
 
-The KlerosSequencerManager is designed to integrate with the OP Stack by controlling the `SystemConfig.batcherHash`. Here's how it works with the OP Stack components:
+## Testing
 
-### How It Integrates
+```bash
+# Run all tests
+forge test
 
-1. **op-batcher**: The batch submitter reads `batcherHash` from `SystemConfig` to determine which address is authorized to submit batches. When `KlerosSequencerManager.rotateSequencer()` is called, it updates this hash to point to the new authorized sequencer.
+# Run with verbosity
+forge test -vvv
 
-2. **op-node**: The derivation pipeline validates that batch transactions come from the address specified in `batcherHash`. Only batches from the currently authorized sequencer are considered canonical.
+# Run specific test
+forge test --match-test testRotation
 
-3. **No Client Modifications**: This design works with standard OP Stack clients. The `KlerosSequencerManager` only modifies L1 contract state that the clients already read.
+# Gas report
+forge test --gas-report
+```
 
-### Deployment with OP Stack
+## File Structure
 
-1. Deploy your OP Stack chain with standard `SystemConfig`
-2. Deploy `KlerosSequencerManager` with the `SystemConfig` address
-3. Transfer `SystemConfig` ownership to `KlerosSequencerManager`
-4. Configure your op-batcher instances with the sequencer private keys
-5. Register each sequencer address in the Kleros Curate registry
-6. Set up a keeper to call `rotateSequencer()` each epoch
+```
+op/
+├── src/
+│   ├── KlerosSequencerManager.sol    # Main governance contract
+│   └── interfaces/
+│       ├── ICurate.sol               # Kleros Curate interface
+│       ├── ISystemConfig.sol         # OP Stack interface
+│       ├── IArbitrator.sol           # ERC-792 arbitration
+│       └── IArbitrable.sol           # ERC-792 arbitrable
+├── test/
+│   ├── KlerosSequencerManager.t.sol  # Comprehensive tests
+│   └── mocks/
+│       ├── MockCurate.sol            # Test Kleros mock
+│       └── MockSystemConfig.sol      # Test SystemConfig mock
+├── script/
+│   ├── Deploy.s.sol                  # Generic deployment
+│   ├── DeployLocal.s.sol             # Local Anvil deployment
+│   ├── DeploySepolia.s.sol           # Sepolia deployment
+│   └── DeployMainnet.s.sol           # Mainnet deployment
+├── docker-compose.yml                # Full OP Stack setup
+├── start.sh                          # One-command startup
+├── .env.example                      # Environment template
+├── .env.sepolia.example              # Sepolia config template
+├── .env.mainnet.example              # Mainnet config template
+└── foundry.toml                      # Foundry configuration
+```
 
-### Epoch-Based Rotation
+## FAQ
 
-Each epoch (configurable, e.g., 1 hour), a keeper calls `rotateSequencer()`:
-- The manager selects the next valid sequencer in round-robin order
-- Updates `SystemConfig.batcherHash` to the new sequencer's address
-- The new sequencer's op-batcher can now submit canonical batches
-- Previous sequencer's batches are no longer accepted by derivation
+**Q: Can I use this with an existing OP Stack chain?**
+A: Yes! Deploy KlerosSequencerManager and transfer SystemConfig ownership to it.
 
-## Constitution Example
+**Q: What if all sequencers go offline?**
+A: The last valid batcherHash remains active. The chain continues with that operator until rotation is possible.
 
-The constitution is intentionally subjective and dispute-resolvable via Kleros jurors. Example rules:
+**Q: How do I add a new sequencer operator?**
+A: 1) Register in Kleros Curate, 2) Wait for challenge period, 3) Call syncAddSequencer().
 
-- Operator must not reorder transactions for personal profit (e.g., sandwiching)
-- Operator must not delay inclusion of transactions with valid fees for >5 minutes
-- Operator must not censor specific addresses/categories in a sustained manner
-- Operator must not halt or degrade chain operation beyond defined SLA thresholds
+**Q: Can the guardian rug the chain?**
+A: The guardian can only pause operations, not change sequencers or steal funds. It should be a multisig.
+
+**Q: What's the minimum epoch duration?**
+A: No hard minimum, but shorter epochs mean more frequent rotation and higher gas costs.
+
+## Contributing
+
+Contributions welcome! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Write tests for new functionality
+4. Submit a pull request
 
 ## License
 
