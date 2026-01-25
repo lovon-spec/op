@@ -239,6 +239,8 @@ services:
 
         # Fallback: compute from geth attach after starting
         echo "Starting op-geth..."
+        # NOTE: No ecotone/fjord/granite/holocene overrides - running pre-Ecotone (Delta)
+        # This matches op-node config to avoid beacon API requirement.
         exec geth \
           --datadir /data \
           --http --http.addr 0.0.0.0 --http.port 8545 \
@@ -250,11 +252,7 @@ services:
           --authrpc.vhosts "*" --authrpc.jwtsecret /config/jwt.txt \
           --syncmode full --nodiscover --maxpeers 0 \
           --networkid 42069 --gcmode archive \
-          --rollup.disabletxpoolgossip \
-          --override.ecotone 2281580442 \
-          --override.fjord 2281580442 \
-          --override.granite 2281580442 \
-          --override.holocene 2281580442
+          --rollup.disabletxpoolgossip
     ports:
       - "9545:8545"
       - "9546:8546"
@@ -325,6 +323,9 @@ services:
         echo "===================="
 
         echo "Starting op-node..."
+        # NOTE: No ecotone/fjord/granite/holocene overrides - running pre-Ecotone (Delta)
+        # This avoids beacon API requirement since Anvil has no beacon chain.
+        # For Sepolia/mainnet: add --l1.beacon flag and ecotone overrides
         exec op-node \
           --l1 $$L1_RPC \
           --l1.trustrpc \
@@ -332,11 +333,6 @@ services:
           --l2.jwt-secret /config/jwt.txt \
           --rollup.config /tmp/rollup.json \
           --rollup.l1-chain-config /config/l1-chain-config.json \
-          --override.ecotone 2281580442 \
-          --override.fjord 2281580442 \
-          --override.granite 2281580442 \
-          --override.holocene 2281580442 \
-          --override.pectrablobschedule 2281580442 \
           --sequencer.enabled \
           --sequencer.l1-confs 0 \
           --p2p.disable \
