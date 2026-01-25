@@ -10,6 +10,11 @@ import {ICurate} from "../src/interfaces/ICurate.sol";
 /**
  * @title KlerosSequencerManagerTest
  * @notice Comprehensive test suite for KlerosSequencerManager.
+ *
+ * NOTE: Tests use "operator tuples" where each operator has both:
+ *   - batcher: address that posts batches to L1
+ *   - unsafeSigner: address that signs P2P blocks
+ * Both are rotated atomically by the manager.
  */
 contract KlerosSequencerManagerTest is Test {
     KlerosSequencerManager public manager;
@@ -17,18 +22,24 @@ contract KlerosSequencerManagerTest is Test {
     MockCurate public curate;
 
     address public guardian = address(0x1);
-    address public alice = address(0x100);
-    address public bob = address(0x200);
-    address public charlie = address(0x300);
-    address public dave = address(0x400);
+
+    // Operator tuples: (batcher, unsafeSigner)
+    address public alice_batcher = address(0x100);
+    address public alice_signer = address(0x101);
+    address public bob_batcher = address(0x200);
+    address public bob_signer = address(0x201);
+    address public charlie_batcher = address(0x300);
+    address public charlie_signer = address(0x301);
+    address public dave_batcher = address(0x400);
+    address public dave_signer = address(0x401);
 
     uint256 public constant EPOCH_DURATION = 1 hours;
 
-    // Events to test
-    event SequencerAdded(address indexed sequencer);
-    event SequencerRemoved(address indexed sequencer);
-    event SequencerRotated(address indexed newSequencer, bytes32 newBatcherHash, uint256 timestamp);
-    event RotationSkippedNoValidSequencer(uint256 timestamp);
+    // Events to test (must match contract exactly)
+    event OperatorAdded(bytes32 indexed operatorId, address indexed batcher, address indexed unsafeSigner);
+    event OperatorRemoved(bytes32 indexed operatorId, address indexed batcher, address indexed unsafeSigner);
+    event OperatorRotated(bytes32 indexed operatorId, address indexed batcher, address indexed unsafeSigner, bytes32 batcherHash, uint256 timestamp);
+    event RotationSkippedNoValidOperator(uint256 timestamp);
     event PausedSet(bool isPaused);
     event GuardianSet(address indexed newGuardian);
 
@@ -90,302 +101,323 @@ contract KlerosSequencerManagerTest is Test {
     // ============ Item ID Tests ============
 
     function test_ItemIDFor_ComputesCorrectly() public view {
-        bytes32 expected = keccak256(abi.encodePacked(abi.encode(alice)));
-        assertEq(manager.itemIDFor(alice), expected);
+        bytes32 expected = keccak256(abi.encodePacked(abi.encode(alice_batcher, alice_signer)));
+        assertEq(manager.itemIDFor(alice_batcher, alice_signer), expected);
     }
 
-    function test_ItemIDFor_DifferentAddressesDifferentIDs() public view {
-        assertNotEq(manager.itemIDFor(alice), manager.itemIDFor(bob));
+    function test_ItemIDFor_DifferentOperatorsDifferentIDs() public view {
+        assertNotEq(
+            manager.itemIDFor(alice_batcher, alice_signer),
+            manager.itemIDFor(bob_batcher, bob_signer)
+        );
+    }
+
+    function test_OperatorId_ComputesCorrectly() public view {
+        bytes32 expected = keccak256(abi.encode(alice_batcher, alice_signer));
+        assertEq(manager.operatorId(alice_batcher, alice_signer), expected);
     }
 
     // ============ Registry Status Tests ============
 
     function test_IsRegisteredInRegistry_ReturnsTrueForRegistered() public {
-        _registerSequencer(alice);
-        assertTrue(manager.isRegisteredInRegistry(alice));
+        _registerOperator(alice_batcher, alice_signer);
+        assertTrue(manager.isRegisteredInRegistry(alice_batcher, alice_signer));
     }
 
     function test_IsRegisteredInRegistry_ReturnsFalseForAbsent() public view {
-        assertFalse(manager.isRegisteredInRegistry(alice));
+        assertFalse(manager.isRegisteredInRegistry(alice_batcher, alice_signer));
     }
 
     function test_IsRegisteredInRegistry_ReturnsFalseForClearingRequested() public {
-        _registerSequencer(alice);
-        bytes32 itemID = manager.itemIDFor(alice);
-        curate.setClearingRequested(itemID);
-        assertFalse(manager.isRegisteredInRegistry(alice));
+        _registerOperator(alice_batcher, alice_signer);
+        curate.setOperatorClearingRequested(alice_batcher, alice_signer);
+        assertFalse(manager.isRegisteredInRegistry(alice_batcher, alice_signer));
     }
 
     function test_GetRegistryStatus_ReturnsCorrectStatus() public {
-        assertEq(manager.getRegistryStatus(alice), manager.STATUS_ABSENT());
+        assertEq(manager.getRegistryStatus(alice_batcher, alice_signer), manager.STATUS_ABSENT());
 
-        _registerSequencer(alice);
-        assertEq(manager.getRegistryStatus(alice), manager.STATUS_REGISTERED());
+        _registerOperator(alice_batcher, alice_signer);
+        assertEq(manager.getRegistryStatus(alice_batcher, alice_signer), manager.STATUS_REGISTERED());
 
-        bytes32 itemID = manager.itemIDFor(alice);
-        curate.setClearingRequested(itemID);
-        assertEq(manager.getRegistryStatus(alice), manager.STATUS_CLEARING_REQUESTED());
+        curate.setOperatorClearingRequested(alice_batcher, alice_signer);
+        assertEq(manager.getRegistryStatus(alice_batcher, alice_signer), manager.STATUS_CLEARING_REQUESTED());
     }
 
     // ============ Sync Add Tests ============
 
-    function test_SyncAddSequencer_AddsRegisteredSequencer() public {
-        _registerSequencer(alice);
+    function test_SyncAddOperator_AddsRegisteredOperator() public {
+        _registerOperator(alice_batcher, alice_signer);
 
-        vm.expectEmit(true, false, false, false);
-        emit SequencerAdded(alice);
+        bytes32 opId = manager.operatorId(alice_batcher, alice_signer);
+        vm.expectEmit(true, true, true, false);
+        emit OperatorAdded(opId, alice_batcher, alice_signer);
 
-        manager.syncAddSequencer(alice);
+        manager.syncAddOperator(alice_batcher, alice_signer);
 
-        assertTrue(manager.isActive(alice));
-        assertEq(manager.activeSequencerCount(), 1);
-        assertEq(manager.indexOf(alice), 0);
+        assertTrue(manager.isActive(opId));
+        assertEq(manager.activeOperatorCount(), 1);
     }
 
-    function test_SyncAddSequencer_RevertIfNotRegistered() public {
+    function test_SyncAddOperator_RevertIfNotRegistered() public {
         vm.expectRevert(KlerosSequencerManager.NotRegisteredInRegistry.selector);
-        manager.syncAddSequencer(alice);
+        manager.syncAddOperator(alice_batcher, alice_signer);
     }
 
-    function test_SyncAddSequencer_RevertIfAlreadyActive() public {
-        _registerSequencer(alice);
-        manager.syncAddSequencer(alice);
+    function test_SyncAddOperator_RevertIfAlreadyActive() public {
+        _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_batcher, alice_signer);
 
         vm.expectRevert(KlerosSequencerManager.AlreadyActive.selector);
-        manager.syncAddSequencer(alice);
+        manager.syncAddOperator(alice_batcher, alice_signer);
     }
 
-    function test_SyncAddSequencer_RevertIfZeroAddress() public {
+    function test_SyncAddOperator_RevertIfZeroBatcher() public {
         vm.expectRevert(KlerosSequencerManager.ZeroAddress.selector);
-        manager.syncAddSequencer(address(0));
+        manager.syncAddOperator(address(0), alice_signer);
     }
 
-    function test_SyncAddSequencer_RevertIfPaused() public {
-        _registerSequencer(alice);
+    function test_SyncAddOperator_RevertIfZeroSigner() public {
+        vm.expectRevert(KlerosSequencerManager.ZeroAddress.selector);
+        manager.syncAddOperator(alice_batcher, address(0));
+    }
+
+    function test_SyncAddOperator_RevertIfPaused() public {
+        _registerOperator(alice_batcher, alice_signer);
 
         vm.prank(guardian);
         manager.setPaused(true);
 
         vm.expectRevert(KlerosSequencerManager.ContractPaused.selector);
-        manager.syncAddSequencer(alice);
+        manager.syncAddOperator(alice_batcher, alice_signer);
     }
 
-    function test_SyncAddSequencer_MultipleSequencers() public {
-        _registerSequencer(alice);
-        _registerSequencer(bob);
-        _registerSequencer(charlie);
+    function test_SyncAddOperator_MultipleOperators() public {
+        _registerOperator(alice_batcher, alice_signer);
+        _registerOperator(bob_batcher, bob_signer);
+        _registerOperator(charlie_batcher, charlie_signer);
 
-        manager.syncAddSequencer(alice);
-        manager.syncAddSequencer(bob);
-        manager.syncAddSequencer(charlie);
+        manager.syncAddOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(bob_batcher, bob_signer);
+        manager.syncAddOperator(charlie_batcher, charlie_signer);
 
-        assertEq(manager.activeSequencerCount(), 3);
-        assertEq(manager.indexOf(alice), 0);
-        assertEq(manager.indexOf(bob), 1);
-        assertEq(manager.indexOf(charlie), 2);
+        assertEq(manager.activeOperatorCount(), 3);
     }
 
     // ============ Sync Remove Tests ============
 
-    function test_SyncRemoveSequencer_RemovesInvalidSequencer() public {
-        _registerSequencer(alice);
-        manager.syncAddSequencer(alice);
+    function test_SyncRemoveOperator_RemovesInvalidOperator() public {
+        _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_batcher, alice_signer);
 
         // Simulate challenge (clearing requested)
-        bytes32 itemID = manager.itemIDFor(alice);
-        curate.setClearingRequested(itemID);
+        curate.setOperatorClearingRequested(alice_batcher, alice_signer);
 
-        vm.expectEmit(true, false, false, false);
-        emit SequencerRemoved(alice);
+        bytes32 opId = manager.operatorId(alice_batcher, alice_signer);
+        vm.expectEmit(true, true, true, false);
+        emit OperatorRemoved(opId, alice_batcher, alice_signer);
 
-        manager.syncRemoveSequencer(alice);
+        manager.syncRemoveOperator(alice_batcher, alice_signer);
 
-        assertFalse(manager.isActive(alice));
-        assertEq(manager.activeSequencerCount(), 0);
+        assertFalse(manager.isActive(opId));
+        assertEq(manager.activeOperatorCount(), 0);
     }
 
-    function test_SyncRemoveSequencer_RevertIfNotActive() public {
+    function test_SyncRemoveOperator_RevertIfNotActive() public {
         vm.expectRevert(KlerosSequencerManager.NotActive.selector);
-        manager.syncRemoveSequencer(alice);
+        manager.syncRemoveOperator(alice_batcher, alice_signer);
     }
 
-    function test_SyncRemoveSequencer_RevertIfStillRegistered() public {
-        _registerSequencer(alice);
-        manager.syncAddSequencer(alice);
+    function test_SyncRemoveOperator_RevertIfStillRegistered() public {
+        _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_batcher, alice_signer);
 
         vm.expectRevert(KlerosSequencerManager.StillRegisteredInRegistry.selector);
-        manager.syncRemoveSequencer(alice);
+        manager.syncRemoveOperator(alice_batcher, alice_signer);
     }
 
-    function test_SyncRemoveSequencer_RevertIfPaused() public {
-        _registerSequencer(alice);
-        manager.syncAddSequencer(alice);
+    function test_SyncRemoveOperator_RevertIfPaused() public {
+        _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_batcher, alice_signer);
 
-        bytes32 itemID = manager.itemIDFor(alice);
-        curate.setClearingRequested(itemID);
+        curate.setOperatorClearingRequested(alice_batcher, alice_signer);
 
         vm.prank(guardian);
         manager.setPaused(true);
 
         vm.expectRevert(KlerosSequencerManager.ContractPaused.selector);
-        manager.syncRemoveSequencer(alice);
+        manager.syncRemoveOperator(alice_batcher, alice_signer);
     }
 
     // ============ Rotation Tests ============
 
-    function test_RotateSequencer_SelectsNextSequencer() public {
-        _setupThreeSequencers();
+    function test_RotateOperator_SelectsNextOperator() public {
+        _setupThreeOperators();
 
-        bytes32 expectedHash = bytes32(uint256(uint160(alice)));
+        bytes32 expectedHash = bytes32(uint256(uint160(alice_batcher)));
+        bytes32 opId = manager.operatorId(alice_batcher, alice_signer);
 
         vm.expectEmit(true, true, true, true);
-        emit SequencerRotated(alice, expectedHash, block.timestamp);
+        emit OperatorRotated(opId, alice_batcher, alice_signer, expectedHash, block.timestamp);
 
-        manager.rotateSequencer();
+        manager.rotateOperator();
 
         assertEq(manager.currentIndex(), 0);
         assertEq(systemConfig.batcherHash(), expectedHash);
+        assertEq(systemConfig.unsafeBlockSigner(), alice_signer);
     }
 
-    function test_RotateSequencer_RotatesThroughAllSequencers() public {
-        _setupThreeSequencers();
+    function test_RotateOperator_RotatesThroughAllOperators() public {
+        _setupThreeOperators();
 
         // First rotation -> alice (index 0)
-        manager.rotateSequencer();
-        assertEq(manager.currentSequencer(), alice);
+        manager.rotateOperator();
+        KlerosSequencerManager.Operator memory current = manager.currentOperator();
+        assertEq(current.batcher, alice_batcher);
+        assertEq(current.unsafeSigner, alice_signer);
 
         // Wait for epoch
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         // Second rotation -> bob (index 1)
-        manager.rotateSequencer();
-        assertEq(manager.currentSequencer(), bob);
+        manager.rotateOperator();
+        current = manager.currentOperator();
+        assertEq(current.batcher, bob_batcher);
+        assertEq(current.unsafeSigner, bob_signer);
 
         // Wait for epoch
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         // Third rotation -> charlie (index 2)
-        manager.rotateSequencer();
-        assertEq(manager.currentSequencer(), charlie);
+        manager.rotateOperator();
+        current = manager.currentOperator();
+        assertEq(current.batcher, charlie_batcher);
+        assertEq(current.unsafeSigner, charlie_signer);
 
         // Wait for epoch
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         // Fourth rotation -> wraps to alice (index 0)
-        manager.rotateSequencer();
-        assertEq(manager.currentSequencer(), alice);
+        manager.rotateOperator();
+        current = manager.currentOperator();
+        assertEq(current.batcher, alice_batcher);
+        assertEq(current.unsafeSigner, alice_signer);
     }
 
-    function test_RotateSequencer_RevertIfEpochNotEnded() public {
-        _setupThreeSequencers();
-        manager.rotateSequencer();
+    function test_RotateOperator_RevertIfEpochNotEnded() public {
+        _setupThreeOperators();
+        manager.rotateOperator();
 
         vm.expectRevert(KlerosSequencerManager.EpochNotEnded.selector);
-        manager.rotateSequencer();
+        manager.rotateOperator();
     }
 
-    function test_RotateSequencer_RevertIfNoActiveSequencers() public {
-        vm.expectRevert(KlerosSequencerManager.NoActiveSequencers.selector);
-        manager.rotateSequencer();
+    function test_RotateOperator_RevertIfNoActiveOperators() public {
+        vm.expectRevert(KlerosSequencerManager.NoActiveOperators.selector);
+        manager.rotateOperator();
     }
 
-    function test_RotateSequencer_SkipsInvalidSequencers() public {
-        _setupThreeSequencers();
+    function test_RotateOperator_SkipsInvalidOperators() public {
+        _setupThreeOperators();
 
         // Invalidate bob
-        bytes32 bobItemID = manager.itemIDFor(bob);
-        curate.setClearingRequested(bobItemID);
+        curate.setOperatorClearingRequested(bob_batcher, bob_signer);
 
         // First rotation -> alice (valid)
-        manager.rotateSequencer();
-        assertEq(manager.currentSequencer(), alice);
+        manager.rotateOperator();
+        KlerosSequencerManager.Operator memory current = manager.currentOperator();
+        assertEq(current.batcher, alice_batcher);
 
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         // Second rotation -> should skip bob and go to charlie
-        manager.rotateSequencer();
-        assertEq(manager.currentSequencer(), charlie);
+        manager.rotateOperator();
+        current = manager.currentOperator();
+        assertEq(current.batcher, charlie_batcher);
 
         // Bob should be removed
-        assertFalse(manager.isActive(bob));
-        assertEq(manager.activeSequencerCount(), 2);
+        bytes32 bobOpId = manager.operatorId(bob_batcher, bob_signer);
+        assertFalse(manager.isActive(bobOpId));
+        assertEq(manager.activeOperatorCount(), 2);
     }
 
-    function test_RotateSequencer_RemovesAllInvalidAndEmitsSkipped() public {
-        _setupThreeSequencers();
+    function test_RotateOperator_RemovesAllInvalidAndEmitsSkipped() public {
+        _setupThreeOperators();
 
         // Invalidate all
-        curate.setClearingRequested(manager.itemIDFor(alice));
-        curate.setClearingRequested(manager.itemIDFor(bob));
-        curate.setClearingRequested(manager.itemIDFor(charlie));
+        curate.setOperatorClearingRequested(alice_batcher, alice_signer);
+        curate.setOperatorClearingRequested(bob_batcher, bob_signer);
+        curate.setOperatorClearingRequested(charlie_batcher, charlie_signer);
 
         vm.expectEmit(false, false, false, true);
-        emit RotationSkippedNoValidSequencer(block.timestamp);
+        emit RotationSkippedNoValidOperator(block.timestamp);
 
-        manager.rotateSequencer();
+        manager.rotateOperator();
 
-        assertEq(manager.activeSequencerCount(), 0);
+        assertEq(manager.activeOperatorCount(), 0);
     }
 
-    function test_RotateSequencer_RevertIfPaused() public {
-        _setupThreeSequencers();
+    function test_RotateOperator_RevertIfPaused() public {
+        _setupThreeOperators();
 
         vm.prank(guardian);
         manager.setPaused(true);
 
         vm.expectRevert(KlerosSequencerManager.ContractPaused.selector);
-        manager.rotateSequencer();
+        manager.rotateOperator();
     }
 
-    function test_Poke_CallsRotateSequencer() public {
-        _setupThreeSequencers();
+    function test_Poke_CallsRotateOperator() public {
+        _setupThreeOperators();
 
         manager.poke();
 
-        assertEq(manager.currentSequencer(), alice);
+        KlerosSequencerManager.Operator memory current = manager.currentOperator();
+        assertEq(current.batcher, alice_batcher);
     }
 
     // ============ Current Index Handling Tests ============
 
     function test_RemoveBeforeCurrentIndex_AdjustsIndex() public {
-        _setupThreeSequencers();
+        _setupThreeOperators();
 
         // Rotate to bob (index 1)
-        manager.rotateSequencer();
+        manager.rotateOperator();
         vm.warp(block.timestamp + EPOCH_DURATION);
-        manager.rotateSequencer();
+        manager.rotateOperator();
         assertEq(manager.currentIndex(), 1);
 
         // Remove alice (index 0, before currentIndex)
-        curate.setClearingRequested(manager.itemIDFor(alice));
-        manager.syncRemoveSequencer(alice);
+        curate.setOperatorClearingRequested(alice_batcher, alice_signer);
+        manager.syncRemoveOperator(alice_batcher, alice_signer);
 
         // currentIndex should be adjusted
         assertEq(manager.currentIndex(), 0);
     }
 
     function test_RemoveAtCurrentIndex_ResetsIndex() public {
-        _setupThreeSequencers();
+        _setupThreeOperators();
 
         // Rotate to charlie (index 2)
-        manager.rotateSequencer();
+        manager.rotateOperator();
         vm.warp(block.timestamp + EPOCH_DURATION);
-        manager.rotateSequencer();
+        manager.rotateOperator();
         vm.warp(block.timestamp + EPOCH_DURATION);
-        manager.rotateSequencer();
+        manager.rotateOperator();
         assertEq(manager.currentIndex(), 2);
 
         // Remove charlie (at currentIndex, which is also lastIndex)
-        curate.setClearingRequested(manager.itemIDFor(charlie));
-        manager.syncRemoveSequencer(charlie);
+        curate.setOperatorClearingRequested(charlie_batcher, charlie_signer);
+        manager.syncRemoveOperator(charlie_batcher, charlie_signer);
 
         // currentIndex should reset to max (meaning next rotation starts from 0)
         assertEq(manager.currentIndex(), type(uint256).max);
 
         // Verify next rotation selects alice (index 0)
         vm.warp(block.timestamp + EPOCH_DURATION);
-        manager.rotateSequencer();
-        assertEq(manager.currentSequencer(), alice);
+        manager.rotateOperator();
+        KlerosSequencerManager.Operator memory current = manager.currentOperator();
+        assertEq(current.batcher, alice_batcher);
     }
 
     // ============ Guardian Tests ============
@@ -430,46 +462,61 @@ contract KlerosSequencerManagerTest is Test {
 
     // ============ View Functions Tests ============
 
-    function test_ActiveSequencerCount() public {
-        assertEq(manager.activeSequencerCount(), 0);
+    function test_ActiveOperatorCount() public {
+        assertEq(manager.activeOperatorCount(), 0);
 
-        _registerSequencer(alice);
-        manager.syncAddSequencer(alice);
-        assertEq(manager.activeSequencerCount(), 1);
+        _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_batcher, alice_signer);
+        assertEq(manager.activeOperatorCount(), 1);
 
-        _registerSequencer(bob);
-        manager.syncAddSequencer(bob);
-        assertEq(manager.activeSequencerCount(), 2);
+        _registerOperator(bob_batcher, bob_signer);
+        manager.syncAddOperator(bob_batcher, bob_signer);
+        assertEq(manager.activeOperatorCount(), 2);
     }
 
-    function test_GetActiveSequencers() public {
-        _setupThreeSequencers();
+    function test_GetActiveOperators() public {
+        _setupThreeOperators();
 
-        address[] memory sequencers = manager.getActiveSequencers();
-        assertEq(sequencers.length, 3);
-        assertEq(sequencers[0], alice);
-        assertEq(sequencers[1], bob);
-        assertEq(sequencers[2], charlie);
+        KlerosSequencerManager.Operator[] memory operators = manager.getActiveOperators();
+        assertEq(operators.length, 3);
+        assertEq(operators[0].batcher, alice_batcher);
+        assertEq(operators[0].unsafeSigner, alice_signer);
+        assertEq(operators[1].batcher, bob_batcher);
+        assertEq(operators[1].unsafeSigner, bob_signer);
+        assertEq(operators[2].batcher, charlie_batcher);
+        assertEq(operators[2].unsafeSigner, charlie_signer);
     }
 
-    function test_CurrentSequencer_ReturnsZeroWhenEmpty() public view {
-        assertEq(manager.currentSequencer(), address(0));
+    function test_CurrentOperator_ReturnsZeroWhenEmpty() public view {
+        KlerosSequencerManager.Operator memory current = manager.currentOperator();
+        assertEq(current.batcher, address(0));
+        assertEq(current.unsafeSigner, address(0));
     }
 
-    function test_CurrentSequencer_ReturnsCorrectAddress() public {
-        _setupThreeSequencers();
-        manager.rotateSequencer();
+    function test_CurrentOperator_ReturnsCorrectTuple() public {
+        _setupThreeOperators();
+        manager.rotateOperator();
 
-        assertEq(manager.currentSequencer(), alice);
+        KlerosSequencerManager.Operator memory current = manager.currentOperator();
+        assertEq(current.batcher, alice_batcher);
+        assertEq(current.unsafeSigner, alice_signer);
+    }
+
+    function test_IsCurrentOperator_ReturnsTrue() public {
+        _setupThreeOperators();
+        manager.rotateOperator();
+
+        assertTrue(manager.isCurrentOperator(alice_batcher, alice_signer));
+        assertFalse(manager.isCurrentOperator(bob_batcher, bob_signer));
     }
 
     function test_TimeUntilNextRotation() public {
-        _setupThreeSequencers();
+        _setupThreeOperators();
 
         // Initially should be 0 (can rotate immediately due to constructor setup)
         assertEq(manager.timeUntilNextRotation(), 0);
 
-        manager.rotateSequencer();
+        manager.rotateOperator();
 
         // Should be close to EPOCH_DURATION
         assertGt(manager.timeUntilNextRotation(), EPOCH_DURATION - 10);
@@ -486,88 +533,120 @@ contract KlerosSequencerManagerTest is Test {
 
     // ============ Edge Cases Tests ============
 
-    function test_SingleSequencer_RotatesBackToItself() public {
-        _registerSequencer(alice);
-        manager.syncAddSequencer(alice);
+    function test_SingleOperator_RotatesBackToItself() public {
+        _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_batcher, alice_signer);
 
-        manager.rotateSequencer();
-        assertEq(manager.currentSequencer(), alice);
+        manager.rotateOperator();
+        KlerosSequencerManager.Operator memory current = manager.currentOperator();
+        assertEq(current.batcher, alice_batcher);
 
         vm.warp(block.timestamp + EPOCH_DURATION);
-        manager.rotateSequencer();
-        assertEq(manager.currentSequencer(), alice);
+        manager.rotateOperator();
+        current = manager.currentOperator();
+        assertEq(current.batcher, alice_batcher);
     }
 
-    function test_SwapPopRemoval_MaintainsCorrectIndexes() public {
-        _setupThreeSequencers();
-        _registerSequencer(dave);
-        manager.syncAddSequencer(dave);
+    function test_SwapPopRemoval_MaintainsCorrectOrder() public {
+        _setupThreeOperators();
+        _registerOperator(dave_batcher, dave_signer);
+        manager.syncAddOperator(dave_batcher, dave_signer);
 
         // Order: [alice, bob, charlie, dave]
         // Remove bob -> [alice, dave, charlie]
-        curate.setClearingRequested(manager.itemIDFor(bob));
-        manager.syncRemoveSequencer(bob);
+        curate.setOperatorClearingRequested(bob_batcher, bob_signer);
+        manager.syncRemoveOperator(bob_batcher, bob_signer);
 
-        assertEq(manager.activeSequencerCount(), 3);
-        assertEq(manager.indexOf(alice), 0);
-        assertEq(manager.indexOf(dave), 1);
-        assertEq(manager.indexOf(charlie), 2);
+        assertEq(manager.activeOperatorCount(), 3);
 
-        address[] memory sequencers = manager.getActiveSequencers();
-        assertEq(sequencers[0], alice);
-        assertEq(sequencers[1], dave);
-        assertEq(sequencers[2], charlie);
+        KlerosSequencerManager.Operator[] memory operators = manager.getActiveOperators();
+        assertEq(operators[0].batcher, alice_batcher);
+        assertEq(operators[1].batcher, dave_batcher);
+        assertEq(operators[2].batcher, charlie_batcher);
     }
 
     function test_BatcherHash_V0Format() public {
-        _registerSequencer(alice);
-        manager.syncAddSequencer(alice);
-        manager.rotateSequencer();
+        _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_batcher, alice_signer);
+        manager.rotateOperator();
 
-        bytes32 expected = bytes32(uint256(uint160(alice)));
+        bytes32 expected = bytes32(uint256(uint160(alice_batcher)));
         assertEq(systemConfig.batcherHash(), expected);
 
         // Verify we can extract the address back
         address extracted = address(uint160(uint256(systemConfig.batcherHash())));
-        assertEq(extracted, alice);
+        assertEq(extracted, alice_batcher);
+    }
+
+    function test_UnsafeBlockSigner_SetCorrectly() public {
+        _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_batcher, alice_signer);
+        manager.rotateOperator();
+
+        assertEq(systemConfig.unsafeBlockSigner(), alice_signer);
+    }
+
+    // ============ Legacy API Tests ============
+
+    function test_LegacyCurrentSequencer_ReturnsBatcher() public {
+        _setupThreeOperators();
+        manager.rotateOperator();
+
+        // Legacy currentSequencer returns just the batcher address
+        assertEq(manager.currentSequencer(), alice_batcher);
+    }
+
+    function test_LegacyActiveSequencerCount_ReturnsOperatorCount() public {
+        _setupThreeOperators();
+        assertEq(manager.activeSequencerCount(), 3);
+    }
+
+    function test_LegacyRotateSequencer_Works() public {
+        _setupThreeOperators();
+
+        // Legacy rotateSequencer should work
+        manager.rotateSequencer();
+
+        assertEq(manager.currentSequencer(), alice_batcher);
     }
 
     // ============ Fuzz Tests ============
 
-    function testFuzz_ItemIDFor_Deterministic(address sequencer) public view {
-        bytes32 id1 = manager.itemIDFor(sequencer);
-        bytes32 id2 = manager.itemIDFor(sequencer);
+    function testFuzz_ItemIDFor_Deterministic(address batcher, address signer) public view {
+        bytes32 id1 = manager.itemIDFor(batcher, signer);
+        bytes32 id2 = manager.itemIDFor(batcher, signer);
         assertEq(id1, id2);
     }
 
-    function testFuzz_AddRemoveSequencer(address sequencer) public {
-        vm.assume(sequencer != address(0));
+    function testFuzz_AddRemoveOperator(address batcher, address signer) public {
+        vm.assume(batcher != address(0));
+        vm.assume(signer != address(0));
 
-        _registerSequencer(sequencer);
-        manager.syncAddSequencer(sequencer);
+        _registerOperator(batcher, signer);
+        manager.syncAddOperator(batcher, signer);
 
-        assertTrue(manager.isActive(sequencer));
+        bytes32 opId = manager.operatorId(batcher, signer);
+        assertTrue(manager.isActive(opId));
 
-        curate.setClearingRequested(manager.itemIDFor(sequencer));
-        manager.syncRemoveSequencer(sequencer);
+        curate.setOperatorClearingRequested(batcher, signer);
+        manager.syncRemoveOperator(batcher, signer);
 
-        assertFalse(manager.isActive(sequencer));
+        assertFalse(manager.isActive(opId));
     }
 
     // ============ Helper Functions ============
 
-    function _registerSequencer(address sequencer) internal {
-        bytes memory data = abi.encode(sequencer);
-        curate.registerItemDirectly(data);
+    function _registerOperator(address batcher, address signer) internal {
+        curate.registerOperatorDirectly(batcher, signer);
     }
 
-    function _setupThreeSequencers() internal {
-        _registerSequencer(alice);
-        _registerSequencer(bob);
-        _registerSequencer(charlie);
+    function _setupThreeOperators() internal {
+        _registerOperator(alice_batcher, alice_signer);
+        _registerOperator(bob_batcher, bob_signer);
+        _registerOperator(charlie_batcher, charlie_signer);
 
-        manager.syncAddSequencer(alice);
-        manager.syncAddSequencer(bob);
-        manager.syncAddSequencer(charlie);
+        manager.syncAddOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(bob_batcher, bob_signer);
+        manager.syncAddOperator(charlie_batcher, charlie_signer);
     }
 }
