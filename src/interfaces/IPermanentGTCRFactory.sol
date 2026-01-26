@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+/**
+ * @title IERC20
+ * @notice Minimal ERC20 interface for Kleros GTCR token parameter.
+ * @dev Only needed to pass address(0) for native ETH stakes.
+ */
+interface IERC20 {}
 
 /**
  * @title IArbitrator

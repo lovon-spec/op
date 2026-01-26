@@ -2,10 +2,9 @@
 pragma solidity ^0.8.20;
 
 import {Script, console2} from "forge-std/Script.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
-import {IPermanentGTCRFactory, IPermanentGTCR, IArbitrator} from "../src/interfaces/IPermanentGTCRFactory.sol";
+import {IPermanentGTCRFactory, IPermanentGTCR, IArbitrator, IERC20} from "../src/interfaces/IPermanentGTCRFactory.sol";
 
 /**
  * @title DeployMainnet
