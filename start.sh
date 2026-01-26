@@ -11,8 +11,8 @@
 #   ./start.sh status       # Show status
 #   ./start.sh demo         # Run rotation demo
 #   ./start.sh clean        # Clean all data and start fresh
-#   ./start.sh sepolia-fork # Test on forked Sepolia (no ETH needed)
-#   ./start.sh sepolia      # Deploy to real Sepolia (requires .env.sepolia)
+#   ./start.sh mainnet-fork # Test on forked mainnet with real Kleros
+#   ./start.sh mainnet      # Deploy to real mainnet (requires .env.mainnet)
 #
 
 set -e
@@ -48,9 +48,9 @@ print_usage() {
     echo "  demo      Run sequencer rotation demo"
     echo "  clean     Clean all data and start fresh"
     echo ""
-    echo "Sepolia Commands:"
-    echo "  sepolia-fork  Start forked Sepolia locally (no ETH needed)"
-    echo "  sepolia       Deploy to real Sepolia (requires .env.sepolia)"
+    echo "Mainnet Commands:"
+    echo "  mainnet-fork  Fork mainnet with real Kleros contracts (no ETH needed)"
+    echo "  mainnet       Deploy to real mainnet (requires .env.mainnet)"
     echo ""
     echo "  help      Show this help message"
     echo ""
@@ -395,25 +395,34 @@ run_demo() {
 }
 
 # =============================================================
-# Sepolia Functions
+# Mainnet Fork Functions
 # =============================================================
 
-COMPOSE_SEPOLIA="docker compose -f docker-compose.yml -f docker-compose.sepolia.yml"
+COMPOSE_MAINNET="docker compose -f docker-compose.yml -f docker-compose.mainnet.yml"
 
-start_sepolia_fork() {
+# Default mainnet RPC (can be overridden via MAINNET_RPC_URL env var)
+DEFAULT_MAINNET_RPC="https://mainnet.infura.io/v3/cd6912e033cd4849a244e3a1217a5a14"
+
+start_mainnet_fork() {
     print_header
-    echo -e "${GREEN}Starting Constitutional L2 on forked Sepolia...${NC}"
-    echo -e "${YELLOW}(Local testing mode - no real ETH needed)${NC}"
+    echo -e "${GREEN}Starting Constitutional L2 on forked Mainnet...${NC}"
+    echo -e "${CYAN}Using REAL Kleros contracts!${NC}"
+    echo -e "${YELLOW}(Local fork - no real ETH needed)${NC}"
     echo ""
 
-    # Check for Sepolia RPC URL
-    local SEPOLIA_RPC="${SEPOLIA_RPC_URL:-https://rpc.sepolia.org}"
-    echo "Using Sepolia RPC: $SEPOLIA_RPC"
+    # Check for Mainnet RPC URL
+    local MAINNET_RPC="${MAINNET_RPC_URL:-$DEFAULT_MAINNET_RPC}"
+    echo "Using Mainnet RPC: $MAINNET_RPC"
+    echo ""
+    echo "Kleros Contracts (Mainnet):"
+    echo "  PermanentGTCRFactory: 0x69816B499b0eD9a60ac52cF2beB24827E5F13A89"
+    echo "  KlerosCore (Court):   0x988b3a538b618c7a603e1c11ab82cd16dbe28069"
+    echo "  Court ID 4:           Blockchain (Technical)"
     echo ""
 
-    # Start L1 (forked Sepolia) and deployer
-    echo "Step 1/3: Forking Sepolia and deploying contracts..."
-    SEPOLIA_RPC_URL="$SEPOLIA_RPC" $COMPOSE_SEPOLIA up -d l1 deployer
+    # Start L1 (forked Mainnet) and deployer
+    echo "Step 1/3: Forking Mainnet and deploying contracts..."
+    MAINNET_RPC_URL="$MAINNET_RPC" $COMPOSE_MAINNET up -d l1 deployer
 
     if ! wait_for_deployment; then
         echo -e "${RED}Deployment failed. Check logs with: ./start.sh logs${NC}"
@@ -429,7 +438,7 @@ start_sepolia_fork() {
 
     # Start L2 services
     echo "Step 3/3: Starting L2 services..."
-    SEPOLIA_RPC_URL="$SEPOLIA_RPC" $COMPOSE_SEPOLIA --profile l2 up -d
+    MAINNET_RPC_URL="$MAINNET_RPC" $COMPOSE_MAINNET --profile l2 up -d
 
     # Wait for L2
     if ! wait_for_l2; then
@@ -437,48 +446,48 @@ start_sepolia_fork() {
     fi
 
     local MANAGER=$(get_address "KlerosSequencerManager")
-    local CURATE=$(get_address "MockCurate")
+    local REGISTRY=$(cat .deployments/KlerosGTCRFactory.address 2>/dev/null || echo "N/A")
     local SYSCONFIG=$(get_address "MockSystemConfig")
 
     echo ""
     echo -e "${GREEN}================================================================${NC}"
-    echo -e "${GREEN}  Constitutional L2 - Forked Sepolia is running!${NC}"
+    echo -e "${GREEN}  Constitutional L2 - Forked Mainnet with Real Kleros!${NC}"
     echo -e "${GREEN}================================================================${NC}"
     echo ""
     echo "Endpoints:"
-    echo "  L1 RPC:     http://localhost:8545  (forked Sepolia, chain ID: 11155111)"
+    echo "  L1 RPC:     http://localhost:8545  (forked Mainnet, chain ID: 1)"
     echo "  L2 RPC:     http://localhost:9545  (op-geth, chain ID: 42069)"
     echo "  L2 WS:      ws://localhost:9546"
     echo "  Rollup RPC: http://localhost:9547  (op-node)"
     echo ""
-    echo "Contracts (on forked Sepolia):"
+    echo "Deployed Contracts:"
     echo "  KlerosSequencerManager: $MANAGER"
-    echo "  MockCurate:             $CURATE"
+    echo "  Operator Registry:      (deployed via Kleros factory)"
     echo "  MockSystemConfig:       $SYSCONFIG"
     echo ""
-    echo -e "${CYAN}This is a LOCAL FORK of Sepolia for testing.${NC}"
-    echo "Transactions are free but don't persist to real Sepolia."
+    echo -e "${CYAN}This uses REAL Kleros contracts on a local fork.${NC}"
+    echo "Operators are registered in a real PermanentGTCR instance."
+    echo "Disputes would go to Kleros Court ID 4 (Blockchain Technical)."
     echo ""
-    echo "To deploy to real Sepolia:"
-    echo "  1. Create .env.sepolia with your credentials"
-    echo "  2. Run: ./start.sh sepolia"
+    echo "Try the demo:"
+    echo "  ./start.sh demo"
     echo ""
 }
 
-start_sepolia_real() {
+start_mainnet_real() {
     print_header
-    echo -e "${GREEN}Deploying Constitutional L2 to Sepolia...${NC}"
-    echo -e "${RED}(Real deployment - uses testnet ETH)${NC}"
+    echo -e "${GREEN}Deploying Constitutional L2 to Mainnet...${NC}"
+    echo -e "${RED}(REAL deployment - uses REAL ETH!)${NC}"
     echo ""
 
-    # Check for .env.sepolia
-    if [ ! -f ".env.sepolia" ]; then
-        echo -e "${RED}Error: .env.sepolia not found${NC}"
+    # Check for .env.mainnet
+    if [ ! -f ".env.mainnet" ]; then
+        echo -e "${RED}Error: .env.mainnet not found${NC}"
         echo ""
-        echo "Create .env.sepolia with:"
-        echo "  SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY"
-        echo "  SEPOLIA_BEACON_URL=https://ethereum-sepolia-beacon-api.publicnode.com"
-        echo "  DEPLOYER_PRIVATE_KEY=0x...  (funded with ~0.5 SepoliaETH)"
+        echo "Create .env.mainnet with:"
+        echo "  MAINNET_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY"
+        echo "  MAINNET_BEACON_URL=https://beacon.example.com"
+        echo "  DEPLOYER_PRIVATE_KEY=0x...  (funded with ~1 ETH)"
         echo "  SEQUENCER_PRIVATE_KEY=0x..."
         echo "  BATCHER_PRIVATE_KEY=0x..."
         echo ""
@@ -487,29 +496,34 @@ start_sepolia_real() {
 
     # Source the env file
     set -a
-    source .env.sepolia
+    source .env.mainnet
     set +a
 
     # Validate required vars
-    if [ -z "$SEPOLIA_RPC_URL" ] || [ -z "$DEPLOYER_PRIVATE_KEY" ]; then
-        echo -e "${RED}Error: Missing required variables in .env.sepolia${NC}"
-        echo "Required: SEPOLIA_RPC_URL, DEPLOYER_PRIVATE_KEY"
+    if [ -z "$MAINNET_RPC_URL" ] || [ -z "$DEPLOYER_PRIVATE_KEY" ]; then
+        echo -e "${RED}Error: Missing required variables in .env.mainnet${NC}"
+        echo "Required: MAINNET_RPC_URL, DEPLOYER_PRIVATE_KEY"
         exit 1
     fi
 
-    echo "Using Sepolia RPC: $SEPOLIA_RPC_URL"
+    echo "Using Mainnet RPC: $MAINNET_RPC_URL"
     echo ""
 
-    echo -e "${YELLOW}WARNING: This will deploy contracts to real Sepolia!${NC}"
-    echo "Press Ctrl+C to cancel, or wait 5 seconds to continue..."
-    sleep 5
+    echo -e "${RED}================================================================${NC}"
+    echo -e "${RED}  WARNING: MAINNET DEPLOYMENT - REAL VALUE AT STAKE!${NC}"
+    echo -e "${RED}================================================================${NC}"
+    echo ""
+    echo "This will deploy contracts to Ethereum Mainnet."
+    echo "Press Ctrl+C to cancel, or wait 10 seconds to continue..."
+    sleep 10
 
-    # For real Sepolia, we need beacon for blobs
+    # For real mainnet, we need beacon for blobs
     export USE_BEACON=true
+    export PRODUCTION=true
 
-    # Start with real Sepolia config
-    echo "Step 1/3: Deploying contracts to Sepolia..."
-    $COMPOSE_SEPOLIA up -d l1 deployer
+    # Start with real Mainnet config
+    echo "Step 1/3: Deploying contracts to Mainnet..."
+    $COMPOSE_MAINNET up -d l1 deployer
 
     if ! wait_for_deployment; then
         echo -e "${RED}Deployment failed. Check logs.${NC}"
@@ -523,7 +537,7 @@ start_sepolia_real() {
     fi
 
     echo "Step 3/3: Starting L2 services..."
-    $COMPOSE_SEPOLIA --profile l2 up -d
+    $COMPOSE_MAINNET --profile l2 up -d
 
     if ! wait_for_l2; then
         echo -e "${YELLOW}L2 may still be starting. Check logs.${NC}"
@@ -533,31 +547,31 @@ start_sepolia_real() {
 
     echo ""
     echo -e "${GREEN}================================================================${NC}"
-    echo -e "${GREEN}  Constitutional L2 - Deployed to Sepolia!${NC}"
+    echo -e "${GREEN}  Constitutional L2 - Deployed to Mainnet!${NC}"
     echo -e "${GREEN}================================================================${NC}"
     echo ""
     echo "Endpoints:"
-    echo "  L1 (Sepolia): $SEPOLIA_RPC_URL"
+    echo "  L1 (Mainnet): $MAINNET_RPC_URL"
     echo "  L2 RPC:       http://localhost:9545"
     echo ""
-    echo "Contracts (on Sepolia):"
+    echo "Contracts (on Mainnet):"
     echo "  KlerosSequencerManager: $MANAGER"
     echo ""
-    echo -e "${GREEN}Your L2 is now running on Sepolia!${NC}"
+    echo -e "${GREEN}Your L2 is now running on Mainnet!${NC}"
     echo ""
 }
 
-stop_sepolia() {
-    echo "Stopping Sepolia services..."
-    $COMPOSE_SEPOLIA --profile l2 down
+stop_mainnet() {
+    echo "Stopping Mainnet services..."
+    $COMPOSE_MAINNET --profile l2 down
     echo -e "${GREEN}All services stopped${NC}"
 }
 
-clean_sepolia() {
-    echo "Cleaning Sepolia data..."
-    $COMPOSE_SEPOLIA --profile l2 down -v
+clean_mainnet() {
+    echo "Cleaning Mainnet data..."
+    $COMPOSE_MAINNET --profile l2 down -v
     rm -rf .deployments docker/config/*.json docker/config/jwt.txt
-    echo -e "${GREEN}All Sepolia data cleaned${NC}"
+    echo -e "${GREEN}All Mainnet data cleaned${NC}"
 }
 
 # Main
@@ -585,18 +599,18 @@ case "${1:-local}" in
     demo)
         run_demo
         ;;
-    # Sepolia commands
-    sepolia-fork|fork)
-        start_sepolia_fork
+    # Mainnet commands
+    mainnet-fork|fork)
+        start_mainnet_fork
         ;;
-    sepolia)
-        start_sepolia_real
+    mainnet)
+        start_mainnet_real
         ;;
-    sepolia-stop)
-        stop_sepolia
+    mainnet-stop)
+        stop_mainnet
         ;;
-    sepolia-clean)
-        clean_sepolia
+    mainnet-clean)
+        clean_mainnet
         ;;
     help|--help|-h)
         print_usage
