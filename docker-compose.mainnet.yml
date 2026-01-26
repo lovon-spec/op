@@ -26,11 +26,11 @@ services:
       - "--host=0.0.0.0"
       - "--port=8545"
       - "--fork-url=${MAINNET_RPC_URL:-https://mainnet.infura.io/v3/cd6912e033cd4849a244e3a1217a5a14}"
-      - "--fork-block-number=${FORK_BLOCK:-latest}"
       - "--block-time=12"
       - "--accounts=10"
       - "--balance=10000"
       # Anvil uses mainnet chain ID (1) when forking
+      # Forks from latest block by default
     ports:
       - "8545:8545"
     healthcheck:
