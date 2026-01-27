@@ -7,12 +7,28 @@ A fully decentralized Layer 2 rollup based on the OP Stack (Superchain), with co
 A Constitutional L2 is an Optimistic Rollup where sequencer operation is governed by a **constitution** - a set of rules that operators must follow, enforced through decentralized dispute resolution rather than code alone.
 
 **Key Features:**
+- **Superchain Compliant**: "Green" status with ProxyAdmin to Optimism Security Council
+- **Hot-Swappable Adapters**: Survive OP Stack hardforks without contract upgrades
 - **Decentralized Sequencer Rotation**: Multiple operators take turns producing blocks
-- **Operator Tuples**: Each operator registers both a batcher key AND an unsafe signer key
-- **Atomic Key Rotation**: Both keys are rotated together to prevent half-rotated states
+- **Cold Staker / Hot Operator Model**: Separate stake ownership from operational keys
+- **Atomic Key Rotation**: Both batcher and unsafe signer keys rotated together
 - **Self-Activation Agents**: Operators run local agents that start/stop services based on on-chain state
 - **Subjective Rule Enforcement**: Operators can be challenged for violating constitutional rules
 - **Kleros Dispute Resolution**: Human jurors decide disputes, enabling nuanced enforcement
+
+## The Constitution
+
+The Constitutional L2 is governed by formal policies enforced through Kleros arbitration:
+
+| Policy | Description |
+|--------|-------------|
+| [Sequencer Policy](./policies/policy_sequencer_registry.md) | Rules for sequencer operators (censorship, MEV, liveness) |
+| [Adapter Policy](./policies/policy_adapter_registry.md) | Acceptance criteria for OP Stack adapters |
+
+These policies define:
+- **Acceptance Criteria**: Requirements for registration (Sybil resistance, operational readiness)
+- **Constitutional Rules**: Grounds for removal (censorship, malicious MEV, liveness failures)
+- **Evidence Standards**: How violations are proven (multi-witness, simulation proofs)
 
 ## Quick Start
 
@@ -82,6 +98,54 @@ cast block-number --rpc-url http://localhost:9545
 
 ## Architecture
 
+### Green Adapter Architecture (Superchain Compliant)
+
+The Constitutional L2 achieves **Superchain compliance** ("Green" status) through:
+
+1. **ProxyAdmin → Optimism Security Council**: Standard upgrade path maintained
+2. **SystemConfig.owner → KlerosSequencerManager**: Constitutional control of sequencer rotation
+3. **Hot-Swappable Adapters**: Survive OP Stack hardforks without changing the manager
+
+```
+                      GREEN ADAPTER ARCHITECTURE
+
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │                              L1 (Ethereum)                                   │
+  │                                                                             │
+  │  ┌─────────────────┐   ┌─────────────────┐                                  │
+  │  │ Operator        │   │ Adapter         │   (Kleros Curate Registries)     │
+  │  │ Registry        │   │ Registry        │                                  │
+  │  │ (PGTCR Hybrid)  │   │ (Curate)        │                                  │
+  │  └────────┬────────┘   └────────┬────────┘                                  │
+  │           │                     │                                           │
+  │           │   ┌─────────────────┴─────────────────┐                         │
+  │           │   │                                   │                         │
+  │           ▼   ▼                                   ▼                         │
+  │  ┌──────────────────────────────┐    ┌────────────────────┐                 │
+  │  │   KlerosSequencerManager     │───▶│  OpStackAdapterV1  │  (delegatecall) │
+  │  │                              │    └─────────┬──────────┘                 │
+  │  │  - syncAddOperator(itemID)   │              │                            │
+  │  │  - rotateOperator()          │              ▼                            │
+  │  │  - upgradeAdapter(newAddr)   │    ┌─────────────────┐                    │
+  │  │                              │    │  SystemConfig   │                    │
+  │  │  Ratchet: v2 > v1 required   │    │  (OP Stack)     │                    │
+  │  └──────────────────────────────┘    └─────────────────┘                    │
+  │                                                                             │
+  └─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Cold Staker / Hot Operator Model
+
+Separating stake ownership from operational keys improves security:
+
+| Role | Description | Registry Field |
+|------|-------------|----------------|
+| **Staker (Owner)** | Holds governance stake, can update keys | `item.submitter` |
+| **Batcher** | Posts batches to L1 (hot key) | `itemKeys[itemID].batcher` |
+| **Unsafe Signer** | Signs P2P unsafe blocks (hot key) | `itemKeys[itemID].unsafeSigner` |
+
+**Recommendation**: Use different addresses for Staker vs Operational Keys. If hot keys are compromised, the governance stake remains safe.
+
 ### Operator Tuple Model
 
 **CRITICAL**: OP Stack sequencer authority requires TWO keys rotated together:
@@ -91,40 +155,44 @@ cast block-number --rpc-url http://localhost:9545
 | **Batcher** | Posts batches to L1 | `setBatcherHash()` |
 | **Unsafe Signer** | Signs P2P unsafe blocks | `setUnsafeBlockSigner()` |
 
-Both keys are registered as a tuple in Kleros Curate and rotated atomically by the manager.
+Both keys are registered in the Hybrid PGTCR registry and rotated atomically by the manager via the adapter.
 
 ```
-                        CONSTITUTIONAL L2 ARCHITECTURE
+                        OPERATOR ROTATION FLOW
 
-  ┌──────────────────────────────────────────────────────────────────────────┐
-  │                              L1 (Ethereum)                                │
-  │                                                                          │
-  │  ┌─────────────────┐    ┌──────────────────────┐    ┌─────────────────┐  │
-  │  │  Kleros Curate  │───▶│ KlerosSequencerMgr   │───▶│  SystemConfig   │  │
-  │  │                 │    │                      │    │                 │  │
-  │  │ Operator Tuples │    │ rotateOperator()     │    │ batcherHash     │  │
-  │  │ (batcher,signer)│    │ syncAddOperator()    │    │ unsafeBlockSign │  │
-  │  └─────────────────┘    └──────────────────────┘    └─────────────────┘  │
-  │                                   │                                      │
-  └───────────────────────────────────│──────────────────────────────────────┘
-                                      │
-          ┌───────────────────────────┼───────────────────────────┐
-          │                           │                           │
-          ▼                           ▼                           ▼
-  ┌───────────────────┐     ┌───────────────────┐     ┌───────────────────┐
-  │   Operator A      │     │   Operator B      │     │   Operator C      │
-  │                   │     │                   │     │                   │
-  │ ┌───────────────┐ │     │ ┌───────────────┐ │     │ ┌───────────────┐ │
-  │ │Self-Activation│ │     │ │Self-Activation│ │     │ │Self-Activation│ │
-  │ │    Agent      │ │     │ │    Agent      │ │     │ │    Agent      │ │
-  │ └───────┬───────┘ │     │ └───────┬───────┘ │     │ └───────┬───────┘ │
-  │         │         │     │         │         │     │         │         │
-  │ ┌───────▼───────┐ │     │ ┌───────▼───────┐ │     │ ┌───────▼───────┐ │
-  │ │   op-node     │ │     │ │   op-node     │ │     │ │   op-node     │ │
-  │ │  op-batcher   │ │     │ │  op-batcher   │ │     │ │  op-batcher   │ │
-  │ │  (stopped)    │ │     │ │  (ACTIVE)     │ │     │ │  (stopped)    │ │
-  │ └───────────────┘ │     │ └───────────────┘ │     │ └───────────────┘ │
-  └───────────────────┘     └───────────────────┘     └───────────────────┘
+  ┌───────────────────────────────────────────────────────────────────────────┐
+  │                              L1 (Ethereum)                                 │
+  │                                                                           │
+  │     Operator Registry                    KlerosSequencerManager           │
+  │  ┌─────────────────────┐              ┌─────────────────────┐             │
+  │  │  PGTCR Hybrid       │              │  Snapshot + Reverse │             │
+  │  │                     │   sync       │  Mapping            │             │
+  │  │  itemKeys[itemID]   │ ──────────▶  │                     │             │
+  │  │  ├─ batcher         │              │  opIdToItemId[opId] │             │
+  │  │  └─ unsafeSigner    │              │  itemIdToOpId[item] │             │
+  │  │                     │              │                     │             │
+  │  │  setOperationalKeys │              │  O(1) validation    │             │
+  │  └─────────────────────┘              └─────────────────────┘             │
+  │                                                  │                        │
+  └──────────────────────────────────────────────────│────────────────────────┘
+                                                     │
+           ┌─────────────────────────────────────────┼─────────────────────────┐
+           │                                         │                         │
+           ▼                                         ▼                         ▼
+   ┌───────────────────┐                    ┌───────────────────┐    ┌───────────────────┐
+   │   Operator A      │                    │   Operator B      │    │   Operator C      │
+   │                   │                    │                   │    │                   │
+   │ ┌───────────────┐ │                    │ ┌───────────────┐ │    │ ┌───────────────┐ │
+   │ │Self-Activation│ │                    │ │Self-Activation│ │    │ │Self-Activation│ │
+   │ │    Agent      │ │                    │ │    Agent      │ │    │ │    Agent      │ │
+   │ └───────┬───────┘ │                    │ └───────┬───────┘ │    │ └───────┬───────┘ │
+   │         │         │                    │         │         │    │         │         │
+   │ ┌───────▼───────┐ │                    │ ┌───────▼───────┐ │    │ ┌───────▼───────┐ │
+   │ │   op-node     │ │                    │ │   op-node     │ │    │ │   op-node     │ │
+   │ │  op-batcher   │ │                    │ │  op-batcher   │ │    │ │  op-batcher   │ │
+   │ │  (stopped)    │ │                    │ │  (ACTIVE)     │ │    │ │  (stopped)    │ │
+   │ └───────────────┘ │                    │ └───────────────┘ │    │ └───────────────┘ │
+   └───────────────────┘                    └───────────────────┘    └───────────────────┘
 ```
 
 ### Self-Activation Agents
@@ -140,48 +208,35 @@ See [`agent/`](./agent/) for a reference implementation.
 
 ### How It Works
 
-1. **Operators Register**: Submit (batcher, unsafeSigner) tuple to Kleros Curate with deposit
-2. **Community Curation**: Challenge period allows disputing unfit operators
-3. **Sync to Manager**: Call `syncAddOperator(batcher, unsafeSigner)` to add approved operators
+1. **Operators Register**: Submit operational keys to Hybrid PGTCR with deposit + Constitutional Declaration
+2. **Community Curation**: Challenge period allows disputing unfit operators (Sybil, unqualified)
+3. **Sync to Manager**: Call `syncAddOperator(itemID)` to snapshot keys and create reverse mapping
 4. **Epoch Rotation**: Keeper calls `rotateOperator()` each epoch
-5. **Atomic Update**: Manager sets BOTH `batcherHash` AND `unsafeBlockSigner` in SystemConfig
-6. **Self-Activation**: Operator agents detect the change and start/stop services
-7. **Constitutional Enforcement**: Misbehaving operators challenged via Kleros
+5. **Adapter Execution**: Manager delegates to adapter via delegatecall for OP Stack compatibility
+6. **Atomic Update**: Adapter sets BOTH `batcherHash` AND `unsafeBlockSigner` in SystemConfig
+7. **Self-Activation**: Operator agents detect the change and start/stop services
+8. **Constitutional Enforcement**: Misbehaving operators challenged via Kleros
 
-### The Constitution
+### Constitutional Rules (Summary)
 
-The constitution defines rules that operators must follow:
+The full constitution is defined in [`policies/policy_sequencer_registry.md`](./policies/policy_sequencer_registry.md).
 
-```
-Example Constitutional Rules:
+**Key Rules:**
 
-1. TRANSACTION ORDERING
-   - Operators SHALL NOT reorder transactions for MEV extraction
-   - Transactions MUST be included in submission order within reasonable time
+| Rule | Violation | Evidence Standard |
+|------|-----------|-------------------|
+| **Censorship Resistance** | Excluding valid tx for >5 minutes | Provider logs + simulation trace |
+| **No Malicious MEV** | Sandwiching, front-running | Simulation proof of user harm |
+| **Self-Activation** | Producing blocks when unauthorized | L1 timestamp vs epoch |
+| **Liveness** | >5 minute downtime during epoch | Block production gaps |
 
-2. CENSORSHIP RESISTANCE
-   - Operators SHALL NOT systematically exclude valid transactions
-   - Operators SHALL NOT discriminate based on sender address
-
-3. LIVENESS
-   - Operators MUST submit batches within their assigned epoch
-   - Operators MUST maintain >99% uptime during their rotation
-
-4. SELF-ACTIVATION COMPLIANCE
-   - Operators MUST run a self-activation agent
-   - Operators MUST NOT produce blocks while unauthorized
-   - Operators MUST stop services promptly when rotated out
-
-5. INTEGRITY
-   - Operators SHALL NOT submit invalid state roots
-   - Operators SHALL NOT collude to harm users
-```
+See the [Sequencer Policy](./policies/policy_sequencer_registry.md) for detailed evidence standards.
 
 ## Smart Contracts
 
 ### KlerosSequencerManager
 
-The bridge between Kleros governance and OP Stack execution.
+The bridge between Kleros governance and OP Stack execution, with hot-swappable adapter support.
 
 ```solidity
 // Operator struct
@@ -190,29 +245,56 @@ struct Operator {
     address unsafeSigner;  // Signs P2P unsafe blocks
 }
 
-// Core state
-ICurate public immutable registry;      // Kleros Curate registry
-ISystemConfig public immutable systemConfig; // OP Stack SystemConfig
-uint256 public immutable epochDuration; // Rotation interval
+// Core state (immutable)
+IPermanentGTCRHybrid public immutable registry;     // Operator registry (Hybrid PGTCR)
+ISystemConfig public immutable systemConfig;        // OP Stack SystemConfig
+ICurate public immutable adapterRegistry;           // Adapter registry (Curate)
+uint256 public immutable epochDuration;             // Rotation interval
+
+// Adapter state
+IOpStackAdapter public opAdapter;                   // Current adapter
 
 // Sync functions (anyone can call)
-function syncAddOperator(address batcher, address unsafeSigner) external;
-function syncRemoveOperator(address batcher, address unsafeSigner) external;
+function syncAddOperator(bytes32 itemID) external;  // Preferred: by registry item ID
+function syncUpdateOperator(bytes32 itemID) external; // Update keys after owner change
+function syncRemoveOperator(bytes32 itemID) external;
 
 // Rotation (anyone can call, once per epoch)
-function rotateOperator() external;  // Sets BOTH batcherHash AND unsafeBlockSigner
+function rotateOperator() external;  // Uses adapter via delegatecall
 function poke() external;            // Alias for keepers
+
+// Adapter upgrade (anyone can call, gated by registry)
+function upgradeAdapter(address _newAdapter) external; // Ratchet: newVersion > currentVersion
+function getAdapterInfo() external view returns (address, uint256, string memory, string memory);
 
 // View functions
 function currentOperator() external view returns (Operator memory);
 function getActiveOperators() external view returns (Operator[] memory);
-function activeOperatorCount() external view returns (uint256);
 function isCurrentOperator(address batcher, address unsafeSigner) external view returns (bool);
-function timeUntilNextRotation() external view returns (uint256);
+function isRegisteredInRegistry(address batcher, address unsafeSigner) external view returns (bool);
 
 // Guardian (emergency controls)
 function setPaused(bool paused) external;
 function setGuardian(address newGuardian) external;
+```
+
+### IOpStackAdapter
+
+Hot-swappable adapter interface for OP Stack compatibility:
+
+```solidity
+interface IOpStackAdapter {
+    // Version for ratchet upgrade logic (v1.0.0 = 1_000_000)
+    function version() external view returns (uint256);
+    function adapterInfo() external view returns (string memory name, string memory description);
+
+    // Called via delegatecall from manager
+    function rotateSequencer(
+        address _systemConfig,
+        address _batcher,
+        address _unsafeSigner
+    ) external;
+}
 ```
 
 ### ISystemConfig
@@ -353,9 +435,26 @@ Web3Function.onRun(async (context) => {
 
 ## Security Considerations
 
+### Adapter Security
+- Adapters are called via **delegatecall** from the manager
+- Adapters must be registered in the **Adapter Registry** (Kleros Curate)
+- **Ratchet versioning** prevents rollback attacks (newVersion > currentVersion)
+- **Hydra defense** allows multiple submissions to defeat griefing
+- Adapters should only interact with SystemConfig, no arbitrary storage writes
+
 ### Atomic Rotation
 - Both `batcherHash` and `unsafeBlockSigner` are set in the same transaction
 - Prevents "half-rotated" states where batches and P2P blocks have different authorities
+
+### Cold Staker / Hot Operator
+- Governance stake can be held separately from operational keys
+- Compromise of hot keys doesn't affect stake ownership
+- Owner can update operational keys via `setOperationalKeys()`
+
+### O(1) Validation
+- Reverse mapping (`opIdToItemId`) enables O(1) registry verification
+- Prevents DoS during rotation with many operators
+- Snapshots decouple from registry reads during rotation
 
 ### Self-Activation Compliance
 - Constitutional requirement enforced via Kleros
@@ -368,14 +467,20 @@ Web3Function.onRun(async (context) => {
 ### Griefing Mitigation
 - High deposit requirement in Kleros deters frivolous challenges
 - Guardian can pause in emergencies
+- Hydra defense for adapter submissions
 
 ## File Structure
 
 ```
 op/
 ├── src/
-│   ├── KlerosSequencerManager.sol    # Main governance contract
+│   ├── KlerosSequencerManager.sol    # Main governance contract (adapter pattern)
+│   ├── PermanentGTCRHybrid.sol       # Hybrid PGTCR (based on Kleros PGTCR)
+│   ├── adapters/
+│   │   └── OpStackAdapterV1.sol      # OP Stack Bedrock/Ecotone adapter
 │   └── interfaces/
+│       ├── IOpStackAdapter.sol       # Adapter interface
+│       ├── IPermanentGTCRHybrid.sol  # Hybrid PGTCR interface
 │       ├── ICurate.sol               # Kleros Curate interface
 │       ├── ISystemConfig.sol         # OP Stack interface (batcher + signer)
 │       ├── IArbitrator.sol           # ERC-792 arbitration
@@ -383,14 +488,18 @@ op/
 ├── test/
 │   ├── KlerosSequencerManager.t.sol  # Comprehensive tests
 │   └── mocks/
-│       ├── MockCurate.sol            # Test Kleros mock
+│       ├── MockCurate.sol            # Test Kleros Curate mock
+│       ├── MockPermanentGTCRHybrid.sol # Test Hybrid PGTCR mock
 │       └── MockSystemConfig.sol      # Test SystemConfig mock
 ├── script/
 │   ├── DeployLocal.s.sol             # Local Anvil deployment
 │   ├── DeployL2.s.sol                # Full OP Stack L2 deployment
 │   ├── DeploySepolia.s.sol           # Sepolia deployment
-│   ├── DeployMainnet.s.sol           # Mainnet deployment
+│   ├── DeployMainnet.s.sol           # Mainnet deployment (with adapter)
 │   └── Demo.s.sol                    # Interactive demo script
+├── policies/
+│   ├── policy_sequencer_registry.md  # Sequencer constitutional rules
+│   └── policy_adapter_registry.md    # Adapter acceptance criteria
 ├── devnet/
 │   ├── genesis-l2.json               # L2 genesis configuration
 │   └── generate-configs.sh           # Config generation helper
@@ -414,17 +523,29 @@ op/
 **Q: Why are operators tuples instead of single addresses?**
 A: OP Stack has two separate authorizations: batcherHash (for batch posting) and unsafeBlockSigner (for P2P block signing). Both must be rotated together to avoid half-rotated states.
 
+**Q: What is the Cold Staker / Hot Operator model?**
+A: The staker (who deposits governance stake) can delegate operational keys (batcher, unsafeSigner) to different addresses. If the hot operational keys are compromised, the governance stake remains safe. Use `setOperationalKeys(itemID, batcher, signer)` after registration.
+
+**Q: What happens during an OP Stack hardfork?**
+A: The adapter pattern allows hot-swapping adapters without changing the manager. Submit a new adapter to the Adapter Registry, wait for the challenge period, then call `upgradeAdapter(newAdapterAddress)`. The ratchet ensures `newVersion > currentVersion`.
+
+**Q: What is the "Hydra" defense?**
+A: If someone griefs adapter submissions by challenging them, multiple identical adapters can be submitted in parallel. First one to pass becomes usable, defeating the griefing attack.
+
 **Q: What if an operator doesn't run a self-activation agent?**
 A: They can be challenged in Kleros for producing blocks while unauthorized (if they continue running) or for failing to produce blocks during their epoch (if they never start).
 
 **Q: Can I use the same key for batcher and unsafeSigner?**
-A: Technically yes, but it's not recommended for security. The contract allows it but logs a warning.
+A: Technically yes, but it's not recommended for security. The Cold Staker model allows separating stake from operational keys.
 
 **Q: How do I add a new operator?**
-A: 1) Register tuple in Kleros Curate, 2) Wait for challenge period, 3) Call `syncAddOperator(batcher, unsafeSigner)`, 4) Deploy self-activation agent.
+A: 1) Register in Hybrid PGTCR with Constitutional Declaration, 2) Optionally set operational keys, 3) Wait for challenge period, 4) Call `syncAddOperator(itemID)`, 5) Deploy self-activation agent.
 
 **Q: What happens during rotation?**
-A: 1) Keeper calls `rotateOperator()`, 2) Manager sets both batcherHash and unsafeBlockSigner in SystemConfig, 3) Self-activation agents detect the change and start/stop services.
+A: 1) Keeper calls `rotateOperator()`, 2) Manager validates operator via O(1) reverse mapping, 3) Manager calls adapter via delegatecall, 4) Adapter sets batcherHash and unsafeBlockSigner in SystemConfig, 5) Self-activation agents detect the change.
+
+**Q: What is a "Superchain Green" chain?**
+A: A chain that maintains Optimism Security Council oversight via ProxyAdmin while allowing custom governance (like Kleros) for operational aspects. This ensures coordinated upgrades remain possible.
 
 ## Contributing
 
