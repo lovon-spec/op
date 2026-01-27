@@ -3,22 +3,31 @@ pragma solidity ^0.8.20;
 
 import {ISystemConfig} from "./interfaces/ISystemConfig.sol";
 import {IPermanentGTCRHybrid} from "./interfaces/IPermanentGTCRHybrid.sol";
+import {ICurate} from "./interfaces/ICurate.sol";
+import {IOpStackAdapter} from "./interfaces/IOpStackAdapter.sol";
 
 /**
  * @title KlerosSequencerManager
- * @notice Hybrid PermanentGTCR -> OP Stack SystemConfig bridge with snapshot + reverse mapping.
+ * @notice Hybrid PermanentGTCR -> OP Stack SystemConfig bridge with hot-swappable adapter.
  * @dev Manages a rotating set of sequencer operators curated via a Kleros PGTCR Hybrid registry.
  *
- * Architecture (Snapshot + Reverse Mapping):
+ * Architecture (Snapshot + Reverse Mapping + Hot-Swappable Adapter):
  * - Registry stores items with on-chain operational keys (via Hybrid extension)
  * - Manager SNAPSHOTS keys when syncing (decouples from registry reads during rotation)
  * - Reverse mapping (OpId -> ItemID) enables O(1) registry verification
+ * - Adapter pattern enables surviving OP Stack hardforks via hot-swap
  *
  * The "Cold Staker / Hot Operator" Model:
  * - Staker (Owner): Holds stake in registry, can update keys
  * - Operational Keys: Batcher + UnsafeSigner (can be different from owner)
  * - ItemID: Registry identifier for the license/stake
  * - OpId: Hash of operational keys (batcher, unsafeSigner)
+ *
+ * Green Adapter Architecture:
+ * - Manager delegates SystemConfig calls to an external adapter via delegatecall
+ * - Adapters are gated by a separate Kleros GTCR registry (adapterRegistry)
+ * - "Ratchet" logic: new adapter version must be strictly greater
+ * - "Hydra" defense: multiple adapters can be submitted to registry
  *
  * Data Flow:
  * 1. Registration: User creates item on curate.kleros.io
@@ -34,11 +43,17 @@ import {IPermanentGTCRHybrid} from "./interfaces/IPermanentGTCRHybrid.sol";
  *    - Manager looks up ItemID via opIdToItemId (O(1))
  *    - Manager verifies against Registry: "Does ItemID still point to keys?"
  *
+ * 4. Adapter Upgrade: Anyone can call upgradeAdapter(_newAdapter)
+ *    - Verifies adapter is in adapterRegistry (Registered or ClearingRequested)
+ *    - Verifies newVersion > currentVersion (ratchet)
+ *    - Swaps to new adapter
+ *
  * Security:
  * - Bounded loops to prevent DoS
  * - O(1) add/remove/verify with reverse mapping
  * - Guardian pause capability
- * - Atomic rotation of both keys
+ * - Atomic rotation of both keys via adapter
+ * - Adapter upgrades gated by Kleros arbitration
  *
  * @custom:security-contact security@example.com
  */
@@ -57,6 +72,10 @@ contract KlerosSequencerManager {
     error ZeroEpochDuration();
     error InvalidSigner();
     error ItemAlreadySynced();
+    error AdapterNotRegistered();
+    error AdapterVersionNotHigher();
+    error AdapterCallFailed();
+    error NoAdapterSet();
 
     // ============ Types ============
 
@@ -72,11 +91,14 @@ contract KlerosSequencerManager {
 
     // ============ Immutables ============
 
-    /// @notice The Kleros PermanentGTCR Hybrid registry contract.
+    /// @notice The Kleros PermanentGTCR Hybrid registry for operators.
     IPermanentGTCRHybrid public immutable registry;
 
     /// @notice The OP Stack SystemConfig contract.
     ISystemConfig public immutable systemConfig;
+
+    /// @notice The Kleros Curate registry for approved adapters.
+    ICurate public immutable adapterRegistry;
 
     /// @notice Duration of each epoch in seconds.
     uint256 public immutable epochDuration;
@@ -112,6 +134,9 @@ contract KlerosSequencerManager {
     /// @notice Guardian address that can pause/unpause.
     address public guardian;
 
+    /// @notice Current OP Stack adapter for sequencer rotation.
+    IOpStackAdapter public opAdapter;
+
     // ============ Events ============
 
     event OperatorAdded(bytes32 indexed operatorId, address indexed batcher, address indexed unsafeSigner);
@@ -127,32 +152,44 @@ contract KlerosSequencerManager {
     event RotationSkippedNoValidOperator(uint256 timestamp);
     event PausedSet(bool isPaused);
     event GuardianSet(address indexed newGuardian);
+    event AdapterUpgraded(address indexed oldAdapter, address indexed newAdapter, uint256 oldVersion, uint256 newVersion);
 
     // ============ Constructor ============
 
     /**
      * @notice Initializes the KlerosSequencerManager.
-     * @param _registry Address of the Kleros PermanentGTCR Hybrid registry.
+     * @param _registry Address of the Kleros PermanentGTCR Hybrid registry for operators.
      * @param _systemConfig Address of the OP Stack SystemConfig.
+     * @param _adapterRegistry Address of the Kleros Curate registry for approved adapters.
+     * @param _initialAdapter Address of the initial OP Stack adapter.
      * @param _epochDuration Duration of each epoch in seconds.
      * @param _guardian Address of the guardian (can be address(0) to disable).
      */
     constructor(
         address _registry,
         address _systemConfig,
+        address _adapterRegistry,
+        address _initialAdapter,
         uint256 _epochDuration,
         address _guardian
     ) {
         if (_registry == address(0)) revert ZeroAddress();
         if (_systemConfig == address(0)) revert ZeroAddress();
+        if (_adapterRegistry == address(0)) revert ZeroAddress();
+        if (_initialAdapter == address(0)) revert ZeroAddress();
         if (_epochDuration == 0) revert ZeroEpochDuration();
 
         registry = IPermanentGTCRHybrid(_registry);
         systemConfig = ISystemConfig(_systemConfig);
+        adapterRegistry = ICurate(_adapterRegistry);
+        opAdapter = IOpStackAdapter(_initialAdapter);
         epochDuration = _epochDuration;
 
         guardian = _guardian;
         emit GuardianSet(_guardian);
+
+        // Emit adapter set event (oldAdapter = address(0) for initial)
+        emit AdapterUpgraded(address(0), _initialAdapter, 0, IOpStackAdapter(_initialAdapter).version());
 
         currentIndex = type(uint256).max;
 
@@ -187,6 +224,65 @@ contract KlerosSequencerManager {
     function setGuardian(address _newGuardian) external onlyGuardian {
         guardian = _newGuardian;
         emit GuardianSet(_newGuardian);
+    }
+
+    // ============ Adapter Functions ============
+
+    /**
+     * @notice Upgrades to a new OP Stack adapter.
+     * @dev Anyone can call this. Validates:
+     *      1. New adapter is in adapterRegistry (Registered OR ClearingRequested)
+     *      2. New adapter version is strictly greater than current (ratchet)
+     *
+     *      The "Hydra" defense allows multiple adapters to be submitted to the registry
+     *      to defeat submission griefing attacks.
+     *
+     * @param _newAdapter Address of the new adapter to use.
+     */
+    function upgradeAdapter(address _newAdapter) external notPaused {
+        if (_newAdapter == address(0)) revert ZeroAddress();
+
+        // 1. Verify adapter is registered in Kleros Curate registry
+        bytes32 itemID = keccak256(abi.encode(_newAdapter));
+        (, ICurate.Status status,) = adapterRegistry.getItemInfo(itemID);
+
+        // Accept: Registered (1) OR ClearingRequested (3)
+        // This allows upgrades even while removal is pending (gives time to deploy new adapter)
+        if (status != ICurate.Status.Registered && status != ICurate.Status.ClearingRequested) {
+            revert AdapterNotRegistered();
+        }
+
+        // 2. Ratchet check: new version must be strictly greater
+        uint256 currentVersion = opAdapter.version();
+        uint256 newVersion = IOpStackAdapter(_newAdapter).version();
+
+        if (newVersion <= currentVersion) {
+            revert AdapterVersionNotHigher();
+        }
+
+        // 3. Perform the upgrade
+        address oldAdapter = address(opAdapter);
+        opAdapter = IOpStackAdapter(_newAdapter);
+
+        emit AdapterUpgraded(oldAdapter, _newAdapter, currentVersion, newVersion);
+    }
+
+    /**
+     * @notice Returns information about the current adapter.
+     * @return adapter The current adapter address.
+     * @return version The current adapter version.
+     * @return name The adapter name.
+     * @return description The adapter description.
+     */
+    function getAdapterInfo() external view returns (
+        address adapter,
+        uint256 version,
+        string memory name,
+        string memory description
+    ) {
+        adapter = address(opAdapter);
+        version = opAdapter.version();
+        (name, description) = opAdapter.adapterInfo();
     }
 
     // ============ View Functions ============
@@ -463,10 +559,11 @@ contract KlerosSequencerManager {
             return;
         }
 
-        bytes32 batcherHash = _toV0BatcherHash(next.batcher);
-        systemConfig.setBatcherHash(batcherHash);
-        systemConfig.setUnsafeBlockSigner(next.unsafeSigner);
+        // Use adapter via delegatecall for SystemConfig updates
+        // This allows the adapter to be hot-swapped to survive OP Stack hardforks
+        _rotateViaAdapter(next.batcher, next.unsafeSigner);
 
+        bytes32 batcherHash = _toV0BatcherHash(next.batcher);
         lastRotationTimestamp = block.timestamp;
         emit OperatorRotated(nextOpId, next.batcher, next.unsafeSigner, batcherHash, block.timestamp);
     }
@@ -521,5 +618,42 @@ contract KlerosSequencerManager {
 
     function _toV0BatcherHash(address a) internal pure returns (bytes32) {
         return bytes32(uint256(uint160(a)));
+    }
+
+    /**
+     * @notice Executes sequencer rotation via the adapter using delegatecall.
+     * @dev The adapter's rotateSequencer function is called via delegatecall,
+     *      which means the adapter code runs in this contract's context.
+     *      This is safe because:
+     *      1. Adapters are gated by Kleros arbitration
+     *      2. Version ratchet prevents rollback attacks
+     *      3. Adapters only interact with SystemConfig
+     *
+     * @param _batcher The new batcher address.
+     * @param _unsafeSigner The new unsafe block signer address.
+     */
+    function _rotateViaAdapter(address _batcher, address _unsafeSigner) internal {
+        if (address(opAdapter) == address(0)) revert NoAdapterSet();
+
+        // Encode the call to rotateSequencer
+        bytes memory data = abi.encodeWithSelector(
+            IOpStackAdapter.rotateSequencer.selector,
+            address(systemConfig),
+            _batcher,
+            _unsafeSigner
+        );
+
+        // Execute via delegatecall - adapter runs in our context
+        (bool success, bytes memory returnData) = address(opAdapter).delegatecall(data);
+
+        if (!success) {
+            // Bubble up the revert reason if available
+            if (returnData.length > 0) {
+                assembly {
+                    revert(add(returnData, 32), mload(returnData))
+                }
+            }
+            revert AdapterCallFailed();
+        }
     }
 }

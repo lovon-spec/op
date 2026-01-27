@@ -6,6 +6,8 @@ import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
 import {PermanentGTCRHybrid} from "../src/PermanentGTCRHybrid.sol";
 import {IPermanentGTCRHybrid} from "../src/interfaces/IPermanentGTCRHybrid.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
+import {MockCurate} from "../test/mocks/MockCurate.sol";
+import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 import {IArbitrator} from "../src/interfaces/IArbitrator.sol";
 
 /**
@@ -20,13 +22,16 @@ interface IERC20Minimal {}
  *
  * This deploys:
  * - PermanentGTCRHybrid: Faithful PGTCR implementation + on-chain operational keys
+ * - MockCurate: Adapter registry for gating adapter upgrades (use real Curate in production)
+ * - OpStackAdapterV1: Hot-swappable adapter for OP Stack sequencer rotation
  * - MockSystemConfig (simulating OP Stack SystemConfig - replace with real in production)
- * - KlerosSequencerManager with snapshot + reverse mapping architecture
+ * - KlerosSequencerManager with snapshot + reverse mapping + adapter pattern
  *
  * Architecture:
  * - Uses PermanentGTCRHybrid (based on real Kleros PGTCR)
  * - Hybrid registry stores operational keys on-chain (not in IPFS)
  * - Manager uses O(1) reverse mapping for registry validation
+ * - Hot-swappable adapter pattern for surviving OP Stack hardforks
  * - Full compatibility with Kleros arbitration and UI
  *
  * Real Kleros Contracts (Mainnet):
@@ -114,6 +119,8 @@ contract DeployMainnet is Script {
     // ============ State ============
 
     PermanentGTCRHybrid public registry;
+    MockCurate public adapterRegistry;
+    OpStackAdapterV1 public adapter;
     MockSystemConfig public systemConfig;
     KlerosSequencerManager public manager;
 
@@ -209,17 +216,46 @@ contract DeployMainnet is Script {
         console2.log("MockSystemConfig deployed at:", address(systemConfig));
         console2.log("");
 
+        // ============ Deploy Adapter Registry (MockCurate) ============
+        console2.log("Deploying MockCurate as Adapter Registry...");
+        adapterRegistry = new MockCurate();
+        console2.log("Adapter Registry deployed at:", address(adapterRegistry));
+        console2.log("");
+
+        // ============ Deploy OpStackAdapterV1 ============
+        console2.log("Deploying OpStackAdapterV1...");
+        adapter = new OpStackAdapterV1();
+        console2.log("OpStackAdapterV1 deployed at:", address(adapter));
+        console2.log("  Version:", adapter.version());
+        (string memory adapterName, string memory adapterDesc) = adapter.adapterInfo();
+        console2.log("  Name:", adapterName);
+        console2.log("  Description:", adapterDesc);
+        console2.log("");
+
+        // Register adapter in the adapter registry
+        console2.log("Registering adapter in Adapter Registry...");
+        bytes memory adapterData = abi.encode(address(adapter));
+        adapterRegistry.registerItemDirectly(adapterData);
+        bytes32 adapterItemID = keccak256(abi.encodePacked(adapterData));
+        console2.log("  Adapter registered with itemID:");
+        console2.logBytes32(adapterItemID);
+        console2.log("");
+
         // ============ Deploy KlerosSequencerManager ============
         console2.log("Deploying KlerosSequencerManager...");
         manager = new KlerosSequencerManager(
             address(registry),
             address(systemConfig),
+            address(adapterRegistry),
+            address(adapter),
             epochDuration,
             GUARDIAN
         );
         console2.log("KlerosSequencerManager deployed at:", address(manager));
-        console2.log("  Registry:", address(registry));
+        console2.log("  Operator Registry:", address(registry));
         console2.log("  SystemConfig:", address(systemConfig));
+        console2.log("  Adapter Registry:", address(adapterRegistry));
+        console2.log("  Initial Adapter:", address(adapter));
         console2.log("  Epoch Duration:", epochDuration / 60, "minutes");
         console2.log("  Guardian:", GUARDIAN);
         console2.log("");
@@ -332,6 +368,8 @@ contract DeployMainnet is Script {
         console2.log("");
         console2.log("Deployed Contracts:");
         console2.log("  Operator Registry:   ", address(registry));
+        console2.log("  Adapter Registry:    ", address(adapterRegistry));
+        console2.log("  OpStackAdapterV1:    ", address(adapter));
         console2.log("  MockSystemConfig:    ", address(systemConfig));
         console2.log("  SequencerManager:    ", address(manager));
         console2.log("");
@@ -340,6 +378,8 @@ contract DeployMainnet is Script {
         console2.log("  - On-chain operational keys (no IPFS lookup)");
         console2.log("  - O(1) reverse mapping for validation");
         console2.log("  - Cold Staker / Hot Operator support");
+        console2.log("  - Hot-swappable adapter pattern for hardfork survival");
+        console2.log("  - Ratchet versioning for adapter upgrades");
         console2.log("  - ERC20 token support (currently using native ETH)");
         console2.log("");
         console2.log("Commands:");

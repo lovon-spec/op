@@ -5,14 +5,20 @@ import {Test, console2} from "forge-std/Test.sol";
 import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
 import {MockSystemConfig} from "./mocks/MockSystemConfig.sol";
 import {MockPermanentGTCRHybrid} from "./mocks/MockPermanentGTCRHybrid.sol";
+import {MockCurate} from "./mocks/MockCurate.sol";
 import {IPermanentGTCRHybrid} from "../src/interfaces/IPermanentGTCRHybrid.sol";
+import {ICurate} from "../src/interfaces/ICurate.sol";
+import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
+import {IOpStackAdapter} from "../src/interfaces/IOpStackAdapter.sol";
 
 /**
  * @title KlerosSequencerManagerTest
- * @notice Comprehensive test suite for KlerosSequencerManager with Hybrid PGTCR.
+ * @notice Comprehensive test suite for KlerosSequencerManager with Hybrid PGTCR + Adapter pattern.
  *
  * Architecture:
- * - Uses IPermanentGTCRHybrid for registry (on-chain operational keys)
+ * - Uses IPermanentGTCRHybrid for operator registry (on-chain operational keys)
+ * - Uses ICurate for adapter registry (gates adapter upgrades)
+ * - Hot-swappable adapter pattern for OP Stack sequencer rotation
  * - Manager uses snapshot + reverse mapping for O(1) validation
  * - Supports syncAddOperator(bytes32 itemID) and legacy syncAddOperator(address, address)
  */
@@ -20,6 +26,8 @@ contract KlerosSequencerManagerTest is Test {
     KlerosSequencerManager public manager;
     MockSystemConfig public systemConfig;
     MockPermanentGTCRHybrid public registry;
+    MockCurate public adapterRegistry;
+    OpStackAdapterV1 public adapter;
 
     address public guardian = address(0x1);
 
@@ -49,6 +57,7 @@ contract KlerosSequencerManagerTest is Test {
     event RotationSkippedNoValidOperator(uint256 timestamp);
     event PausedSet(bool isPaused);
     event GuardianSet(address indexed newGuardian);
+    event AdapterUpgraded(address indexed oldAdapter, address indexed newAdapter, uint256 oldVersion, uint256 newVersion);
 
     function setUp() public {
         // Set a reasonable block timestamp
@@ -57,11 +66,19 @@ contract KlerosSequencerManagerTest is Test {
         // Deploy mocks
         systemConfig = new MockSystemConfig();
         registry = new MockPermanentGTCRHybrid();
+        adapterRegistry = new MockCurate();
+        adapter = new OpStackAdapterV1();
 
-        // Deploy manager
+        // Register adapter in the adapter registry
+        bytes memory adapterData = abi.encode(address(adapter));
+        adapterRegistry.registerItemDirectly(adapterData);
+
+        // Deploy manager with adapter pattern
         manager = new KlerosSequencerManager(
             address(registry),
             address(systemConfig),
+            address(adapterRegistry),
+            address(adapter),
             EPOCH_DURATION,
             guardian
         );
@@ -75,6 +92,8 @@ contract KlerosSequencerManagerTest is Test {
     function test_Constructor_SetsCorrectValues() public view {
         assertEq(address(manager.registry()), address(registry));
         assertEq(address(manager.systemConfig()), address(systemConfig));
+        assertEq(address(manager.adapterRegistry()), address(adapterRegistry));
+        assertEq(address(manager.opAdapter()), address(adapter));
         assertEq(manager.epochDuration(), EPOCH_DURATION);
         assertEq(manager.guardian(), guardian);
         assertEq(manager.paused(), false);
@@ -82,23 +101,45 @@ contract KlerosSequencerManagerTest is Test {
 
     function test_Constructor_RevertZeroRegistry() public {
         vm.expectRevert(KlerosSequencerManager.ZeroAddress.selector);
-        new KlerosSequencerManager(address(0), address(systemConfig), EPOCH_DURATION, guardian);
+        new KlerosSequencerManager(
+            address(0), address(systemConfig), address(adapterRegistry), address(adapter), EPOCH_DURATION, guardian
+        );
     }
 
     function test_Constructor_RevertZeroSystemConfig() public {
         vm.expectRevert(KlerosSequencerManager.ZeroAddress.selector);
-        new KlerosSequencerManager(address(registry), address(0), EPOCH_DURATION, guardian);
+        new KlerosSequencerManager(
+            address(registry), address(0), address(adapterRegistry), address(adapter), EPOCH_DURATION, guardian
+        );
+    }
+
+    function test_Constructor_RevertZeroAdapterRegistry() public {
+        vm.expectRevert(KlerosSequencerManager.ZeroAddress.selector);
+        new KlerosSequencerManager(
+            address(registry), address(systemConfig), address(0), address(adapter), EPOCH_DURATION, guardian
+        );
+    }
+
+    function test_Constructor_RevertZeroInitialAdapter() public {
+        vm.expectRevert(KlerosSequencerManager.ZeroAddress.selector);
+        new KlerosSequencerManager(
+            address(registry), address(systemConfig), address(adapterRegistry), address(0), EPOCH_DURATION, guardian
+        );
     }
 
     function test_Constructor_RevertZeroEpochDuration() public {
         vm.expectRevert(KlerosSequencerManager.ZeroEpochDuration.selector);
-        new KlerosSequencerManager(address(registry), address(systemConfig), 0, guardian);
+        new KlerosSequencerManager(
+            address(registry), address(systemConfig), address(adapterRegistry), address(adapter), 0, guardian
+        );
     }
 
     function test_Constructor_AllowsZeroGuardian() public {
         KlerosSequencerManager m = new KlerosSequencerManager(
             address(registry),
             address(systemConfig),
+            address(adapterRegistry),
+            address(adapter),
             EPOCH_DURATION,
             address(0)
         );
@@ -608,6 +649,129 @@ contract KlerosSequencerManagerTest is Test {
         assertFalse(manager.isActive(opId));
     }
 
+    // ============ Adapter Tests ============
+
+    function test_GetAdapterInfo() public view {
+        (
+            address adapterAddr,
+            uint256 version,
+            string memory name,
+            string memory description
+        ) = manager.getAdapterInfo();
+
+        assertEq(adapterAddr, address(adapter));
+        assertEq(version, 1_000_000); // v1.0.0
+        assertEq(name, "OpStackAdapterV1");
+        assertEq(description, "OP Stack Bedrock/Ecotone sequencer rotation adapter");
+    }
+
+    function test_UpgradeAdapter_Success() public {
+        // Deploy a new adapter (simulating v2)
+        OpStackAdapterV2Mock newAdapter = new OpStackAdapterV2Mock();
+
+        // Register new adapter in the adapter registry
+        bytes memory newAdapterData = abi.encode(address(newAdapter));
+        adapterRegistry.registerItemDirectly(newAdapterData);
+
+        // Upgrade should succeed
+        vm.expectEmit(true, true, false, true);
+        emit AdapterUpgraded(address(adapter), address(newAdapter), 1_000_000, 2_000_000);
+
+        manager.upgradeAdapter(address(newAdapter));
+
+        assertEq(address(manager.opAdapter()), address(newAdapter));
+    }
+
+    function test_UpgradeAdapter_RevertIfNotRegistered() public {
+        // Create new adapter but don't register it
+        OpStackAdapterV2Mock newAdapter = new OpStackAdapterV2Mock();
+
+        vm.expectRevert(KlerosSequencerManager.AdapterNotRegistered.selector);
+        manager.upgradeAdapter(address(newAdapter));
+    }
+
+    function test_UpgradeAdapter_RevertIfVersionNotHigher() public {
+        // Deploy another v1 adapter (same version)
+        OpStackAdapterV1 sameVersionAdapter = new OpStackAdapterV1();
+
+        // Register it
+        bytes memory adapterData = abi.encode(address(sameVersionAdapter));
+        adapterRegistry.registerItemDirectly(adapterData);
+
+        vm.expectRevert(KlerosSequencerManager.AdapterVersionNotHigher.selector);
+        manager.upgradeAdapter(address(sameVersionAdapter));
+    }
+
+    function test_UpgradeAdapter_AllowsClearingRequested() public {
+        // Deploy a new adapter
+        OpStackAdapterV2Mock newAdapter = new OpStackAdapterV2Mock();
+
+        // Register it
+        bytes memory newAdapterData = abi.encode(address(newAdapter));
+        adapterRegistry.registerItemDirectly(newAdapterData);
+
+        // Set to ClearingRequested (simulating removal in progress)
+        bytes32 itemID = keccak256(abi.encodePacked(newAdapterData));
+        adapterRegistry.setClearingRequested(itemID);
+
+        // Should still work (allows upgrade during removal dispute)
+        manager.upgradeAdapter(address(newAdapter));
+
+        assertEq(address(manager.opAdapter()), address(newAdapter));
+    }
+
+    function test_UpgradeAdapter_RevertIfPaused() public {
+        OpStackAdapterV2Mock newAdapter = new OpStackAdapterV2Mock();
+        bytes memory newAdapterData = abi.encode(address(newAdapter));
+        adapterRegistry.registerItemDirectly(newAdapterData);
+
+        vm.prank(guardian);
+        manager.setPaused(true);
+
+        vm.expectRevert(KlerosSequencerManager.ContractPaused.selector);
+        manager.upgradeAdapter(address(newAdapter));
+    }
+
+    function test_UpgradeAdapter_RevertIfZeroAddress() public {
+        vm.expectRevert(KlerosSequencerManager.ZeroAddress.selector);
+        manager.upgradeAdapter(address(0));
+    }
+
+    function test_RotationUsesAdapter() public {
+        _setupThreeOperators();
+
+        // Perform rotation
+        manager.rotateOperator();
+
+        // Verify SystemConfig was updated (via adapter delegatecall)
+        bytes32 expectedHash = bytes32(uint256(uint160(alice_batcher)));
+        assertEq(systemConfig.batcherHash(), expectedHash);
+        assertEq(systemConfig.unsafeBlockSigner(), alice_signer);
+    }
+
+    function test_RotationAfterAdapterUpgrade() public {
+        _setupThreeOperators();
+
+        // First rotation with v1 adapter
+        manager.rotateOperator();
+        KlerosSequencerManager.Operator memory current = manager.currentOperator();
+        assertEq(current.batcher, alice_batcher);
+
+        // Upgrade to v2 adapter
+        OpStackAdapterV2Mock newAdapter = new OpStackAdapterV2Mock();
+        bytes memory newAdapterData = abi.encode(address(newAdapter));
+        adapterRegistry.registerItemDirectly(newAdapterData);
+        manager.upgradeAdapter(address(newAdapter));
+
+        // Advance time
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        // Rotation should work with new adapter
+        manager.rotateOperator();
+        current = manager.currentOperator();
+        assertEq(current.batcher, bob_batcher);
+    }
+
     // ============ Helper Functions ============
 
     function _registerOperator(address batcher, address signer) internal returns (bytes32 itemID) {
@@ -622,5 +786,49 @@ contract KlerosSequencerManagerTest is Test {
         manager.syncAddOperator(alice_itemID);
         manager.syncAddOperator(bob_itemID);
         manager.syncAddOperator(charlie_itemID);
+    }
+}
+
+/**
+ * @title OpStackAdapterV2Mock
+ * @notice Mock adapter with version 2.0.0 for testing upgrades.
+ */
+contract OpStackAdapterV2Mock is IOpStackAdapter {
+    uint256 public constant VERSION = 2_000_000;
+    string public constant NAME = "OpStackAdapterV2Mock";
+    string public constant DESCRIPTION = "Mock adapter v2 for testing";
+
+    function version() external pure override returns (uint256) {
+        return VERSION;
+    }
+
+    function adapterInfo() external pure override returns (string memory name, string memory description) {
+        return (NAME, DESCRIPTION);
+    }
+
+    function rotateSequencer(
+        address _systemConfig,
+        address _batcher,
+        address _unsafeSigner
+    ) external override {
+        // Same implementation as V1 for testing
+        if (_systemConfig == address(0)) revert InvalidSystemConfig();
+        if (_batcher == address(0) || _unsafeSigner == address(0)) revert InvalidOperatorKeys();
+
+        // Import inline to avoid compilation issues
+        bytes32 batcherHash = bytes32(uint256(uint160(_batcher)));
+
+        // Use low-level call to avoid import issues
+        (bool success1,) = _systemConfig.call(
+            abi.encodeWithSignature("setBatcherHash(bytes32)", batcherHash)
+        );
+        if (!success1) revert RotationFailed("setBatcherHash failed");
+
+        (bool success2,) = _systemConfig.call(
+            abi.encodeWithSignature("setUnsafeBlockSigner(address)", _unsafeSigner)
+        );
+        if (!success2) revert RotationFailed("setUnsafeBlockSigner failed");
+
+        emit SequencerRotated(_systemConfig, _batcher, _unsafeSigner);
     }
 }
