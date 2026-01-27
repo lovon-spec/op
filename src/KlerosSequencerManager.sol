@@ -2,71 +2,61 @@
 pragma solidity ^0.8.20;
 
 import {ISystemConfig} from "./interfaces/ISystemConfig.sol";
-import {ICurate} from "./interfaces/ICurate.sol";
+import {IPermanentGTCRHybrid} from "./interfaces/IPermanentGTCRHybrid.sol";
 
 /**
  * @title KlerosSequencerManager
- * @notice Kleros Curate Classic -> OP Stack SystemConfig bridge with full operator tuple support.
- * @dev Manages a rotating set of sequencer operators curated via a Kleros TCR.
+ * @notice Hybrid PermanentGTCR -> OP Stack SystemConfig bridge with snapshot + reverse mapping.
+ * @dev Manages a rotating set of sequencer operators curated via a Kleros PGTCR Hybrid registry.
  *
- * IMPORTANT: OP Stack sequencer authority requires TWO keys rotated together:
- *   1. batcher - EOA that posts batches to L1 (sets SystemConfig.batcherHash)
- *   2. unsafeSigner - Key that signs unsafe blocks on P2P (sets SystemConfig.unsafeBlockSigner)
+ * Architecture (Snapshot + Reverse Mapping):
+ * - Registry stores items with on-chain operational keys (via Hybrid extension)
+ * - Manager SNAPSHOTS keys when syncing (decouples from registry reads during rotation)
+ * - Reverse mapping (OpId -> ItemID) enables O(1) registry verification
  *
- * Architecture:
- * - Registry (Kleros Curate Classic) decides which operator IDs are legitimate.
- * - Each operator ID maps to an Operator tuple (batcher, unsafeSigner).
- * - Manager maintains local active set and rotates authority each epoch.
- * - Sets BOTH batcherHash AND unsafeBlockSigner atomically on rotation.
+ * The "Cold Staker / Hot Operator" Model:
+ * - Staker (Owner): Holds stake in registry, can update keys
+ * - Operational Keys: Batcher + UnsafeSigner (can be different from owner)
+ * - ItemID: Registry identifier for the license/stake
+ * - OpId: Hash of operational keys (batcher, unsafeSigner)
  *
- * Requirements:
- * - SystemConfig ownership must be transferred to this contract.
- * - Registry must be a Kleros Curate Classic (GeneralizedTCR) instance.
- * - Registry items should encode the operator tuple (batcher, unsafeSigner).
+ * Data Flow:
+ * 1. Registration: User creates item on curate.kleros.io
+ *    - Default: Keys = msg.sender (owner)
+ *    - Advanced: Owner calls setOperationalKeys(itemID, batcher, signer)
+ *
+ * 2. Sync (Activation): Keeper calls syncAddOperator(itemID)
+ *    - Manager reads keys from Registry via getOperationalKeys()
+ *    - Manager stores: activeOperators.push(keys) + opIdToItemId[opId] = itemID
+ *
+ * 3. Validation (Rotation): rotateOperator() calls isRegisteredInRegistry(keys)
+ *    - Manager hashes keys to get OpId
+ *    - Manager looks up ItemID via opIdToItemId (O(1))
+ *    - Manager verifies against Registry: "Does ItemID still point to keys?"
  *
  * Security:
- * - Bounded loops to prevent DoS.
- * - O(1) add/remove with swap-pop pattern.
- * - Guardian pause capability for emergency situations.
- * - Atomic rotation of both keys prevents "half-rotated" state.
+ * - Bounded loops to prevent DoS
+ * - O(1) add/remove/verify with reverse mapping
+ * - Guardian pause capability
+ * - Atomic rotation of both keys
  *
  * @custom:security-contact security@example.com
  */
 contract KlerosSequencerManager {
     // ============ Errors ============
 
-    /// @notice Thrown when epoch has not ended yet.
     error EpochNotEnded();
-
-    /// @notice Thrown when there are no active operators to rotate to.
     error NoActiveOperators();
-
-    /// @notice Thrown when trying to add an operator that is already active.
     error AlreadyActive();
-
-    /// @notice Thrown when trying to remove an operator that is not active.
     error NotActive();
-
-    /// @notice Thrown when operator is not registered in the registry.
     error NotRegisteredInRegistry();
-
-    /// @notice Thrown when operator is still registered (cannot be removed).
     error StillRegisteredInRegistry();
-
-    /// @notice Thrown when caller is not the guardian.
     error InvalidGuardian();
-
-    /// @notice Thrown when contract is paused.
     error ContractPaused();
-
-    /// @notice Thrown when a zero address is provided.
     error ZeroAddress();
-
-    /// @notice Thrown when epoch duration is zero.
     error ZeroEpochDuration();
-
-    /// @notice Thrown when batcher and unsafeSigner are the same (potential misconfiguration).
-    error BatcherAndSignerSame();
+    error InvalidSigner();
+    error ItemAlreadySynced();
 
     // ============ Types ============
 
@@ -80,17 +70,10 @@ contract KlerosSequencerManager {
         address unsafeSigner;
     }
 
-    /// @notice Status values from Kleros Curate Classic.
-    /// @dev Matches ICurate.Status enum.
-    uint8 public constant STATUS_ABSENT = 0;
-    uint8 public constant STATUS_REGISTERED = 1;
-    uint8 public constant STATUS_REGISTRATION_REQUESTED = 2;
-    uint8 public constant STATUS_CLEARING_REQUESTED = 3;
-
     // ============ Immutables ============
 
-    /// @notice The Kleros Curate Classic registry contract.
-    ICurate public immutable registry;
+    /// @notice The Kleros PermanentGTCR Hybrid registry contract.
+    IPermanentGTCRHybrid public immutable registry;
 
     /// @notice The OP Stack SystemConfig contract.
     ISystemConfig public immutable systemConfig;
@@ -100,21 +83,28 @@ contract KlerosSequencerManager {
 
     // ============ State ============
 
-    /// @notice Array of currently active operators.
+    /// @notice Array of currently active operators (SNAPSHOT).
     Operator[] public activeOperators;
 
-    /// @notice Current index in the rotation (points to last rotated operator).
+    /// @notice Current index in the rotation.
     uint256 public currentIndex;
 
     /// @notice Timestamp of the last rotation.
     uint256 public lastRotationTimestamp;
 
-    /// @notice Mapping to check if an operator ID is in the active set.
-    /// @dev Operator ID is keccak256(abi.encode(batcher, unsafeSigner))
+    /// @notice Maps OpId (hash of keys) -> IsActive in local set.
     mapping(bytes32 => bool) public isActive;
 
-    /// @notice Mapping from operator ID to its index in activeOperators array.
+    /// @notice Maps OpId -> Index in activeOperators array.
     mapping(bytes32 => uint256) public indexOf;
+
+    /// @notice Maps OpId (hash of keys) -> Kleros Item ID (REVERSE MAPPING).
+    /// @dev Enables O(1) lookup of registry item for validation.
+    mapping(bytes32 => bytes32) public opIdToItemId;
+
+    /// @notice Maps Kleros Item ID -> OpId (hash of keys).
+    /// @dev Used for updates and to prevent double-sync of same item.
+    mapping(bytes32 => bytes32) public itemIdToOpId;
 
     /// @notice Whether the contract is paused.
     bool public paused;
@@ -124,24 +114,9 @@ contract KlerosSequencerManager {
 
     // ============ Events ============
 
-    /// @notice Emitted when an operator is added to the active set.
-    /// @param operatorId The unique ID of the operator.
-    /// @param batcher The batcher address.
-    /// @param unsafeSigner The unsafe block signer address.
     event OperatorAdded(bytes32 indexed operatorId, address indexed batcher, address indexed unsafeSigner);
-
-    /// @notice Emitted when an operator is removed from the active set.
-    /// @param operatorId The unique ID of the operator.
-    /// @param batcher The batcher address.
-    /// @param unsafeSigner The unsafe block signer address.
+    event OperatorUpdated(bytes32 indexed oldOperatorId, bytes32 indexed newOperatorId, address batcher, address unsafeSigner);
     event OperatorRemoved(bytes32 indexed operatorId, address indexed batcher, address indexed unsafeSigner);
-
-    /// @notice Emitted when rotation occurs and a new operator is selected.
-    /// @param operatorId The unique ID of the new operator.
-    /// @param batcher The batcher address.
-    /// @param unsafeSigner The unsafe block signer address.
-    /// @param batcherHash The batcher hash set in SystemConfig.
-    /// @param timestamp The timestamp of the rotation.
     event OperatorRotated(
         bytes32 indexed operatorId,
         address indexed batcher,
@@ -149,24 +124,15 @@ contract KlerosSequencerManager {
         bytes32 batcherHash,
         uint256 timestamp
     );
-
-    /// @notice Emitted when rotation is skipped due to no valid operators.
-    /// @param timestamp The timestamp when rotation was attempted.
     event RotationSkippedNoValidOperator(uint256 timestamp);
-
-    /// @notice Emitted when pause state changes.
-    /// @param isPaused The new pause state.
     event PausedSet(bool isPaused);
-
-    /// @notice Emitted when guardian is changed.
-    /// @param newGuardian The new guardian address.
     event GuardianSet(address indexed newGuardian);
 
     // ============ Constructor ============
 
     /**
      * @notice Initializes the KlerosSequencerManager.
-     * @param _registry Address of the Kleros Curate Classic registry.
+     * @param _registry Address of the Kleros PermanentGTCR Hybrid registry.
      * @param _systemConfig Address of the OP Stack SystemConfig.
      * @param _epochDuration Duration of each epoch in seconds.
      * @param _guardian Address of the guardian (can be address(0) to disable).
@@ -181,17 +147,15 @@ contract KlerosSequencerManager {
         if (_systemConfig == address(0)) revert ZeroAddress();
         if (_epochDuration == 0) revert ZeroEpochDuration();
 
-        registry = ICurate(_registry);
+        registry = IPermanentGTCRHybrid(_registry);
         systemConfig = ISystemConfig(_systemConfig);
         epochDuration = _epochDuration;
 
         guardian = _guardian;
         emit GuardianSet(_guardian);
 
-        // Initialize currentIndex to max so first rotation selects index 0
         currentIndex = type(uint256).max;
 
-        // Allow immediate first rotation if set is populated.
         unchecked {
             if (block.timestamp >= _epochDuration) {
                 lastRotationTimestamp = block.timestamp - _epochDuration;
@@ -203,13 +167,11 @@ contract KlerosSequencerManager {
 
     // ============ Modifiers ============
 
-    /// @notice Ensures contract is not paused.
     modifier notPaused() {
         if (paused) revert ContractPaused();
         _;
     }
 
-    /// @notice Ensures caller is the guardian.
     modifier onlyGuardian() {
         if (guardian == address(0) || msg.sender != guardian) revert InvalidGuardian();
         _;
@@ -217,19 +179,11 @@ contract KlerosSequencerManager {
 
     // ============ Guardian Functions ============
 
-    /**
-     * @notice Sets the pause state of the contract.
-     * @param _paused The new pause state.
-     */
     function setPaused(bool _paused) external onlyGuardian {
         paused = _paused;
         emit PausedSet(_paused);
     }
 
-    /**
-     * @notice Transfers guardian role to a new address.
-     * @param _newGuardian The new guardian address (can be address(0) to disable).
-     */
     function setGuardian(address _newGuardian) external onlyGuardian {
         guardian = _newGuardian;
         emit GuardianSet(_newGuardian);
@@ -237,67 +191,54 @@ contract KlerosSequencerManager {
 
     // ============ View Functions ============
 
-    /**
-     * @notice Returns the number of active operators.
-     * @return The count of active operators.
-     */
     function activeOperatorCount() external view returns (uint256) {
         return activeOperators.length;
     }
 
-    /**
-     * @notice Returns the full array of active operators.
-     * @return Array of active Operator structs.
-     */
     function getActiveOperators() external view returns (Operator[] memory) {
         return activeOperators;
     }
 
     /**
-     * @notice Computes the operator ID for an operator tuple.
-     * @dev The operator ID is used both as the internal key and as the Kleros registry item ID.
+     * @notice Computes the operator ID from keys.
      * @param batcher The batcher address.
      * @param unsafeSigner The unsafe block signer address.
-     * @return The operator ID.
+     * @return The operator ID (hash of keys).
      */
     function operatorId(address batcher, address unsafeSigner) public pure returns (bytes32) {
         return keccak256(abi.encode(batcher, unsafeSigner));
     }
 
     /**
-     * @notice Computes the Kleros registry item ID for an operator tuple.
-     * @dev Curate Classic uses keccak256(abi.encodePacked(data)) where data is the ABI-encoded item.
+     * @notice Checks if an operator is registered in the registry (O(1) via reverse mapping).
+     * @dev Uses snapshot + reverse mapping for efficient validation.
      * @param batcher The batcher address.
      * @param unsafeSigner The unsafe block signer address.
-     * @return The item ID used in the registry.
-     */
-    function itemIDFor(address batcher, address unsafeSigner) public pure returns (bytes32) {
-        return keccak256(abi.encodePacked(abi.encode(batcher, unsafeSigner)));
-    }
-
-    /**
-     * @notice Checks if an operator is registered in the Kleros registry.
-     * @param batcher The batcher address.
-     * @param unsafeSigner The unsafe block signer address.
-     * @return True if the operator has STATUS_REGISTERED in the registry.
+     * @return True if registered and keys still match.
      */
     function isRegisteredInRegistry(address batcher, address unsafeSigner) public view returns (bool) {
-        return _getRegistryStatus(batcher, unsafeSigner) == STATUS_REGISTERED;
+        // 1. Get OpId from keys
+        bytes32 opId = operatorId(batcher, unsafeSigner);
+
+        // 2. Reverse lookup ItemID
+        bytes32 itemID = opIdToItemId[opId];
+        if (itemID == bytes32(0)) return false;
+
+        // 3. Verify liveness (Registry check)
+        (IPermanentGTCRHybrid.Status status,,,,,,) = registry.items(itemID);
+        if (status != IPermanentGTCRHybrid.Status.Submitted &&
+            status != IPermanentGTCRHybrid.Status.Reincluded) {
+            return false;
+        }
+
+        // 4. Verify sync (Keys still match in registry?)
+        (address regBatcher, address regSigner) = registry.getOperationalKeys(itemID);
+        return (regBatcher == batcher && regSigner == unsafeSigner);
     }
 
     /**
-     * @notice Returns the current registry status of an operator.
-     * @param batcher The batcher address.
-     * @param unsafeSigner The unsafe block signer address.
-     * @return The status code (0=Absent, 1=Registered, 2=RegistrationRequested, 3=ClearingRequested).
-     */
-    function getRegistryStatus(address batcher, address unsafeSigner) external view returns (uint8) {
-        return _getRegistryStatus(batcher, unsafeSigner);
-    }
-
-    /**
-     * @notice Returns the current active operator (the one with sequencer authority).
-     * @return The current Operator tuple, or (address(0), address(0)) if none.
+     * @notice Returns the current active operator.
+     * @return The current Operator tuple.
      */
     function currentOperator() external view returns (Operator memory) {
         if (activeOperators.length == 0) return Operator(address(0), address(0));
@@ -305,22 +246,12 @@ contract KlerosSequencerManager {
         return activeOperators[currentIndex];
     }
 
-    /**
-     * @notice Returns the time until the next rotation is possible.
-     * @return Seconds until next rotation (0 if rotation is possible now).
-     */
     function timeUntilNextRotation() external view returns (uint256) {
         uint256 nextRotation = lastRotationTimestamp + epochDuration;
         if (block.timestamp >= nextRotation) return 0;
         return nextRotation - block.timestamp;
     }
 
-    /**
-     * @notice Checks if a specific operator is currently the active one.
-     * @param batcher The batcher address.
-     * @param unsafeSigner The unsafe block signer address.
-     * @return True if this operator is currently selected.
-     */
     function isCurrentOperator(address batcher, address unsafeSigner) external view returns (bool) {
         if (activeOperators.length == 0) return false;
         if (currentIndex >= activeOperators.length) return false;
@@ -331,8 +262,104 @@ contract KlerosSequencerManager {
     // ============ Sync Functions ============
 
     /**
-     * @notice Adds an operator to the active set if they are registered in the registry.
-     * @dev Anyone can call this to sync a registered operator into the active set.
+     * @notice Adds an operator to the active set by Kleros item ID.
+     * @dev Snapshots keys from registry and creates reverse mapping.
+     * @param _itemID The Kleros registry item ID.
+     */
+    function syncAddOperator(bytes32 _itemID) external notPaused {
+        // 1. Check Registry Status
+        (IPermanentGTCRHybrid.Status status,,,,,,) = registry.items(_itemID);
+        if (status != IPermanentGTCRHybrid.Status.Submitted &&
+            status != IPermanentGTCRHybrid.Status.Reincluded) {
+            revert NotRegisteredInRegistry();
+        }
+
+        // 2. Prevent double sync of same item
+        if (itemIdToOpId[_itemID] != bytes32(0)) revert ItemAlreadySynced();
+
+        // 3. Snapshot keys from registry
+        (address batcher, address unsafeSigner) = registry.getOperationalKeys(_itemID);
+        if (batcher == address(0) || unsafeSigner == address(0)) revert InvalidSigner();
+
+        // 4. Create operator ID
+        bytes32 opId = operatorId(batcher, unsafeSigner);
+        if (isActive[opId]) revert AlreadyActive(); // Keys already in use by another item?
+
+        // 5. Store in active set
+        indexOf[opId] = activeOperators.length;
+        activeOperators.push(Operator(batcher, unsafeSigner));
+        isActive[opId] = true;
+
+        // 6. Store reverse mappings (THE LINK)
+        opIdToItemId[opId] = _itemID;
+        itemIdToOpId[_itemID] = opId;
+
+        emit OperatorAdded(opId, batcher, unsafeSigner);
+    }
+
+    /**
+     * @notice Updates keys for an existing operator when registry keys change.
+     * @dev Must be called manually if owner updates keys in registry.
+     * @param _itemID The Kleros registry item ID.
+     */
+    function syncUpdateOperator(bytes32 _itemID) external notPaused {
+        // 1. Find old operator info
+        bytes32 oldOpId = itemIdToOpId[_itemID];
+        if (!isActive[oldOpId]) revert NotActive();
+
+        // 2. Get new keys from registry
+        (address newBatcher, address newSigner) = registry.getOperationalKeys(_itemID);
+        if (newBatcher == address(0) || newSigner == address(0)) revert InvalidSigner();
+
+        bytes32 newOpId = operatorId(newBatcher, newSigner);
+
+        // 3. Update array (swap in place)
+        uint256 idx = indexOf[oldOpId];
+        activeOperators[idx] = Operator(newBatcher, newSigner);
+
+        // 4. Update mappings
+        delete isActive[oldOpId];
+        delete indexOf[oldOpId];
+        delete opIdToItemId[oldOpId];
+
+        isActive[newOpId] = true;
+        indexOf[newOpId] = idx;
+        opIdToItemId[newOpId] = _itemID;
+        itemIdToOpId[_itemID] = newOpId;
+
+        emit OperatorUpdated(oldOpId, newOpId, newBatcher, newSigner);
+    }
+
+    /**
+     * @notice Removes an operator from the active set by Kleros item ID.
+     * @dev Can only remove if no longer registered in registry.
+     * @param _itemID The Kleros registry item ID.
+     */
+    function syncRemoveOperator(bytes32 _itemID) external notPaused {
+        bytes32 opId = itemIdToOpId[_itemID];
+        if (!isActive[opId]) revert NotActive();
+
+        // Check if actually removed from registry
+        (IPermanentGTCRHybrid.Status status,,,,,,) = registry.items(_itemID);
+        if (status == IPermanentGTCRHybrid.Status.Submitted ||
+            status == IPermanentGTCRHybrid.Status.Reincluded) {
+            revert StillRegisteredInRegistry();
+        }
+
+        // Remove from active set
+        Operator memory op = activeOperators[indexOf[opId]];
+        _removeActiveOperator(opId, op.batcher, op.unsafeSigner);
+
+        // Clean up extra mappings
+        delete opIdToItemId[opId];
+        delete itemIdToOpId[_itemID];
+    }
+
+    // ============ Legacy Sync (Backwards Compatibility) ============
+
+    /**
+     * @notice Adds an operator by addresses (legacy interface).
+     * @dev Computes itemID from addresses. Use syncAddOperator(itemID) for new integrations.
      * @param batcher The batcher address.
      * @param unsafeSigner The unsafe block signer address.
      */
@@ -342,40 +369,56 @@ contract KlerosSequencerManager {
 
         bytes32 opId = operatorId(batcher, unsafeSigner);
         if (isActive[opId]) revert AlreadyActive();
-        if (!isRegisteredInRegistry(batcher, unsafeSigner)) revert NotRegisteredInRegistry();
+
+        // For legacy calls, we need to verify the keys match what's in registry
+        // This requires the keys to be the itemID computed from encoded data
+        bytes32 itemID = keccak256(abi.encodePacked(abi.encode(batcher, unsafeSigner)));
+
+        (IPermanentGTCRHybrid.Status status,,,,,,) = registry.items(itemID);
+        if (status != IPermanentGTCRHybrid.Status.Submitted &&
+            status != IPermanentGTCRHybrid.Status.Reincluded) {
+            revert NotRegisteredInRegistry();
+        }
+
+        if (itemIdToOpId[itemID] != bytes32(0)) revert ItemAlreadySynced();
 
         indexOf[opId] = activeOperators.length;
         activeOperators.push(Operator(batcher, unsafeSigner));
         isActive[opId] = true;
 
+        opIdToItemId[opId] = itemID;
+        itemIdToOpId[itemID] = opId;
+
         emit OperatorAdded(opId, batcher, unsafeSigner);
     }
 
     /**
-     * @notice Removes an operator from the active set if they are no longer registered.
-     * @dev Anyone can call this to remove an operator that is no longer registered.
+     * @notice Removes an operator by addresses (legacy interface).
      * @param batcher The batcher address.
      * @param unsafeSigner The unsafe block signer address.
      */
     function syncRemoveOperator(address batcher, address unsafeSigner) external notPaused {
         bytes32 opId = operatorId(batcher, unsafeSigner);
         if (!isActive[opId]) revert NotActive();
-        if (isRegisteredInRegistry(batcher, unsafeSigner)) revert StillRegisteredInRegistry();
+
+        bytes32 itemID = opIdToItemId[opId];
+
+        (IPermanentGTCRHybrid.Status status,,,,,,) = registry.items(itemID);
+        if (status == IPermanentGTCRHybrid.Status.Submitted ||
+            status == IPermanentGTCRHybrid.Status.Reincluded) {
+            revert StillRegisteredInRegistry();
+        }
 
         _removeActiveOperator(opId, batcher, unsafeSigner);
+        delete opIdToItemId[opId];
+        delete itemIdToOpId[itemID];
     }
 
     // ============ Rotation Functions ============
 
     /**
-     * @notice Rotates to the next valid operator and updates SystemConfig atomically.
-     * @dev Anyone can call this once per epoch. The function:
-     *      1. Checks if epoch has ended
-     *      2. Iterates through operators to find a valid one
-     *      3. Removes any invalid operators encountered
-     *      4. Sets BOTH batcherHash AND unsafeBlockSigner atomically
-     *
-     *      Uses bounded iteration to prevent DoS.
+     * @notice Rotates to the next valid operator and updates SystemConfig.
+     * @dev Uses O(1) validation via reverse mapping.
      */
     function rotateOperator() external notPaused {
         if (block.timestamp < lastRotationTimestamp + epochDuration) revert EpochNotEnded();
@@ -388,7 +431,6 @@ contract KlerosSequencerManager {
         Operator memory next;
         bytes32 nextOpId;
 
-        // Bounded search for a valid operator
         while (checks < initialLen && activeOperators.length > 0) {
             uint256 len = activeOperators.length;
             uint256 candidateIndex;
@@ -406,8 +448,13 @@ contract KlerosSequencerManager {
                 break;
             }
 
-            // Candidate no longer valid, remove and continue
+            // Candidate no longer valid, remove
+            bytes32 itemID = opIdToItemId[candidateId];
             _removeActiveOperator(candidateId, candidate.batcher, candidate.unsafeSigner);
+            delete opIdToItemId[candidateId];
+            if (itemID != bytes32(0)) {
+                delete itemIdToOpId[itemID];
+            }
             checks++;
         }
 
@@ -416,7 +463,6 @@ contract KlerosSequencerManager {
             return;
         }
 
-        // CRITICAL: Update both batcherHash and unsafeBlockSigner atomically
         bytes32 batcherHash = _toV0BatcherHash(next.batcher);
         systemConfig.setBatcherHash(batcherHash);
         systemConfig.setUnsafeBlockSigner(next.unsafeSigner);
@@ -425,58 +471,36 @@ contract KlerosSequencerManager {
         emit OperatorRotated(nextOpId, next.batcher, next.unsafeSigner, batcherHash, block.timestamp);
     }
 
-    /**
-     * @notice Alias for rotateOperator() for keeper compatibility.
-     */
     function poke() external {
         this.rotateOperator();
     }
 
     // ============ Legacy Compatibility ============
 
-    /**
-     * @notice Returns the current batcher address for backwards compatibility.
-     * @return The batcher address of the current operator, or address(0) if none.
-     * @dev DEPRECATED: Use currentOperator() instead to get both addresses.
-     */
     function currentSequencer() external view returns (address) {
         if (activeOperators.length == 0) return address(0);
         if (currentIndex >= activeOperators.length) return address(0);
         return activeOperators[currentIndex].batcher;
     }
 
-    /**
-     * @notice Alias for rotateOperator() for backwards compatibility.
-     * @dev DEPRECATED: Use rotateOperator() instead.
-     */
     function rotateSequencer() external {
         this.rotateOperator();
     }
 
-    /**
-     * @notice Returns the number of active operators (legacy name).
-     * @dev DEPRECATED: Use activeOperatorCount() instead.
-     */
     function activeSequencerCount() external view returns (uint256) {
         return activeOperators.length;
     }
 
     // ============ Internal Functions ============
 
-    /**
-     * @notice Removes an operator from the active set using swap-pop pattern.
-     * @dev O(1) removal. Handles currentIndex adjustment.
-     */
     function _removeActiveOperator(bytes32 opId, address batcher, address unsafeSigner) internal {
         uint256 idx = indexOf[opId];
         uint256 lastIdx = activeOperators.length - 1;
 
-        // If removing an element before currentIndex, shift currentIndex left
         if (currentIndex < activeOperators.length && idx < currentIndex) {
             currentIndex -= 1;
         }
 
-        // Swap with last element if not already last
         if (idx != lastIdx) {
             Operator memory moved = activeOperators[lastIdx];
             bytes32 movedId = operatorId(moved.batcher, moved.unsafeSigner);
@@ -488,7 +512,6 @@ contract KlerosSequencerManager {
         delete indexOf[opId];
         isActive[opId] = false;
 
-        // Reset currentIndex if array is empty or index is out of bounds
         if (activeOperators.length == 0 || currentIndex >= activeOperators.length) {
             currentIndex = type(uint256).max;
         }
@@ -496,24 +519,7 @@ contract KlerosSequencerManager {
         emit OperatorRemoved(opId, batcher, unsafeSigner);
     }
 
-    /**
-     * @notice Converts an address to V0 batcher hash format.
-     * @param a The address to convert.
-     * @return The V0 batcher hash (bytes32 with address in lower 160 bits).
-     */
     function _toV0BatcherHash(address a) internal pure returns (bytes32) {
         return bytes32(uint256(uint160(a)));
-    }
-
-    /**
-     * @notice Gets the registry status for an operator from Curate Classic.
-     * @param batcher The batcher address.
-     * @param unsafeSigner The unsafe block signer address.
-     * @return status The status code.
-     */
-    function _getRegistryStatus(address batcher, address unsafeSigner) internal view returns (uint8 status) {
-        bytes32 itemID = itemIDFor(batcher, unsafeSigner);
-        (, ICurate.Status registryStatus, ) = registry.getItemInfo(itemID);
-        return uint8(registryStatus);
     }
 }

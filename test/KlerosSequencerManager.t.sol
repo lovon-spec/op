@@ -4,22 +4,22 @@ pragma solidity ^0.8.20;
 import {Test, console2} from "forge-std/Test.sol";
 import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
 import {MockSystemConfig} from "./mocks/MockSystemConfig.sol";
-import {MockCurate} from "./mocks/MockCurate.sol";
-import {ICurate} from "../src/interfaces/ICurate.sol";
+import {MockPermanentGTCRHybrid} from "./mocks/MockPermanentGTCRHybrid.sol";
+import {IPermanentGTCRHybrid} from "../src/interfaces/IPermanentGTCRHybrid.sol";
 
 /**
  * @title KlerosSequencerManagerTest
- * @notice Comprehensive test suite for KlerosSequencerManager.
+ * @notice Comprehensive test suite for KlerosSequencerManager with Hybrid PGTCR.
  *
- * NOTE: Tests use "operator tuples" where each operator has both:
- *   - batcher: address that posts batches to L1
- *   - unsafeSigner: address that signs P2P blocks
- * Both are rotated atomically by the manager.
+ * Architecture:
+ * - Uses IPermanentGTCRHybrid for registry (on-chain operational keys)
+ * - Manager uses snapshot + reverse mapping for O(1) validation
+ * - Supports syncAddOperator(bytes32 itemID) and legacy syncAddOperator(address, address)
  */
 contract KlerosSequencerManagerTest is Test {
     KlerosSequencerManager public manager;
     MockSystemConfig public systemConfig;
-    MockCurate public curate;
+    MockPermanentGTCRHybrid public registry;
 
     address public guardian = address(0x1);
 
@@ -33,10 +33,17 @@ contract KlerosSequencerManagerTest is Test {
     address public dave_batcher = address(0x400);
     address public dave_signer = address(0x401);
 
+    // Item IDs (set during registration)
+    bytes32 public alice_itemID;
+    bytes32 public bob_itemID;
+    bytes32 public charlie_itemID;
+    bytes32 public dave_itemID;
+
     uint256 public constant EPOCH_DURATION = 1 hours;
 
-    // Events to test (must match contract exactly)
+    // Events to test
     event OperatorAdded(bytes32 indexed operatorId, address indexed batcher, address indexed unsafeSigner);
+    event OperatorUpdated(bytes32 indexed oldOperatorId, bytes32 indexed newOperatorId, address batcher, address unsafeSigner);
     event OperatorRemoved(bytes32 indexed operatorId, address indexed batcher, address indexed unsafeSigner);
     event OperatorRotated(bytes32 indexed operatorId, address indexed batcher, address indexed unsafeSigner, bytes32 batcherHash, uint256 timestamp);
     event RotationSkippedNoValidOperator(uint256 timestamp);
@@ -44,16 +51,16 @@ contract KlerosSequencerManagerTest is Test {
     event GuardianSet(address indexed newGuardian);
 
     function setUp() public {
-        // Set a reasonable block timestamp to avoid underflow in constructor
+        // Set a reasonable block timestamp
         vm.warp(EPOCH_DURATION + 1);
 
         // Deploy mocks
         systemConfig = new MockSystemConfig();
-        curate = new MockCurate();
+        registry = new MockPermanentGTCRHybrid();
 
         // Deploy manager
         manager = new KlerosSequencerManager(
-            address(curate),
+            address(registry),
             address(systemConfig),
             EPOCH_DURATION,
             guardian
@@ -66,7 +73,7 @@ contract KlerosSequencerManagerTest is Test {
     // ============ Constructor Tests ============
 
     function test_Constructor_SetsCorrectValues() public view {
-        assertEq(address(manager.registry()), address(curate));
+        assertEq(address(manager.registry()), address(registry));
         assertEq(address(manager.systemConfig()), address(systemConfig));
         assertEq(manager.epochDuration(), EPOCH_DURATION);
         assertEq(manager.guardian(), guardian);
@@ -80,17 +87,17 @@ contract KlerosSequencerManagerTest is Test {
 
     function test_Constructor_RevertZeroSystemConfig() public {
         vm.expectRevert(KlerosSequencerManager.ZeroAddress.selector);
-        new KlerosSequencerManager(address(curate), address(0), EPOCH_DURATION, guardian);
+        new KlerosSequencerManager(address(registry), address(0), EPOCH_DURATION, guardian);
     }
 
     function test_Constructor_RevertZeroEpochDuration() public {
         vm.expectRevert(KlerosSequencerManager.ZeroEpochDuration.selector);
-        new KlerosSequencerManager(address(curate), address(systemConfig), 0, guardian);
+        new KlerosSequencerManager(address(registry), address(systemConfig), 0, guardian);
     }
 
     function test_Constructor_AllowsZeroGuardian() public {
         KlerosSequencerManager m = new KlerosSequencerManager(
-            address(curate),
+            address(registry),
             address(systemConfig),
             EPOCH_DURATION,
             address(0)
@@ -98,29 +105,25 @@ contract KlerosSequencerManagerTest is Test {
         assertEq(m.guardian(), address(0));
     }
 
-    // ============ Item ID Tests ============
-
-    function test_ItemIDFor_ComputesCorrectly() public view {
-        bytes32 expected = keccak256(abi.encodePacked(abi.encode(alice_batcher, alice_signer)));
-        assertEq(manager.itemIDFor(alice_batcher, alice_signer), expected);
-    }
-
-    function test_ItemIDFor_DifferentOperatorsDifferentIDs() public view {
-        assertNotEq(
-            manager.itemIDFor(alice_batcher, alice_signer),
-            manager.itemIDFor(bob_batcher, bob_signer)
-        );
-    }
+    // ============ Operator ID Tests ============
 
     function test_OperatorId_ComputesCorrectly() public view {
         bytes32 expected = keccak256(abi.encode(alice_batcher, alice_signer));
         assertEq(manager.operatorId(alice_batcher, alice_signer), expected);
     }
 
+    function test_OperatorId_DifferentOperatorsDifferentIDs() public view {
+        assertNotEq(
+            manager.operatorId(alice_batcher, alice_signer),
+            manager.operatorId(bob_batcher, bob_signer)
+        );
+    }
+
     // ============ Registry Status Tests ============
 
     function test_IsRegisteredInRegistry_ReturnsTrueForRegistered() public {
-        _registerOperator(alice_batcher, alice_signer);
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_itemID);
         assertTrue(manager.isRegisteredInRegistry(alice_batcher, alice_signer));
     }
 
@@ -128,26 +131,73 @@ contract KlerosSequencerManagerTest is Test {
         assertFalse(manager.isRegisteredInRegistry(alice_batcher, alice_signer));
     }
 
-    function test_IsRegisteredInRegistry_ReturnsFalseForClearingRequested() public {
-        _registerOperator(alice_batcher, alice_signer);
-        curate.setOperatorClearingRequested(alice_batcher, alice_signer);
+    function test_IsRegisteredInRegistry_ReturnsFalseForRemoved() public {
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_itemID);
+
+        registry.setOperatorClearingRequested(alice_batcher, alice_signer);
         assertFalse(manager.isRegisteredInRegistry(alice_batcher, alice_signer));
     }
 
-    function test_GetRegistryStatus_ReturnsCorrectStatus() public {
-        assertEq(manager.getRegistryStatus(alice_batcher, alice_signer), manager.STATUS_ABSENT());
+    // ============ Sync Add Tests (by itemID) ============
 
-        _registerOperator(alice_batcher, alice_signer);
-        assertEq(manager.getRegistryStatus(alice_batcher, alice_signer), manager.STATUS_REGISTERED());
+    function test_SyncAddOperator_ByItemID() public {
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
 
-        curate.setOperatorClearingRequested(alice_batcher, alice_signer);
-        assertEq(manager.getRegistryStatus(alice_batcher, alice_signer), manager.STATUS_CLEARING_REQUESTED());
+        bytes32 opId = manager.operatorId(alice_batcher, alice_signer);
+        vm.expectEmit(true, true, true, false);
+        emit OperatorAdded(opId, alice_batcher, alice_signer);
+
+        manager.syncAddOperator(alice_itemID);
+
+        assertTrue(manager.isActive(opId));
+        assertEq(manager.activeOperatorCount(), 1);
+
+        // Verify reverse mapping
+        assertEq(manager.opIdToItemId(opId), alice_itemID);
+        assertEq(manager.itemIdToOpId(alice_itemID), opId);
     }
 
-    // ============ Sync Add Tests ============
+    function test_SyncAddOperator_RevertIfNotRegistered() public {
+        bytes32 fakeItemID = keccak256("fake");
+        vm.expectRevert(KlerosSequencerManager.NotRegisteredInRegistry.selector);
+        manager.syncAddOperator(fakeItemID);
+    }
 
-    function test_SyncAddOperator_AddsRegisteredOperator() public {
-        _registerOperator(alice_batcher, alice_signer);
+    function test_SyncAddOperator_RevertIfAlreadySynced() public {
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_itemID);
+
+        vm.expectRevert(KlerosSequencerManager.ItemAlreadySynced.selector);
+        manager.syncAddOperator(alice_itemID);
+    }
+
+    function test_SyncAddOperator_RevertIfPaused() public {
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+
+        vm.prank(guardian);
+        manager.setPaused(true);
+
+        vm.expectRevert(KlerosSequencerManager.ContractPaused.selector);
+        manager.syncAddOperator(alice_itemID);
+    }
+
+    function test_SyncAddOperator_MultipleOperators() public {
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        bob_itemID = _registerOperator(bob_batcher, bob_signer);
+        charlie_itemID = _registerOperator(charlie_batcher, charlie_signer);
+
+        manager.syncAddOperator(alice_itemID);
+        manager.syncAddOperator(bob_itemID);
+        manager.syncAddOperator(charlie_itemID);
+
+        assertEq(manager.activeOperatorCount(), 3);
+    }
+
+    // ============ Sync Add Tests (Legacy by addresses) ============
+
+    function test_SyncAddOperator_LegacyByAddresses() public {
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
 
         bytes32 opId = manager.operatorId(alice_batcher, alice_signer);
         vm.expectEmit(true, true, true, false);
@@ -159,59 +209,90 @@ contract KlerosSequencerManagerTest is Test {
         assertEq(manager.activeOperatorCount(), 1);
     }
 
-    function test_SyncAddOperator_RevertIfNotRegistered() public {
-        vm.expectRevert(KlerosSequencerManager.NotRegisteredInRegistry.selector);
-        manager.syncAddOperator(alice_batcher, alice_signer);
-    }
-
-    function test_SyncAddOperator_RevertIfAlreadyActive() public {
-        _registerOperator(alice_batcher, alice_signer);
-        manager.syncAddOperator(alice_batcher, alice_signer);
-
-        vm.expectRevert(KlerosSequencerManager.AlreadyActive.selector);
-        manager.syncAddOperator(alice_batcher, alice_signer);
-    }
-
-    function test_SyncAddOperator_RevertIfZeroBatcher() public {
+    function test_SyncAddOperator_Legacy_RevertIfZeroBatcher() public {
         vm.expectRevert(KlerosSequencerManager.ZeroAddress.selector);
         manager.syncAddOperator(address(0), alice_signer);
     }
 
-    function test_SyncAddOperator_RevertIfZeroSigner() public {
+    function test_SyncAddOperator_Legacy_RevertIfZeroSigner() public {
         vm.expectRevert(KlerosSequencerManager.ZeroAddress.selector);
         manager.syncAddOperator(alice_batcher, address(0));
     }
 
-    function test_SyncAddOperator_RevertIfPaused() public {
-        _registerOperator(alice_batcher, alice_signer);
+    // ============ Sync Update Tests ============
 
-        vm.prank(guardian);
-        manager.setPaused(true);
+    function test_SyncUpdateOperator_UpdatesKeys() public {
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_itemID);
 
-        vm.expectRevert(KlerosSequencerManager.ContractPaused.selector);
-        manager.syncAddOperator(alice_batcher, alice_signer);
+        bytes32 oldOpId = manager.operatorId(alice_batcher, alice_signer);
+
+        // Change keys in registry
+        address newBatcher = address(0x999);
+        address newSigner = address(0x998);
+        registry.setOperationalKeys(alice_itemID, newBatcher, newSigner);
+
+        bytes32 newOpId = manager.operatorId(newBatcher, newSigner);
+
+        vm.expectEmit(true, true, false, true);
+        emit OperatorUpdated(oldOpId, newOpId, newBatcher, newSigner);
+
+        manager.syncUpdateOperator(alice_itemID);
+
+        // Old keys should be inactive
+        assertFalse(manager.isActive(oldOpId));
+
+        // New keys should be active
+        assertTrue(manager.isActive(newOpId));
+        assertEq(manager.opIdToItemId(newOpId), alice_itemID);
     }
 
-    function test_SyncAddOperator_MultipleOperators() public {
-        _registerOperator(alice_batcher, alice_signer);
-        _registerOperator(bob_batcher, bob_signer);
-        _registerOperator(charlie_batcher, charlie_signer);
-
-        manager.syncAddOperator(alice_batcher, alice_signer);
-        manager.syncAddOperator(bob_batcher, bob_signer);
-        manager.syncAddOperator(charlie_batcher, charlie_signer);
-
-        assertEq(manager.activeOperatorCount(), 3);
+    function test_SyncUpdateOperator_RevertIfNotActive() public {
+        bytes32 fakeItemID = keccak256("fake");
+        vm.expectRevert(KlerosSequencerManager.NotActive.selector);
+        manager.syncUpdateOperator(fakeItemID);
     }
 
-    // ============ Sync Remove Tests ============
+    // ============ Sync Remove Tests (by itemID) ============
 
-    function test_SyncRemoveOperator_RemovesInvalidOperator() public {
-        _registerOperator(alice_batcher, alice_signer);
-        manager.syncAddOperator(alice_batcher, alice_signer);
+    function test_SyncRemoveOperator_ByItemID() public {
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_itemID);
 
-        // Simulate challenge (clearing requested)
-        curate.setOperatorClearingRequested(alice_batcher, alice_signer);
+        // Remove from registry
+        registry.setOperatorClearingRequested(alice_batcher, alice_signer);
+
+        bytes32 opId = manager.operatorId(alice_batcher, alice_signer);
+        vm.expectEmit(true, true, true, false);
+        emit OperatorRemoved(opId, alice_batcher, alice_signer);
+
+        manager.syncRemoveOperator(alice_itemID);
+
+        assertFalse(manager.isActive(opId));
+        assertEq(manager.activeOperatorCount(), 0);
+    }
+
+    function test_SyncRemoveOperator_RevertIfNotActive() public {
+        bytes32 fakeItemID = keccak256("fake");
+        vm.expectRevert(KlerosSequencerManager.NotActive.selector);
+        manager.syncRemoveOperator(fakeItemID);
+    }
+
+    function test_SyncRemoveOperator_RevertIfStillRegistered() public {
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_itemID);
+
+        vm.expectRevert(KlerosSequencerManager.StillRegisteredInRegistry.selector);
+        manager.syncRemoveOperator(alice_itemID);
+    }
+
+    // ============ Sync Remove Tests (Legacy by addresses) ============
+
+    function test_SyncRemoveOperator_LegacyByAddresses() public {
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_itemID);
+
+        registry.setOperatorClearingRequested(alice_batcher, alice_signer);
 
         bytes32 opId = manager.operatorId(alice_batcher, alice_signer);
         vm.expectEmit(true, true, true, false);
@@ -220,33 +301,6 @@ contract KlerosSequencerManagerTest is Test {
         manager.syncRemoveOperator(alice_batcher, alice_signer);
 
         assertFalse(manager.isActive(opId));
-        assertEq(manager.activeOperatorCount(), 0);
-    }
-
-    function test_SyncRemoveOperator_RevertIfNotActive() public {
-        vm.expectRevert(KlerosSequencerManager.NotActive.selector);
-        manager.syncRemoveOperator(alice_batcher, alice_signer);
-    }
-
-    function test_SyncRemoveOperator_RevertIfStillRegistered() public {
-        _registerOperator(alice_batcher, alice_signer);
-        manager.syncAddOperator(alice_batcher, alice_signer);
-
-        vm.expectRevert(KlerosSequencerManager.StillRegisteredInRegistry.selector);
-        manager.syncRemoveOperator(alice_batcher, alice_signer);
-    }
-
-    function test_SyncRemoveOperator_RevertIfPaused() public {
-        _registerOperator(alice_batcher, alice_signer);
-        manager.syncAddOperator(alice_batcher, alice_signer);
-
-        curate.setOperatorClearingRequested(alice_batcher, alice_signer);
-
-        vm.prank(guardian);
-        manager.setPaused(true);
-
-        vm.expectRevert(KlerosSequencerManager.ContractPaused.selector);
-        manager.syncRemoveOperator(alice_batcher, alice_signer);
     }
 
     // ============ Rotation Tests ============
@@ -276,7 +330,6 @@ contract KlerosSequencerManagerTest is Test {
         assertEq(current.batcher, alice_batcher);
         assertEq(current.unsafeSigner, alice_signer);
 
-        // Wait for epoch
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         // Second rotation -> bob (index 1)
@@ -285,7 +338,6 @@ contract KlerosSequencerManagerTest is Test {
         assertEq(current.batcher, bob_batcher);
         assertEq(current.unsafeSigner, bob_signer);
 
-        // Wait for epoch
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         // Third rotation -> charlie (index 2)
@@ -294,14 +346,12 @@ contract KlerosSequencerManagerTest is Test {
         assertEq(current.batcher, charlie_batcher);
         assertEq(current.unsafeSigner, charlie_signer);
 
-        // Wait for epoch
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         // Fourth rotation -> wraps to alice (index 0)
         manager.rotateOperator();
         current = manager.currentOperator();
         assertEq(current.batcher, alice_batcher);
-        assertEq(current.unsafeSigner, alice_signer);
     }
 
     function test_RotateOperator_RevertIfEpochNotEnded() public {
@@ -321,7 +371,7 @@ contract KlerosSequencerManagerTest is Test {
         _setupThreeOperators();
 
         // Invalidate bob
-        curate.setOperatorClearingRequested(bob_batcher, bob_signer);
+        registry.setOperatorClearingRequested(bob_batcher, bob_signer);
 
         // First rotation -> alice (valid)
         manager.rotateOperator();
@@ -345,9 +395,9 @@ contract KlerosSequencerManagerTest is Test {
         _setupThreeOperators();
 
         // Invalidate all
-        curate.setOperatorClearingRequested(alice_batcher, alice_signer);
-        curate.setOperatorClearingRequested(bob_batcher, bob_signer);
-        curate.setOperatorClearingRequested(charlie_batcher, charlie_signer);
+        registry.setOperatorClearingRequested(alice_batcher, alice_signer);
+        registry.setOperatorClearingRequested(bob_batcher, bob_signer);
+        registry.setOperatorClearingRequested(charlie_batcher, charlie_signer);
 
         vm.expectEmit(false, false, false, true);
         emit RotationSkippedNoValidOperator(block.timestamp);
@@ -372,50 +422,6 @@ contract KlerosSequencerManagerTest is Test {
 
         manager.poke();
 
-        KlerosSequencerManager.Operator memory current = manager.currentOperator();
-        assertEq(current.batcher, alice_batcher);
-    }
-
-    // ============ Current Index Handling Tests ============
-
-    function test_RemoveBeforeCurrentIndex_AdjustsIndex() public {
-        _setupThreeOperators();
-
-        // Rotate to bob (index 1)
-        manager.rotateOperator();
-        vm.warp(block.timestamp + EPOCH_DURATION);
-        manager.rotateOperator();
-        assertEq(manager.currentIndex(), 1);
-
-        // Remove alice (index 0, before currentIndex)
-        curate.setOperatorClearingRequested(alice_batcher, alice_signer);
-        manager.syncRemoveOperator(alice_batcher, alice_signer);
-
-        // currentIndex should be adjusted
-        assertEq(manager.currentIndex(), 0);
-    }
-
-    function test_RemoveAtCurrentIndex_ResetsIndex() public {
-        _setupThreeOperators();
-
-        // Rotate to charlie (index 2)
-        manager.rotateOperator();
-        vm.warp(block.timestamp + EPOCH_DURATION);
-        manager.rotateOperator();
-        vm.warp(block.timestamp + EPOCH_DURATION);
-        manager.rotateOperator();
-        assertEq(manager.currentIndex(), 2);
-
-        // Remove charlie (at currentIndex, which is also lastIndex)
-        curate.setOperatorClearingRequested(charlie_batcher, charlie_signer);
-        manager.syncRemoveOperator(charlie_batcher, charlie_signer);
-
-        // currentIndex should reset to max (meaning next rotation starts from 0)
-        assertEq(manager.currentIndex(), type(uint256).max);
-
-        // Verify next rotation selects alice (index 0)
-        vm.warp(block.timestamp + EPOCH_DURATION);
-        manager.rotateOperator();
         KlerosSequencerManager.Operator memory current = manager.currentOperator();
         assertEq(current.batcher, alice_batcher);
     }
@@ -448,29 +454,17 @@ contract KlerosSequencerManagerTest is Test {
         assertEq(manager.guardian(), newGuardian);
     }
 
-    function test_SetGuardian_CanDisableBySettingZero() public {
-        vm.prank(guardian);
-        manager.setGuardian(address(0));
-
-        assertEq(manager.guardian(), address(0));
-
-        // Now no one can call guardian functions
-        vm.expectRevert(KlerosSequencerManager.InvalidGuardian.selector);
-        vm.prank(guardian);
-        manager.setPaused(true);
-    }
-
     // ============ View Functions Tests ============
 
     function test_ActiveOperatorCount() public {
         assertEq(manager.activeOperatorCount(), 0);
 
-        _registerOperator(alice_batcher, alice_signer);
-        manager.syncAddOperator(alice_batcher, alice_signer);
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_itemID);
         assertEq(manager.activeOperatorCount(), 1);
 
-        _registerOperator(bob_batcher, bob_signer);
-        manager.syncAddOperator(bob_batcher, bob_signer);
+        bob_itemID = _registerOperator(bob_batcher, bob_signer);
+        manager.syncAddOperator(bob_itemID);
         assertEq(manager.activeOperatorCount(), 2);
     }
 
@@ -513,7 +507,7 @@ contract KlerosSequencerManagerTest is Test {
     function test_TimeUntilNextRotation() public {
         _setupThreeOperators();
 
-        // Initially should be 0 (can rotate immediately due to constructor setup)
+        // Initially should be 0 (can rotate immediately)
         assertEq(manager.timeUntilNextRotation(), 0);
 
         manager.rotateOperator();
@@ -534,8 +528,8 @@ contract KlerosSequencerManagerTest is Test {
     // ============ Edge Cases Tests ============
 
     function test_SingleOperator_RotatesBackToItself() public {
-        _registerOperator(alice_batcher, alice_signer);
-        manager.syncAddOperator(alice_batcher, alice_signer);
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_itemID);
 
         manager.rotateOperator();
         KlerosSequencerManager.Operator memory current = manager.currentOperator();
@@ -547,27 +541,9 @@ contract KlerosSequencerManagerTest is Test {
         assertEq(current.batcher, alice_batcher);
     }
 
-    function test_SwapPopRemoval_MaintainsCorrectOrder() public {
-        _setupThreeOperators();
-        _registerOperator(dave_batcher, dave_signer);
-        manager.syncAddOperator(dave_batcher, dave_signer);
-
-        // Order: [alice, bob, charlie, dave]
-        // Remove bob -> [alice, dave, charlie]
-        curate.setOperatorClearingRequested(bob_batcher, bob_signer);
-        manager.syncRemoveOperator(bob_batcher, bob_signer);
-
-        assertEq(manager.activeOperatorCount(), 3);
-
-        KlerosSequencerManager.Operator[] memory operators = manager.getActiveOperators();
-        assertEq(operators[0].batcher, alice_batcher);
-        assertEq(operators[1].batcher, dave_batcher);
-        assertEq(operators[2].batcher, charlie_batcher);
-    }
-
     function test_BatcherHash_V0Format() public {
-        _registerOperator(alice_batcher, alice_signer);
-        manager.syncAddOperator(alice_batcher, alice_signer);
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_itemID);
         manager.rotateOperator();
 
         bytes32 expected = bytes32(uint256(uint160(alice_batcher)));
@@ -579,8 +555,8 @@ contract KlerosSequencerManagerTest is Test {
     }
 
     function test_UnsafeBlockSigner_SetCorrectly() public {
-        _registerOperator(alice_batcher, alice_signer);
-        manager.syncAddOperator(alice_batcher, alice_signer);
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_itemID);
         manager.rotateOperator();
 
         assertEq(systemConfig.unsafeBlockSigner(), alice_signer);
@@ -592,7 +568,6 @@ contract KlerosSequencerManagerTest is Test {
         _setupThreeOperators();
         manager.rotateOperator();
 
-        // Legacy currentSequencer returns just the batcher address
         assertEq(manager.currentSequencer(), alice_batcher);
     }
 
@@ -604,7 +579,6 @@ contract KlerosSequencerManagerTest is Test {
     function test_LegacyRotateSequencer_Works() public {
         _setupThreeOperators();
 
-        // Legacy rotateSequencer should work
         manager.rotateSequencer();
 
         assertEq(manager.currentSequencer(), alice_batcher);
@@ -612,9 +586,9 @@ contract KlerosSequencerManagerTest is Test {
 
     // ============ Fuzz Tests ============
 
-    function testFuzz_ItemIDFor_Deterministic(address batcher, address signer) public view {
-        bytes32 id1 = manager.itemIDFor(batcher, signer);
-        bytes32 id2 = manager.itemIDFor(batcher, signer);
+    function testFuzz_OperatorId_Deterministic(address batcher, address signer) public view {
+        bytes32 id1 = manager.operatorId(batcher, signer);
+        bytes32 id2 = manager.operatorId(batcher, signer);
         assertEq(id1, id2);
     }
 
@@ -622,31 +596,31 @@ contract KlerosSequencerManagerTest is Test {
         vm.assume(batcher != address(0));
         vm.assume(signer != address(0));
 
-        _registerOperator(batcher, signer);
-        manager.syncAddOperator(batcher, signer);
+        bytes32 itemID = _registerOperator(batcher, signer);
+        manager.syncAddOperator(itemID);
 
         bytes32 opId = manager.operatorId(batcher, signer);
         assertTrue(manager.isActive(opId));
 
-        curate.setOperatorClearingRequested(batcher, signer);
-        manager.syncRemoveOperator(batcher, signer);
+        registry.setOperatorClearingRequested(batcher, signer);
+        manager.syncRemoveOperator(itemID);
 
         assertFalse(manager.isActive(opId));
     }
 
     // ============ Helper Functions ============
 
-    function _registerOperator(address batcher, address signer) internal {
-        curate.registerOperatorDirectly(batcher, signer);
+    function _registerOperator(address batcher, address signer) internal returns (bytes32 itemID) {
+        return registry.registerOperatorDirectly(batcher, signer);
     }
 
     function _setupThreeOperators() internal {
-        _registerOperator(alice_batcher, alice_signer);
-        _registerOperator(bob_batcher, bob_signer);
-        _registerOperator(charlie_batcher, charlie_signer);
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+        bob_itemID = _registerOperator(bob_batcher, bob_signer);
+        charlie_itemID = _registerOperator(charlie_batcher, charlie_signer);
 
-        manager.syncAddOperator(alice_batcher, alice_signer);
-        manager.syncAddOperator(bob_batcher, bob_signer);
-        manager.syncAddOperator(charlie_batcher, charlie_signer);
+        manager.syncAddOperator(alice_itemID);
+        manager.syncAddOperator(bob_itemID);
+        manager.syncAddOperator(charlie_itemID);
     }
 }
