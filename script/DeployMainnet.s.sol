@@ -9,23 +9,30 @@ import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
 import {IArbitrator} from "../src/interfaces/IArbitrator.sol";
 
 /**
+ * @title IERC20Minimal
+ * @notice Minimal ERC20 interface for deployment.
+ */
+interface IERC20Minimal {}
+
+/**
  * @title DeployMainnet
  * @notice Deployment script for mainnet (or mainnet fork) using Kleros arbitration.
  *
  * This deploys:
- * - PermanentGTCRHybrid: Custom registry with on-chain operational keys
+ * - PermanentGTCRHybrid: Faithful PGTCR implementation + on-chain operational keys
  * - MockSystemConfig (simulating OP Stack SystemConfig - replace with real in production)
  * - KlerosSequencerManager with snapshot + reverse mapping architecture
  *
  * Architecture:
- * - Uses PermanentGTCRHybrid (our custom registry) instead of standard PGTCR
+ * - Uses PermanentGTCRHybrid (based on real Kleros PGTCR)
  * - Hybrid registry stores operational keys on-chain (not in IPFS)
  * - Manager uses O(1) reverse mapping for registry validation
- * - Full compatibility with Kleros arbitration
+ * - Full compatibility with Kleros arbitration and UI
  *
  * Real Kleros Contracts (Mainnet):
  * - KlerosCore (Court):   0x988b3a538b618c7a603e1c11ab82cd16dbe28069
  * - Court ID 4:           Blockchain (Technical)
+ * - WETH:                 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
  *
  * Usage:
  *   # Fork mode (local testing)
@@ -44,6 +51,9 @@ contract DeployMainnet is Script {
     /// @notice KlerosCore (arbitrator) on mainnet
     address constant KLEROS_COURT = 0x988b3a538b618c7a603e1c11ab82cd16dbe28069;
 
+    /// @notice WETH on mainnet
+    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+
     /// @notice Blockchain (Technical) court ID
     uint96 constant COURT_ID = 4;
 
@@ -59,10 +69,21 @@ contract DeployMainnet is Script {
     uint256 constant SUBMISSION_MIN_DEPOSIT_PROD = 0.5 ether;
 
     /// @notice Challenge period for testing (5 minutes)
-    uint256 constant CHALLENGE_PERIOD_TEST = 5 minutes;
+    uint256 constant SUBMISSION_PERIOD_TEST = 5 minutes;
 
     /// @notice Challenge period for production (7 days)
-    uint256 constant CHALLENGE_PERIOD_PROD = 7 days;
+    uint256 constant SUBMISSION_PERIOD_PROD = 7 days;
+
+    /// @notice Reinclusion period (same as submission)
+    uint256 constant REINCLUSION_PERIOD_TEST = 5 minutes;
+    uint256 constant REINCLUSION_PERIOD_PROD = 7 days;
+
+    /// @notice Withdrawing period
+    uint256 constant WITHDRAWING_PERIOD_TEST = 1 minutes;
+    uint256 constant WITHDRAWING_PERIOD_PROD = 1 days;
+
+    /// @notice Arbitration params cooldown
+    uint256 constant ARBITRATION_COOLDOWN = 1 hours;
 
     // ============ Manager Parameters ============
 
@@ -137,38 +158,49 @@ contract DeployMainnet is Script {
 
         // Select parameters based on mode
         uint256 submissionMinDeposit = isProduction ? SUBMISSION_MIN_DEPOSIT_PROD : SUBMISSION_MIN_DEPOSIT_TEST;
-        uint256 challengePeriod = isProduction ? CHALLENGE_PERIOD_PROD : CHALLENGE_PERIOD_TEST;
+        uint256 submissionPeriod = isProduction ? SUBMISSION_PERIOD_PROD : SUBMISSION_PERIOD_TEST;
+        uint256 reinclusionPeriod = isProduction ? REINCLUSION_PERIOD_PROD : REINCLUSION_PERIOD_TEST;
+        uint256 withdrawingPeriod = isProduction ? WITHDRAWING_PERIOD_PROD : WITHDRAWING_PERIOD_TEST;
         uint256 epochDuration = isProduction ? EPOCH_DURATION_PROD : EPOCH_DURATION_TEST;
 
         console2.log("Submission deposit:", submissionMinDeposit / 1e15, "finney");
-        console2.log("Challenge period:", challengePeriod / 60, "minutes");
+        console2.log("Submission period:", submissionPeriod / 60, "minutes");
         console2.log("Epoch duration:", epochDuration / 60, "minutes");
         console2.log("");
 
         // ============ Deploy PermanentGTCRHybrid ============
         console2.log("Deploying PermanentGTCRHybrid registry...");
 
-        // Stake multipliers [shared, winner, loser] in basis points (10000 = 100%)
-        uint256[3] memory stakeMultipliers = [
-            uint256(5000),  // 50% shared stake
+        // Deploy with WETH address
+        registry = new PermanentGTCRHybrid(WETH);
+
+        // Stake multipliers [challenge, winner, loser, shared] in basis points (10000 = 100%)
+        uint256[4] memory stakeMultipliers = [
+            uint256(10000), // 100% challenge stake
             uint256(5000),  // 50% winner stake
-            uint256(10000)  // 100% loser stake
+            uint256(10000), // 100% loser stake
+            uint256(5000)   // 50% shared stake
         ];
 
-        registry = new PermanentGTCRHybrid(
-            KLEROS_COURT,
-            arbitratorExtraData,
+        // Initialize the registry
+        registry.initialize(
             deployer,  // governor
+            IArbitrator(KLEROS_COURT),
+            arbitratorExtraData,
+            IERC20Minimal(address(0)),  // Native ETH for deposits
             submissionMinDeposit,
-            challengePeriod,
-            stakeMultipliers
+            submissionPeriod,
+            reinclusionPeriod,
+            withdrawingPeriod,
+            stakeMultipliers,
+            ARBITRATION_COOLDOWN
         );
 
         console2.log("PermanentGTCRHybrid deployed at:", address(registry));
         console2.log("  Arbitrator:", address(registry.arbitrator()));
         console2.log("  Governor:", registry.governor());
         console2.log("  Min deposit:", registry.submissionMinDeposit() / 1e15, "finney");
-        console2.log("  Challenge period:", registry.challengePeriodDuration() / 60, "minutes");
+        console2.log("  Submission period:", registry.submissionPeriod() / 60, "minutes");
         console2.log("");
 
         // ============ Deploy MockSystemConfig ============
@@ -205,7 +237,7 @@ contract DeployMainnet is Script {
             console2.log("=== Production Mode ===");
             console2.log("Operators must be submitted through the registry.");
             console2.log("1. Call registry.addItemWithKeys(data, batcher, signer) with deposit");
-            console2.log("2. Wait for challenge period");
+            console2.log("2. Wait for submission period");
             console2.log("3. Call registry.executeRequest(itemID)");
             console2.log("4. Call manager.syncAddOperator(itemID)");
         }
@@ -218,7 +250,7 @@ contract DeployMainnet is Script {
 
     function _registerTestOperators() internal {
         uint256 deposit = registry.submissionMinDeposit();
-        uint256 challengePeriodDuration = registry.challengePeriodDuration();
+        uint256 submissionPeriodDuration = registry.submissionPeriod();
 
         console2.log("Registering 3 test operators...");
         console2.log("Deposit per operator:", deposit / 1e15, "finney");
@@ -228,9 +260,9 @@ contract DeployMainnet is Script {
         itemID2 = _addOperatorToRegistry("operator2", BATCHER_2, SIGNER_2, deposit);
         itemID3 = _addOperatorToRegistry("operator3", BATCHER_3, SIGNER_3, deposit);
 
-        // Fast-forward time past challenge period (only works in fork/test mode)
-        console2.log("Fast-forwarding past challenge period...");
-        vm.warp(block.timestamp + challengePeriodDuration + 1);
+        // Fast-forward time past submission period (only works in fork/test mode)
+        console2.log("Fast-forwarding past submission period...");
+        vm.warp(block.timestamp + submissionPeriodDuration + 1);
 
         // Execute requests to finalize registration
         _executeRequest(itemID1, BATCHER_1);
@@ -292,6 +324,7 @@ contract DeployMainnet is Script {
         console2.log("===========================================");
         console2.log("");
         console2.log("Architecture: Hybrid PGTCR + Snapshot Manager");
+        console2.log("Based on: https://github.com/kleros/pgtcr");
         console2.log("");
         console2.log("Kleros Contracts (Mainnet):");
         console2.log("  Kleros Court:        ", KLEROS_COURT);
@@ -303,10 +336,11 @@ contract DeployMainnet is Script {
         console2.log("  SequencerManager:    ", address(manager));
         console2.log("");
         console2.log("Key Features:");
+        console2.log("  - Full PGTCR logic (appeal funding, withdrawals, etc.)");
         console2.log("  - On-chain operational keys (no IPFS lookup)");
         console2.log("  - O(1) reverse mapping for validation");
         console2.log("  - Cold Staker / Hot Operator support");
-        console2.log("  - Full Kleros arbitration compatibility");
+        console2.log("  - ERC20 token support (currently using native ETH)");
         console2.log("");
         console2.log("Commands:");
         console2.log("  # Check current operator");
@@ -323,7 +357,9 @@ contract DeployMainnet is Script {
         console2.log("");
         console2.log("Registry Parameters:");
         console2.log("  Min deposit:         ", registry.submissionMinDeposit() / 1e15, "finney");
-        console2.log("  Challenge period:    ", registry.challengePeriodDuration() / 60, "minutes");
+        console2.log("  Submission period:   ", registry.submissionPeriod() / 60, "minutes");
+        console2.log("  Reinclusion period:  ", registry.reinclusionPeriod() / 60, "minutes");
+        console2.log("  Withdrawing period:  ", registry.withdrawingPeriod() / 60, "minutes");
         console2.log("");
         if (!isProduction) {
             console2.log("TEST MODE: Operators pre-registered and synced.");

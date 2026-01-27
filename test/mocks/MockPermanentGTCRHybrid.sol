@@ -10,9 +10,9 @@ import {IArbitrator} from "../../src/interfaces/IArbitrator.sol";
  * @dev Simulates the hybrid registry with on-chain operational keys.
  *
  * For testing, use:
- * - registerOperatorDirectly(batcher, signer) to add operators with keys
+ * - registerOperatorDirectly(batcher, signer) to add operators with keys (skips challenge)
  * - setOperatorStatus(itemID, status) to change status
- * - setOperatorClearingRequested(batcher, signer) to simulate challenge
+ * - setOperatorClearingRequested(batcher, signer) to simulate removal
  */
 contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
     struct Item {
@@ -35,10 +35,11 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
     bytes32[] public itemList;
 
     address public override governor;
-    address public override arbitrator;
-    bytes public override arbitratorExtraData;
+    IArbitrator public override arbitrator;
     uint256 public override submissionMinDeposit = 0.01 ether;
-    uint256 public override challengePeriodDuration = 5 minutes;
+    uint256 public override submissionPeriod = 5 minutes;
+    uint256 public override reinclusionPeriod = 5 minutes;
+    uint256 public override withdrawingPeriod = 1 minutes;
 
     constructor() {
         governor = msg.sender;
@@ -47,7 +48,7 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
     // ============ Admin Functions (for testing) ============
 
     /**
-     * @notice Registers an operator directly with Submitted status.
+     * @notice Registers an operator directly with Reincluded status (bypasses challenge).
      * @param batcher The batcher address.
      * @param unsafeSigner The unsafe block signer address.
      * @return itemID The item ID.
@@ -133,6 +134,11 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
         );
     }
 
+    function isRegistered(bytes32 _itemID) external view override returns (bool) {
+        Status status = _items[_itemID].status;
+        return status == Status.Submitted || status == Status.Reincluded;
+    }
+
     function getOperationalKeys(bytes32 _itemID) public view override returns (
         address batcher,
         address unsafeSigner
@@ -147,10 +153,10 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
         }
     }
 
-    function addItem(string calldata _data, uint256) external payable override returns (bytes32 itemID) {
+    function addItem(string calldata _data) external payable override {
         require(msg.value >= submissionMinDeposit, "Insufficient deposit");
 
-        itemID = keccak256(abi.encodePacked(_data));
+        bytes32 itemID = keccak256(abi.encodePacked(_data));
         require(_items[itemID].status == Status.Absent, "Item already exists");
 
         _items[itemID] = Item({
@@ -169,11 +175,40 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
 
         emit ItemSubmitted(itemID, msg.sender, _data, msg.value);
         emit ItemStatusChange(itemID, Status.Submitted);
+    }
+
+    function addItemWithKeys(
+        string calldata _data,
+        address _batcher,
+        address _signer
+    ) external payable override returns (bytes32 itemID) {
+        require(msg.value >= submissionMinDeposit, "Insufficient deposit");
+        require(_batcher != address(0) && _signer != address(0), "Invalid keys");
+
+        itemID = keccak256(abi.encodePacked(_data));
+        require(_items[itemID].status == Status.Absent, "Item already exists");
+
+        _items[itemID] = Item({
+            status: Status.Submitted,
+            arbitrationDeposit: 0,
+            challengeCount: 0,
+            submitter: payable(msg.sender),
+            includedAt: uint48(block.timestamp),
+            withdrawingTimestamp: 0,
+            stake: msg.value
+        });
+
+        itemKeys[itemID] = OperatorKeys(_batcher, _signer);
+        itemList.push(itemID);
+
+        emit ItemSubmitted(itemID, msg.sender, _data, msg.value);
+        emit ItemStatusChange(itemID, Status.Submitted);
+        emit OperationalKeysUpdated(itemID, _batcher, _signer);
 
         return itemID;
     }
 
-    function challengeItem(bytes32 _itemID) external payable override returns (uint256) {
+    function challengeItem(bytes32 _itemID, string calldata) external payable override {
         require(
             _items[_itemID].status == Status.Submitted ||
             _items[_itemID].status == Status.Reincluded,
@@ -183,10 +218,8 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
         _items[_itemID].status = Status.Disputed;
         _items[_itemID].challengeCount++;
 
-        emit ItemChallenged(_itemID, msg.sender, 0);
+        emit ItemChallenged(_itemID, _items[_itemID].challengeCount - 1, 0);
         emit ItemStatusChange(_itemID, Status.Disputed);
-
-        return 0; // Mock dispute ID
     }
 
     function executeRequest(bytes32 _itemID) external override {
@@ -194,7 +227,7 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
 
         // Check challenge period
         require(
-            block.timestamp > _items[_itemID].includedAt + challengePeriodDuration,
+            block.timestamp > _items[_itemID].includedAt + submissionPeriod,
             "Challenge period not over"
         );
 
@@ -203,6 +236,34 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
 
         // Return stake to submitter
         payable(_items[_itemID].submitter).transfer(_items[_itemID].stake);
+    }
+
+    function requestWithdrawal(bytes32 _itemID) external override {
+        require(msg.sender == _items[_itemID].submitter, "Only submitter");
+        require(_items[_itemID].status == Status.Reincluded, "Not registered");
+
+        _items[_itemID].withdrawingTimestamp = uint48(block.timestamp);
+    }
+
+    function withdraw(bytes32 _itemID) external override {
+        require(_items[_itemID].withdrawingTimestamp != 0, "Not withdrawing");
+        require(
+            block.timestamp >= _items[_itemID].withdrawingTimestamp + withdrawingPeriod,
+            "Withdrawing period not over"
+        );
+
+        _items[_itemID].status = Status.Absent;
+        _items[_itemID].withdrawingTimestamp = 0;
+        delete itemKeys[_itemID];
+
+        emit ItemStatusChange(_itemID, Status.Absent);
+    }
+
+    function cancelWithdrawal(bytes32 _itemID) external override {
+        require(msg.sender == _items[_itemID].submitter, "Only submitter");
+        require(_items[_itemID].withdrawingTimestamp != 0, "Not withdrawing");
+
+        _items[_itemID].withdrawingTimestamp = 0;
     }
 
     function setOperationalKeys(bytes32 _itemID, address _batcher, address _signer) external override {

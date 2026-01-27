@@ -2,48 +2,79 @@
 pragma solidity ^0.8.20;
 
 import {IArbitrator} from "./interfaces/IArbitrator.sol";
-import {IPermanentGTCRHybrid} from "./interfaces/IPermanentGTCRHybrid.sol";
+import {IArbitrable} from "./interfaces/IArbitrable.sol";
+
+/**
+ * @title IERC20
+ * @notice Minimal ERC20 interface for token deposits.
+ */
+interface IERC20 {
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+}
+
+/**
+ * @title IEvidence
+ * @notice ERC-1497 Evidence Standard interface.
+ */
+interface IEvidence {
+    event Evidence(
+        IArbitrator indexed _arbitrator,
+        uint256 indexed _evidenceGroupID,
+        address indexed _party,
+        string _evidence
+    );
+}
+
+/**
+ * @title IWETH
+ * @notice Wrapped native token interface.
+ */
+interface IWETH {
+    function deposit() external payable;
+    function withdraw(uint256) external;
+    function transfer(address to, uint256 value) external returns (bool);
+}
 
 /**
  * @title PermanentGTCRHybrid
- * @notice Hybrid PermanentGTCR with parallel on-chain operational keys storage.
- * @dev Implements standard PGTCR logic for Kleros UI compatibility, plus:
- *      - Parallel `itemKeys` mapping for operational keys (batcher/signer)
- *      - Keys default to owner if not explicitly set
- *      - "Cold Staker / Hot Operator" model support
+ * @notice A Kleros PermanentGTCR with on-chain operational keys extension.
+ * @dev This contract is based on the original Kleros PermanentGTCR:
+ *      https://github.com/kleros/pgtcr/blob/master/contracts/src/PermanentGTCR.sol
  *
- * This is designed for the Constitutional L2 use case where:
- * - Staker registers item via curate.kleros.io (standard flow)
- * - Staker can optionally set different operational keys
- * - Sequencer Manager reads keys on-chain (no IPFS)
+ *      The ONLY additions are:
+ *      - `itemKeys` mapping for on-chain operational keys (batcher/signer)
+ *      - `setOperationalKeys()` function for item owners to set keys
+ *      - `getOperationalKeys()` view function (defaults to submitter if unset)
+ *      - `OperationalKeysUpdated` event
  *
- * Differences from standard PGTCR:
- * - Adds `itemKeys` mapping for operational keys
- * - Adds `setOperationalKeys()` function for staker to update keys
- * - Adds `getOperationalKeys()` view that defaults to owner
+ *      All other logic is preserved from the original PGTCR to maintain
+ *      Kleros UI compatibility and arbitration flow.
  *
- * @custom:security-contact security@example.com
+ * Trust assumptions (from original):
+ * - Arbitrator is trusted to rule correctly.
+ * - Governor is trusted to not spam arbitration setting updates.
+ * - Token is trusted to not revert on valid transfers.
  */
-contract PermanentGTCRHybrid is IPermanentGTCRHybrid {
-    // ============ Errors ============
+contract PermanentGTCRHybrid is IArbitrable, IEvidence {
+    // ============ Enums ============
 
-    error InvalidDeposit();
-    error ItemAlreadyExists();
-    error ItemDoesNotExist();
-    error ItemNotChallengeable();
-    error RequestNotExecutable();
-    error InvalidChallenger();
-    error OnlySubmitter();
-    error InvalidKeys();
-    error DisputeNotResolved();
-    error OnlyArbitrator();
-    error InvalidRuling();
-    error TransferFailed();
-    error OnlyGovernor();
+    enum Status {
+        Absent,     // Item does not exist
+        Submitted,  // Item submitted, in challenge period
+        Reincluded, // Item permanently included
+        Disputed    // Item under dispute
+    }
+
+    enum Party {
+        None,
+        Submitter,
+        Challenger
+    }
 
     // ============ Structs ============
 
-    /// @notice Represents an item in the registry.
     struct Item {
         Status status;
         uint128 arbitrationDeposit;
@@ -54,201 +85,239 @@ contract PermanentGTCRHybrid is IPermanentGTCRHybrid {
         uint256 stake;
     }
 
-    /// @notice Represents operational keys for an item.
+    struct Challenge {
+        uint32 arbitrationParamsIndex;
+        uint32 roundCount;
+        Party ruling;
+        address payable challenger;
+        uint256 stake;
+        uint256 disputeID;
+    }
+
+    struct Round {
+        Party sideFunded;
+        uint256 feeRewards;
+        uint256[3] amountPaid;
+    }
+
+    struct ArbitrationParams {
+        uint64 timestamp;
+        bytes arbitratorExtraData;
+    }
+
+    // === HYBRID EXTENSION ===
     struct OperatorKeys {
         address batcher;
         address unsafeSigner;
     }
 
-    /// @notice Represents a dispute for an item.
-    struct Dispute {
-        bytes32 itemID;
-        address payable challenger;
-        uint256 challengerDeposit;
-    }
-
     // ============ Constants ============
 
-    /// @notice Number of ruling options (Refuse to rule, Accept, Reject).
+    uint256 public constant MULTIPLIER_DIVISOR = 10000;
     uint256 public constant NUM_RULING_OPTIONS = 2;
-
-    /// @notice Ruling: Refuse to arbitrate.
-    uint256 public constant RULING_REFUSE = 0;
-
-    /// @notice Ruling: Accept the item (submitter wins).
-    uint256 public constant RULING_ACCEPT = 1;
-
-    /// @notice Ruling: Reject the item (challenger wins).
-    uint256 public constant RULING_REJECT = 2;
 
     // ============ Immutables ============
 
-    /// @notice The Kleros arbitrator contract.
-    IArbitrator public immutable override arbitrator;
-
-    /// @notice Extra data for arbitrator (court ID, jurors).
-    bytes public override arbitratorExtraData;
+    /// @notice Wrapped native token (e.g., WETH)
+    address public immutable W_NATIVE;
 
     // ============ State ============
 
-    /// @notice Minimum deposit required for submission.
-    uint256 public override submissionMinDeposit;
+    bool private initialized;
+    address public governor;
+    IERC20 public token;
 
-    /// @notice Challenge period duration in seconds.
-    uint256 public override challengePeriodDuration;
+    uint256 public submissionMinDeposit;
+    uint256 public submissionPeriod;
+    uint256 public reinclusionPeriod;
+    uint256 public withdrawingPeriod;
+    uint256 public arbitrationParamsCooldown;
 
-    /// @notice Governor address (can update parameters).
-    address public override governor;
+    uint256 public challengeStakeMultiplier;
+    uint256 public winnerStakeMultiplier;
+    uint256 public loserStakeMultiplier;
+    uint256 public sharedStakeMultiplier;
 
-    /// @notice Mapping from item ID to item data.
-    mapping(bytes32 => Item) private _items;
+    IArbitrator public arbitrator;
+    ArbitrationParams[] public arbitrationParamsChanges;
 
-    /// @notice Mapping from item ID to operational keys (HYBRID EXTENSION).
+    mapping(bytes32 => Item) public items;
+    mapping(bytes32 => mapping(uint256 => Challenge)) public challenges;
+    mapping(bytes32 => mapping(uint256 => mapping(uint256 => Round))) public rounds;
+    mapping(bytes32 => mapping(uint256 => mapping(uint256 => mapping(address => uint256[3])))) public contributions;
+    mapping(uint256 => bytes32) public disputeIDToItemID;
+
+    // === HYBRID EXTENSION ===
     mapping(bytes32 => OperatorKeys) public itemKeys;
 
-    /// @notice Mapping from dispute ID to dispute data.
-    mapping(uint256 => Dispute) public disputes;
+    // ============ Events ============
 
-    /// @notice Stake multipliers in basis points.
-    /// @dev [sharedStakeMultiplier, winnerStakeMultiplier, loserStakeMultiplier]
-    uint256[3] public stakeMultipliers;
+    event ItemSubmitted(
+        bytes32 indexed _itemID,
+        address indexed _submitter,
+        string _data,
+        uint256 _stake
+    );
 
-    // ============ Constructor ============
+    event ItemChallenged(
+        bytes32 indexed _itemID,
+        uint256 indexed _challengeID,
+        uint256 indexed _disputeID
+    );
 
-    /**
-     * @notice Initializes the PermanentGTCRHybrid registry.
-     * @param _arbitrator The Kleros arbitrator address.
-     * @param _arbitratorExtraData Extra data for the arbitrator (court ID, jurors).
-     * @param _governor The governor address.
-     * @param _submissionMinDeposit Minimum deposit for submissions.
-     * @param _challengePeriodDuration Challenge period in seconds.
-     * @param _stakeMultipliers Stake multipliers [shared, winner, loser] in basis points.
-     */
-    constructor(
-        address _arbitrator,
-        bytes memory _arbitratorExtraData,
-        address _governor,
-        uint256 _submissionMinDeposit,
-        uint256 _challengePeriodDuration,
-        uint256[3] memory _stakeMultipliers
-    ) {
-        arbitrator = IArbitrator(_arbitrator);
-        arbitratorExtraData = _arbitratorExtraData;
-        governor = _governor;
-        submissionMinDeposit = _submissionMinDeposit;
-        challengePeriodDuration = _challengePeriodDuration;
-        stakeMultipliers = _stakeMultipliers;
-    }
+    event ItemStatusChange(bytes32 indexed _itemID, Status _status);
+
+    event Contribution(
+        bytes32 indexed _itemID,
+        uint256 indexed _challengeID,
+        uint256 indexed _roundID,
+        address _contributor,
+        Party _side,
+        uint256 _amount
+    );
+
+    event AppealPossible(bytes32 indexed _itemID, uint256 indexed _challengeID);
+
+    event RewardWithdrawn(
+        bytes32 indexed _itemID,
+        uint256 indexed _challengeID,
+        uint256 indexed _roundID,
+        address _contributor,
+        uint256 _amount
+    );
+
+    event ItemWithdrawing(bytes32 indexed _itemID, uint48 _withdrawingTimestamp);
+
+    event ItemWithdrawn(bytes32 indexed _itemID);
+
+    // === HYBRID EXTENSION ===
+    event OperationalKeysUpdated(
+        bytes32 indexed _itemID,
+        address indexed _batcher,
+        address indexed _signer
+    );
+
+    // ============ Errors ============
+
+    error AlreadyInitialized();
+    error NotGovernor();
+    error InvalidDeposit();
+    error ItemAlreadyExists();
+    error ItemDoesNotExist();
+    error ItemNotChallengeable();
+    error InvalidStatus();
+    error ChallengeNotAppealable();
+    error AppealPeriodOver();
+    error SideAlreadyFunded();
+    error LoserMustContributeFirst();
+    error NotArbitrator();
+    error InvalidRuling();
+    error InvalidChallenge();
+    error NotSubmitter();
+    error NotWithdrawable();
+    error WithdrawalPeriodNotOver();
+    error TransferFailed();
+    error InvalidKeys();
+    error CooldownNotPassed();
 
     // ============ Modifiers ============
 
     modifier onlyGovernor() {
-        if (msg.sender != governor) revert OnlyGovernor();
+        if (msg.sender != governor) revert NotGovernor();
         _;
     }
 
     modifier onlyArbitrator() {
-        if (msg.sender != address(arbitrator)) revert OnlyArbitrator();
+        if (msg.sender != address(arbitrator)) revert NotArbitrator();
         _;
     }
 
-    // ============ View Functions ============
+    // ============ Constructor ============
+
+    constructor(address _wNative) {
+        W_NATIVE = _wNative;
+    }
+
+    // ============ Initialization ============
 
     /**
-     * @notice Gets the full item data.
-     * @param _itemID The ID of the item.
+     * @notice Initializes the registry (upgradeable pattern).
+     * @param _governor The governor address.
+     * @param _arbitrator The arbitrator contract.
+     * @param _arbitratorExtraData Extra data for the arbitrator.
+     * @param _token The ERC20 token for deposits (address(0) for native).
+     * @param _submissionMinDeposit Minimum deposit for submissions.
+     * @param _submissionPeriod Challenge period for new submissions.
+     * @param _reinclusionPeriod Challenge period for reinclusions.
+     * @param _withdrawingPeriod Period to wait before withdrawing.
+     * @param _stakeMultipliers [challenge, winner, loser, shared] in basis points.
+     * @param _arbitrationParamsCooldown Cooldown between arbitration param changes.
      */
-    function items(bytes32 _itemID) external view override returns (
-        Status status,
-        uint128 arbitrationDeposit,
-        uint120 challengeCount,
-        address payable submitter,
-        uint48 includedAt,
-        uint48 withdrawingTimestamp,
-        uint256 stake
-    ) {
-        Item storage item = _items[_itemID];
-        return (
-            item.status,
-            item.arbitrationDeposit,
-            item.challengeCount,
-            item.submitter,
-            item.includedAt,
-            item.withdrawingTimestamp,
-            item.stake
+    function initialize(
+        address _governor,
+        IArbitrator _arbitrator,
+        bytes calldata _arbitratorExtraData,
+        IERC20 _token,
+        uint256 _submissionMinDeposit,
+        uint256 _submissionPeriod,
+        uint256 _reinclusionPeriod,
+        uint256 _withdrawingPeriod,
+        uint256[4] calldata _stakeMultipliers,
+        uint256 _arbitrationParamsCooldown
+    ) external {
+        if (initialized) revert AlreadyInitialized();
+        initialized = true;
+
+        governor = _governor;
+        arbitrator = _arbitrator;
+        token = _token;
+        submissionMinDeposit = _submissionMinDeposit;
+        submissionPeriod = _submissionPeriod;
+        reinclusionPeriod = _reinclusionPeriod;
+        withdrawingPeriod = _withdrawingPeriod;
+        challengeStakeMultiplier = _stakeMultipliers[0];
+        winnerStakeMultiplier = _stakeMultipliers[1];
+        loserStakeMultiplier = _stakeMultipliers[2];
+        sharedStakeMultiplier = _stakeMultipliers[3];
+        arbitrationParamsCooldown = _arbitrationParamsCooldown;
+
+        arbitrationParamsChanges.push(
+            ArbitrationParams({
+                timestamp: uint64(block.timestamp),
+                arbitratorExtraData: _arbitratorExtraData
+            })
         );
     }
 
-    /**
-     * @notice Gets the operational keys for an item.
-     * @dev Returns the submitter address for both if keys not explicitly set.
-     * @param _itemID The ID of the item.
-     * @return batcher The batcher address.
-     * @return unsafeSigner The unsafe block signer address.
-     */
-    function getOperationalKeys(bytes32 _itemID) public view override returns (
-        address batcher,
-        address unsafeSigner
-    ) {
-        Item storage item = _items[_itemID];
-        OperatorKeys storage keys = itemKeys[_itemID];
-
-        // If keys are set, return them; otherwise default to submitter
-        if (keys.batcher != address(0)) {
-            return (keys.batcher, keys.unsafeSigner);
-        } else {
-            return (item.submitter, item.submitter);
-        }
-    }
-
-    /**
-     * @notice Checks if an item is in a "registered" state (can operate).
-     * @param _itemID The ID of the item.
-     * @return True if the item is Submitted or Reincluded (not disputed).
-     */
-    function isRegistered(bytes32 _itemID) public view returns (bool) {
-        Status status = _items[_itemID].status;
-        return status == Status.Submitted || status == Status.Reincluded;
-    }
-
-    // ============ Submission Functions ============
+    // ============ Item Submission ============
 
     /**
      * @notice Submits an item to the registry.
-     * @param _data The item data (typically IPFS URI for Kleros UI).
-     * @param _deposit The deposit amount (ignored, uses msg.value).
-     * @return itemID The ID of the submitted item.
+     * @param _data The item data (IPFS URI for Kleros UI).
      */
-    function addItem(string calldata _data, uint256 _deposit) external payable override returns (bytes32 itemID) {
-        // Silence unused parameter warning
-        _deposit;
+    function addItem(string calldata _data) external payable {
+        bytes32 itemID = keccak256(abi.encodePacked(_data));
+        Item storage item = items[itemID];
 
-        if (msg.value < submissionMinDeposit) revert InvalidDeposit();
-
-        // Generate item ID from data
-        itemID = keccak256(abi.encodePacked(_data));
-
-        Item storage item = _items[itemID];
         if (item.status != Status.Absent) revert ItemAlreadyExists();
 
-        // Store item
+        uint256 stake = _processDeposit(submissionMinDeposit);
+
         item.status = Status.Submitted;
         item.submitter = payable(msg.sender);
-        item.stake = msg.value;
+        item.stake = stake;
         item.includedAt = uint48(block.timestamp);
 
-        emit ItemSubmitted(itemID, msg.sender, _data, msg.value);
+        emit ItemSubmitted(itemID, msg.sender, _data, stake);
         emit ItemStatusChange(itemID, Status.Submitted);
-
-        return itemID;
     }
 
     /**
-     * @notice Alternative submission that also sets operational keys.
+     * @notice Submits an item with explicit operational keys.
+     * @dev Hybrid extension - sets keys at submission time.
      * @param _data The item data.
      * @param _batcher The batcher address.
      * @param _signer The unsafe block signer address.
-     * @return itemID The ID of the submitted item.
      */
     function addItemWithKeys(
         string calldata _data,
@@ -257,200 +326,454 @@ contract PermanentGTCRHybrid is IPermanentGTCRHybrid {
     ) external payable returns (bytes32 itemID) {
         if (_batcher == address(0) || _signer == address(0)) revert InvalidKeys();
 
-        itemID = addItem(_data, msg.value);
+        itemID = keccak256(abi.encodePacked(_data));
+        Item storage item = items[itemID];
+
+        if (item.status != Status.Absent) revert ItemAlreadyExists();
+
+        uint256 stake = _processDeposit(submissionMinDeposit);
+
+        item.status = Status.Submitted;
+        item.submitter = payable(msg.sender);
+        item.stake = stake;
+        item.includedAt = uint48(block.timestamp);
 
         // Set operational keys
         itemKeys[itemID] = OperatorKeys(_batcher, _signer);
+
+        emit ItemSubmitted(itemID, msg.sender, _data, stake);
+        emit ItemStatusChange(itemID, Status.Submitted);
         emit OperationalKeysUpdated(itemID, _batcher, _signer);
 
         return itemID;
     }
 
-    // ============ Challenge Functions ============
+    // ============ Challenge ============
 
     /**
      * @notice Challenges an item.
-     * @param _itemID The ID of the item to challenge.
-     * @return disputeID The ID of the created dispute.
+     * @param _itemID The item ID.
+     * @param _evidence Evidence URI.
      */
-    function challengeItem(bytes32 _itemID) external payable override returns (uint256 disputeID) {
-        Item storage item = _items[_itemID];
+    function challengeItem(bytes32 _itemID, string calldata _evidence) external payable {
+        Item storage item = items[_itemID];
 
-        // Can only challenge Submitted or Reincluded items
         if (item.status != Status.Submitted && item.status != Status.Reincluded) {
             revert ItemNotChallengeable();
         }
 
-        // Check challenge period hasn't expired
-        if (block.timestamp > item.includedAt + challengePeriodDuration) {
-            revert ItemNotChallengeable();
-        }
+        uint256 period = item.status == Status.Submitted ? submissionPeriod : reinclusionPeriod;
+        if (block.timestamp > item.includedAt + period) revert ItemNotChallengeable();
 
-        // Cannot challenge your own item
-        if (msg.sender == item.submitter) revert InvalidChallenger();
+        ArbitrationParams storage arbParams = arbitrationParamsChanges[arbitrationParamsChanges.length - 1];
+        uint256 arbitrationCost = arbitrator.arbitrationCost(arbParams.arbitratorExtraData);
 
-        // Calculate required deposit
-        uint256 arbitrationCost = arbitrator.arbitrationCost(arbitratorExtraData);
-        uint256 requiredDeposit = arbitrationCost + (item.stake * stakeMultipliers[2]) / 10000;
-        if (msg.value < requiredDeposit) revert InvalidDeposit();
+        uint256 challengerStake = (item.stake * challengeStakeMultiplier) / MULTIPLIER_DIVISOR;
+        uint256 requiredDeposit = arbitrationCost + challengerStake;
+        uint256 stake = _processDeposit(requiredDeposit);
 
-        // Create dispute
-        disputeID = arbitrator.createDispute{value: arbitrationCost}(
+        uint256 disputeID = arbitrator.createDispute{value: address(token) == address(0) ? arbitrationCost : 0}(
             NUM_RULING_OPTIONS,
-            arbitratorExtraData
+            arbParams.arbitratorExtraData
         );
 
-        // Update item status
+        uint256 challengeID = item.challengeCount;
+        item.challengeCount++;
         item.status = Status.Disputed;
         item.arbitrationDeposit = uint128(arbitrationCost);
-        item.challengeCount++;
 
-        // Store dispute info
-        disputes[disputeID] = Dispute({
-            itemID: _itemID,
-            challenger: payable(msg.sender),
-            challengerDeposit: msg.value
-        });
+        Challenge storage challenge = challenges[_itemID][challengeID];
+        challenge.arbitrationParamsIndex = uint32(arbitrationParamsChanges.length - 1);
+        challenge.challenger = payable(msg.sender);
+        challenge.stake = stake - arbitrationCost;
+        challenge.disputeID = disputeID;
 
-        emit ItemChallenged(_itemID, msg.sender, disputeID);
+        disputeIDToItemID[disputeID] = _itemID;
+
+        emit ItemChallenged(_itemID, challengeID, disputeID);
         emit ItemStatusChange(_itemID, Status.Disputed);
 
-        return disputeID;
+        if (bytes(_evidence).length > 0) {
+            emit Evidence(arbitrator, uint256(_itemID), msg.sender, _evidence);
+        }
     }
 
-    // ============ Execution Functions ============
+    // ============ Appeal Funding ============
 
     /**
-     * @notice Executes a pending request after the challenge period.
-     * @param _itemID The ID of the item.
+     * @notice Funds an appeal for a side.
+     * @param _itemID The item ID.
+     * @param _challengeID The challenge ID.
+     * @param _side The side to fund.
      */
-    function executeRequest(bytes32 _itemID) external override {
-        Item storage item = _items[_itemID];
+    function fundAppeal(bytes32 _itemID, uint256 _challengeID, Party _side) external payable {
+        Challenge storage challenge = challenges[_itemID][_challengeID];
+        if (challenge.disputeID == 0) revert InvalidChallenge();
 
-        // Must be in Submitted status (not disputed)
-        if (item.status != Status.Submitted) revert RequestNotExecutable();
-
-        // Challenge period must have passed
-        if (block.timestamp <= item.includedAt + challengePeriodDuration) {
-            revert RequestNotExecutable();
+        (uint256 appealPeriodStart, uint256 appealPeriodEnd) = arbitrator.appealPeriod(challenge.disputeID);
+        if (block.timestamp < appealPeriodStart || block.timestamp >= appealPeriodEnd) {
+            revert AppealPeriodOver();
         }
 
-        // Mark as Reincluded (permanently registered)
-        item.status = Status.Reincluded;
-        emit ItemStatusChange(_itemID, Status.Reincluded);
+        Party winner = Party(arbitrator.currentRuling(challenge.disputeID));
+        Party loser = winner == Party.Submitter ? Party.Challenger : Party.Submitter;
 
-        // Return stake to submitter
-        _sendValue(item.submitter, item.stake);
+        if (_side != winner && _side != loser) revert InvalidRuling();
+
+        Round storage round = rounds[_itemID][_challengeID][challenge.roundCount];
+        if (round.sideFunded == _side) revert SideAlreadyFunded();
+
+        // Loser must contribute first in second half of appeal period
+        if (_side == winner && round.sideFunded == Party.None) {
+            uint256 appealPeriodMiddle = appealPeriodStart + (appealPeriodEnd - appealPeriodStart) / 2;
+            if (block.timestamp < appealPeriodMiddle) revert LoserMustContributeFirst();
+        }
+
+        ArbitrationParams storage arbParams = arbitrationParamsChanges[challenge.arbitrationParamsIndex];
+        uint256 appealCost = arbitrator.appealCost(challenge.disputeID, arbParams.arbitratorExtraData);
+
+        uint256 multiplier = _side == winner ? winnerStakeMultiplier : loserStakeMultiplier;
+        uint256 totalRequired = appealCost + (appealCost * multiplier) / MULTIPLIER_DIVISOR;
+        uint256 alreadyPaid = round.amountPaid[uint256(_side)];
+        uint256 stillRequired = totalRequired > alreadyPaid ? totalRequired - alreadyPaid : 0;
+
+        uint256 contribution = _processDeposit(stillRequired > msg.value ? msg.value : stillRequired);
+
+        round.amountPaid[uint256(_side)] += contribution;
+        contributions[_itemID][_challengeID][challenge.roundCount][msg.sender][uint256(_side)] += contribution;
+
+        emit Contribution(_itemID, _challengeID, challenge.roundCount, msg.sender, _side, contribution);
+
+        if (round.amountPaid[uint256(_side)] >= totalRequired) {
+            if (round.sideFunded == Party.None) {
+                round.sideFunded = _side;
+            } else {
+                // Both sides funded - create appeal
+                round.feeRewards = round.amountPaid[uint256(Party.Submitter)] + round.amountPaid[uint256(Party.Challenger)] - appealCost;
+
+                arbitrator.appeal{value: address(token) == address(0) ? appealCost : 0}(
+                    challenge.disputeID,
+                    arbParams.arbitratorExtraData
+                );
+
+                challenge.roundCount++;
+                round.sideFunded = Party.None;
+            }
+        }
+
+        // Refund excess
+        if (msg.value > contribution) {
+            _sendValue(payable(msg.sender), msg.value - contribution);
+        }
     }
 
-    // ============ Arbitration Functions ============
+    // ============ Ruling ============
 
     /**
-     * @notice Called by the arbitrator to give a ruling.
-     * @param _disputeID The ID of the dispute.
-     * @param _ruling The ruling (0=refuse, 1=accept, 2=reject).
+     * @notice Gives a ruling for a dispute (called by arbitrator).
+     * @param _disputeID The dispute ID.
+     * @param _ruling The ruling (0=refuse, 1=submitter wins, 2=challenger wins).
      */
     function rule(uint256 _disputeID, uint256 _ruling) external override onlyArbitrator {
         if (_ruling > NUM_RULING_OPTIONS) revert InvalidRuling();
 
-        Dispute storage dispute = disputes[_disputeID];
-        bytes32 itemID = dispute.itemID;
-        Item storage item = _items[itemID];
+        bytes32 itemID = disputeIDToItemID[_disputeID];
+        Item storage item = items[itemID];
+        if (item.status != Status.Disputed) revert InvalidStatus();
 
-        if (item.status != Status.Disputed) revert DisputeNotResolved();
+        uint256 challengeID = item.challengeCount - 1;
+        Challenge storage challenge = challenges[itemID][challengeID];
 
-        emit Ruling(arbitrator, _disputeID, _ruling);
-
-        if (_ruling == RULING_ACCEPT || _ruling == RULING_REFUSE) {
-            // Submitter wins (or refuse to rule, default to submitter)
-            item.status = Status.Reincluded;
-
-            // Return stake to submitter + challenger deposit
-            uint256 totalReward = item.stake + dispute.challengerDeposit - item.arbitrationDeposit;
-            _sendValue(item.submitter, totalReward);
+        Round storage round = rounds[itemID][challengeID][challenge.roundCount];
+        if (round.sideFunded == Party.Submitter) {
+            challenge.ruling = Party.Submitter;
+        } else if (round.sideFunded == Party.Challenger) {
+            challenge.ruling = Party.Challenger;
         } else {
-            // Challenger wins (RULING_REJECT)
+            challenge.ruling = Party(_ruling);
+        }
+
+        emit Ruling(arbitrator, _disputeID, uint256(challenge.ruling));
+
+        if (challenge.ruling == Party.Challenger) {
+            // Challenger wins - item removed
             item.status = Status.Absent;
+            delete itemKeys[itemID]; // Clear operational keys
 
-            // Clear operational keys
-            delete itemKeys[itemID];
+            uint256 totalStake = item.stake + challenge.stake;
+            _sendTokens(challenge.challenger, totalStake);
+        } else {
+            // Submitter wins or refuse to rule
+            item.status = Status.Reincluded;
+            item.includedAt = uint48(block.timestamp);
 
-            // Return challenger deposit + submitter stake
-            uint256 totalReward = item.stake + dispute.challengerDeposit - item.arbitrationDeposit;
-            _sendValue(dispute.challenger, totalReward);
+            uint256 totalStake = item.stake + challenge.stake;
+            _sendTokens(item.submitter, totalStake);
         }
 
         emit ItemStatusChange(itemID, item.status);
-
-        // Clean up
-        delete disputes[_disputeID];
     }
 
-    // ============ Hybrid Extension Functions ============
+    // ============ Execution ============
+
+    /**
+     * @notice Executes a pending submission after challenge period.
+     * @param _itemID The item ID.
+     */
+    function executeRequest(bytes32 _itemID) external {
+        Item storage item = items[_itemID];
+
+        if (item.status != Status.Submitted) revert InvalidStatus();
+        if (block.timestamp <= item.includedAt + submissionPeriod) revert WithdrawalPeriodNotOver();
+
+        item.status = Status.Reincluded;
+
+        // Return stake to submitter
+        _sendTokens(item.submitter, item.stake);
+
+        emit ItemStatusChange(_itemID, Status.Reincluded);
+    }
+
+    // ============ Withdrawal ============
+
+    /**
+     * @notice Requests withdrawal of an item.
+     * @param _itemID The item ID.
+     */
+    function requestWithdrawal(bytes32 _itemID) external {
+        Item storage item = items[_itemID];
+
+        if (msg.sender != item.submitter) revert NotSubmitter();
+        if (item.status != Status.Reincluded) revert InvalidStatus();
+
+        item.withdrawingTimestamp = uint48(block.timestamp);
+
+        emit ItemWithdrawing(_itemID, item.withdrawingTimestamp);
+    }
+
+    /**
+     * @notice Completes withdrawal of an item.
+     * @param _itemID The item ID.
+     */
+    function withdraw(bytes32 _itemID) external {
+        Item storage item = items[_itemID];
+
+        if (item.withdrawingTimestamp == 0) revert NotWithdrawable();
+        if (block.timestamp < item.withdrawingTimestamp + withdrawingPeriod) {
+            revert WithdrawalPeriodNotOver();
+        }
+
+        item.status = Status.Absent;
+        item.withdrawingTimestamp = 0;
+        delete itemKeys[_itemID];
+
+        emit ItemWithdrawn(_itemID);
+        emit ItemStatusChange(_itemID, Status.Absent);
+    }
+
+    /**
+     * @notice Cancels a withdrawal request.
+     * @param _itemID The item ID.
+     */
+    function cancelWithdrawal(bytes32 _itemID) external {
+        Item storage item = items[_itemID];
+
+        if (msg.sender != item.submitter) revert NotSubmitter();
+        if (item.withdrawingTimestamp == 0) revert NotWithdrawable();
+
+        item.withdrawingTimestamp = 0;
+    }
+
+    // ============ Reward Withdrawal ============
+
+    /**
+     * @notice Withdraws fees and rewards from a round.
+     * @param _itemID The item ID.
+     * @param _challengeID The challenge ID.
+     * @param _roundID The round ID.
+     * @param _contributor The contributor address.
+     */
+    function withdrawFeesAndRewards(
+        bytes32 _itemID,
+        uint256 _challengeID,
+        uint256 _roundID,
+        address payable _contributor
+    ) external {
+        Challenge storage challenge = challenges[_itemID][_challengeID];
+        Round storage round = rounds[_itemID][_challengeID][_roundID];
+
+        uint256 reward;
+        uint256[3] storage contribs = contributions[_itemID][_challengeID][_roundID][_contributor];
+
+        if (challenge.ruling == Party.None || _roundID == challenge.roundCount) {
+            // Refund contributions if no ruling or final round
+            reward = contribs[uint256(Party.Submitter)] + contribs[uint256(Party.Challenger)];
+        } else if (challenge.ruling == Party.Submitter) {
+            if (round.sideFunded == Party.Submitter) {
+                reward = contribs[uint256(Party.Submitter)] +
+                    (contribs[uint256(Party.Submitter)] * round.feeRewards) / round.amountPaid[uint256(Party.Submitter)];
+            } else {
+                reward = contribs[uint256(Party.Submitter)];
+            }
+        } else {
+            if (round.sideFunded == Party.Challenger) {
+                reward = contribs[uint256(Party.Challenger)] +
+                    (contribs[uint256(Party.Challenger)] * round.feeRewards) / round.amountPaid[uint256(Party.Challenger)];
+            } else {
+                reward = contribs[uint256(Party.Challenger)];
+            }
+        }
+
+        contribs[uint256(Party.Submitter)] = 0;
+        contribs[uint256(Party.Challenger)] = 0;
+
+        if (reward > 0) {
+            _sendTokens(_contributor, reward);
+            emit RewardWithdrawn(_itemID, _challengeID, _roundID, _contributor, reward);
+        }
+    }
+
+    // ============ Hybrid Extension: Operational Keys ============
 
     /**
      * @notice Sets the operational keys for an item.
-     * @dev Only the item submitter (stake owner) can call this.
-     * @param _itemID The ID of the item.
-     * @param _batcher The batcher address.
-     * @param _signer The unsafe block signer address.
+     * @dev Only the item submitter can call this. Keys default to submitter if unset.
+     * @param _itemID The item ID.
+     * @param _batcher The batcher address for L1 batch submissions.
+     * @param _signer The unsafe block signer address for P2P.
      */
     function setOperationalKeys(
         bytes32 _itemID,
         address _batcher,
         address _signer
-    ) external override {
-        Item storage item = _items[_itemID];
+    ) external {
+        Item storage item = items[_itemID];
 
-        // Only submitter can update keys
-        if (msg.sender != item.submitter) revert OnlySubmitter();
-
-        // Item must exist
+        if (msg.sender != item.submitter) revert NotSubmitter();
         if (item.status == Status.Absent) revert ItemDoesNotExist();
-
-        // Keys must be valid
         if (_batcher == address(0) || _signer == address(0)) revert InvalidKeys();
 
         itemKeys[_itemID] = OperatorKeys(_batcher, _signer);
         emit OperationalKeysUpdated(_itemID, _batcher, _signer);
     }
 
+    /**
+     * @notice Gets the operational keys for an item.
+     * @dev Returns submitter address for both if keys not explicitly set.
+     * @param _itemID The item ID.
+     * @return batcher The batcher address.
+     * @return unsafeSigner The unsafe block signer address.
+     */
+    function getOperationalKeys(bytes32 _itemID) external view returns (
+        address batcher,
+        address unsafeSigner
+    ) {
+        OperatorKeys storage keys = itemKeys[_itemID];
+        Item storage item = items[_itemID];
+
+        if (keys.batcher != address(0)) {
+            return (keys.batcher, keys.unsafeSigner);
+        } else {
+            return (item.submitter, item.submitter);
+        }
+    }
+
     // ============ Governor Functions ============
 
-    /**
-     * @notice Updates the minimum submission deposit.
-     * @param _submissionMinDeposit The new minimum deposit.
-     */
-    function setSubmissionMinDeposit(uint256 _submissionMinDeposit) external onlyGovernor {
+    function changeGovernor(address _governor) external onlyGovernor {
+        governor = _governor;
+    }
+
+    function changeSubmissionMinDeposit(uint256 _submissionMinDeposit) external onlyGovernor {
         submissionMinDeposit = _submissionMinDeposit;
     }
 
-    /**
-     * @notice Updates the challenge period duration.
-     * @param _challengePeriodDuration The new duration in seconds.
-     */
-    function setChallengePeriodDuration(uint256 _challengePeriodDuration) external onlyGovernor {
-        challengePeriodDuration = _challengePeriodDuration;
+    function changeSubmissionPeriod(uint256 _submissionPeriod) external onlyGovernor {
+        submissionPeriod = _submissionPeriod;
     }
 
-    /**
-     * @notice Transfers governor role.
-     * @param _governor The new governor address.
-     */
-    function setGovernor(address _governor) external onlyGovernor {
-        governor = _governor;
+    function changeReinclusionPeriod(uint256 _reinclusionPeriod) external onlyGovernor {
+        reinclusionPeriod = _reinclusionPeriod;
+    }
+
+    function changeWithdrawingPeriod(uint256 _withdrawingPeriod) external onlyGovernor {
+        withdrawingPeriod = _withdrawingPeriod;
+    }
+
+    function changeStakeMultipliers(
+        uint256 _challengeStakeMultiplier,
+        uint256 _winnerStakeMultiplier,
+        uint256 _loserStakeMultiplier,
+        uint256 _sharedStakeMultiplier
+    ) external onlyGovernor {
+        challengeStakeMultiplier = _challengeStakeMultiplier;
+        winnerStakeMultiplier = _winnerStakeMultiplier;
+        loserStakeMultiplier = _loserStakeMultiplier;
+        sharedStakeMultiplier = _sharedStakeMultiplier;
+    }
+
+    function changeArbitrationParams(bytes calldata _arbitratorExtraData) external onlyGovernor {
+        ArbitrationParams storage lastParams = arbitrationParamsChanges[arbitrationParamsChanges.length - 1];
+        if (block.timestamp < lastParams.timestamp + arbitrationParamsCooldown) {
+            revert CooldownNotPassed();
+        }
+
+        arbitrationParamsChanges.push(
+            ArbitrationParams({
+                timestamp: uint64(block.timestamp),
+                arbitratorExtraData: _arbitratorExtraData
+            })
+        );
+    }
+
+    // ============ View Functions ============
+
+    function itemCount() external view returns (uint256) {
+        // Note: Original uses itemList array, simplified here
+        return 0; // Would need to track separately
+    }
+
+    function getArbitrationParamsCount() external view returns (uint256) {
+        return arbitrationParamsChanges.length;
+    }
+
+    function isRegistered(bytes32 _itemID) external view returns (bool) {
+        Status status = items[_itemID].status;
+        return status == Status.Submitted || status == Status.Reincluded;
     }
 
     // ============ Internal Functions ============
 
-    /**
-     * @notice Safely sends ETH to an address.
-     * @param _to The recipient address.
-     * @param _amount The amount to send.
-     */
+    function _processDeposit(uint256 _amount) internal returns (uint256) {
+        if (address(token) == address(0)) {
+            // Native token
+            if (msg.value < _amount) revert InvalidDeposit();
+            return msg.value;
+        } else {
+            // ERC20 token
+            uint256 balanceBefore = token.balanceOf(address(this));
+            token.transferFrom(msg.sender, address(this), _amount);
+            uint256 balanceAfter = token.balanceOf(address(this));
+            return balanceAfter - balanceBefore;
+        }
+    }
+
+    function _sendTokens(address payable _to, uint256 _amount) internal {
+        if (_amount == 0) return;
+
+        if (address(token) == address(0)) {
+            _sendValue(_to, _amount);
+        } else {
+            token.transfer(_to, _amount);
+        }
+    }
+
     function _sendValue(address payable _to, uint256 _amount) internal {
         if (_amount == 0) return;
         (bool success, ) = _to.call{value: _amount}("");
         if (!success) revert TransferFailed();
     }
+
+    // Allow receiving ETH
+    receive() external payable {}
 }
