@@ -49,6 +49,8 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
 
     /**
      * @notice Registers an operator directly with Reincluded status (bypasses challenge).
+     * @dev Sets includedAt in the past so items are immediately valid for sync.
+     *      This simulates an operator that has already passed the maturity period.
      * @param batcher The batcher address.
      * @param unsafeSigner The unsafe block signer address.
      * @return itemID The item ID.
@@ -60,12 +62,16 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
 
         require(_items[itemID].status == Status.Absent, "Operator already exists");
 
+        // Set includedAt in the past so item is immediately valid for sync
+        // (block.timestamp - reinclusionPeriod - 1 ensures maturity check passes)
+        uint48 pastTimestamp = uint48(block.timestamp > reinclusionPeriod + 1 ? block.timestamp - reinclusionPeriod - 1 : 0);
+
         _items[itemID] = Item({
             status: Status.Reincluded, // Use Reincluded for "registered" state
             arbitrationDeposit: 0,
             challengeCount: 0,
             submitter: payable(msg.sender),
-            includedAt: uint48(block.timestamp),
+            includedAt: pastTimestamp,
             withdrawingTimestamp: 0,
             stake: submissionMinDeposit
         });
@@ -101,6 +107,24 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
     function setItemStatus(bytes32 _itemID, Status _status) external {
         _items[_itemID].status = _status;
         emit ItemStatusChange(_itemID, _status);
+    }
+
+    /**
+     * @notice Directly sets an item's includedAt timestamp (for testing maturity).
+     * @param _itemID The item ID.
+     * @param _includedAt The new includedAt timestamp.
+     */
+    function setIncludedAt(bytes32 _itemID, uint48 _includedAt) external {
+        _items[_itemID].includedAt = _includedAt;
+    }
+
+    /**
+     * @notice Directly sets an item's withdrawingTimestamp (for testing withdrawal lock).
+     * @param _itemID The item ID.
+     * @param _withdrawingTimestamp The new withdrawingTimestamp.
+     */
+    function setWithdrawingTimestamp(bytes32 _itemID, uint48 _withdrawingTimestamp) external {
+        _items[_itemID].withdrawingTimestamp = _withdrawingTimestamp;
     }
 
     /**
@@ -142,14 +166,16 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
     function isChallengeable(bytes32 _itemID) external view override returns (bool) {
         Item storage item = _items[_itemID];
 
-        if (item.status == Status.Reincluded) {
-            // Reincluded items are always challengeable
-            return true;
+        // Items that have completed withdrawal period are not challengeable
+        if (item.withdrawingTimestamp > 0 &&
+            block.timestamp >= item.withdrawingTimestamp + withdrawingPeriod) {
+            return false;
         }
 
-        if (item.status == Status.Submitted) {
-            // Submitted items are challengeable during submission period
-            return block.timestamp <= item.includedAt + submissionPeriod;
+        // Both Submitted and Reincluded items are challengeable FOREVER
+        // (no time restriction - "Challengeable Forever" semantics)
+        if (item.status == Status.Submitted || item.status == Status.Reincluded) {
+            return true;
         }
 
         return false;
@@ -158,15 +184,18 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
     function isValidForSync(bytes32 _itemID) external view override returns (bool) {
         Item storage item = _items[_itemID];
 
-        if (item.status == Status.Reincluded) {
-            return true;
-        }
+        uint256 duration;
 
         if (item.status == Status.Submitted) {
-            return block.timestamp > item.includedAt + submissionPeriod;
+            duration = submissionPeriod;
+        } else if (item.status == Status.Reincluded) {
+            duration = reinclusionPeriod;
+        } else {
+            return false;
         }
 
-        return false;
+        // MATURITY CHECK: Item must be older than the required period
+        return block.timestamp > item.includedAt + duration;
     }
 
     function getOperationalKeys(bytes32 _itemID) public view override returns (

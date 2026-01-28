@@ -335,12 +335,17 @@ contract KlerosSequencerManager {
     }
 
     /**
-     * @notice Checks if an item is valid for use (passed challenge period).
-     * @dev - Submitted items: valid only after submissionPeriod has elapsed
-     *      - Reincluded items: always valid (passed initial period or won dispute)
+     * @notice Checks if an item is valid for use (passed maturity period).
+     * @dev MATURITY REQUIREMENT: Items must have been in their current status
+     *      long enough to allow challenges before being used for operator duties.
+     *
+     *      - Submitted items: valid only after submissionPeriod has elapsed
+     *      - Reincluded items: valid only after reinclusionPeriod has elapsed
+     *        (includedAt is reset when item becomes Reincluded after dispute)
      *      - Disputed/Absent items: never valid
+     *
      * @param _itemID The registry item ID.
-     * @return True if the item is valid for operator duties.
+     * @return True if the item has passed its maturity period.
      */
     function _isItemValidInRegistry(bytes32 _itemID) internal view returns (bool) {
         (
@@ -353,19 +358,19 @@ contract KlerosSequencerManager {
 
         ) = registry.items(_itemID);
 
-        if (status == IPermanentGTCRHybrid.Status.Reincluded) {
-            // Reincluded items have already passed their challenge period or won a dispute
-            return true;
-        }
+        uint256 duration;
 
         if (status == IPermanentGTCRHybrid.Status.Submitted) {
-            // Submitted items must have passed the submission period
-            uint256 submissionPeriod = registry.submissionPeriod();
-            return block.timestamp > includedAt + submissionPeriod;
+            duration = registry.submissionPeriod();
+        } else if (status == IPermanentGTCRHybrid.Status.Reincluded) {
+            duration = registry.reinclusionPeriod();
+        } else {
+            // Disputed or Absent items are not valid
+            return false;
         }
 
-        // Disputed or Absent items are not valid
-        return false;
+        // MATURITY CHECK: Item must be older than the challenge period
+        return block.timestamp > includedAt + duration;
     }
 
     /**

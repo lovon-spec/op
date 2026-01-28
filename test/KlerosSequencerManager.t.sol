@@ -373,7 +373,7 @@ contract KlerosSequencerManagerTest is Test {
         assertTrue(registry.isChallengeable(itemID));
     }
 
-    function test_IsChallengeable_SubmittedAfterPeriod() public {
+    function test_IsChallengeable_SubmittedAfterPeriod_StillTrue() public {
         // Submit item (starts in Submitted status)
         string memory data = string(abi.encode(alice_batcher, alice_signer));
         bytes32 itemID = keccak256(abi.encodePacked(data));
@@ -383,8 +383,22 @@ contract KlerosSequencerManagerTest is Test {
         // Warp past the challenge period
         vm.warp(block.timestamp + 6 minutes);
 
-        // After period, Submitted items are no longer challengeable
-        assertFalse(registry.isChallengeable(itemID));
+        // "Challengeable Forever" - Submitted items are STILL challengeable after period
+        assertTrue(registry.isChallengeable(itemID));
+    }
+
+    function test_IsChallengeable_SubmittedVeryOld_StillTrue() public {
+        // IMMUNITY TEST: A Submitted item that is 10 days old MUST still be challengeable
+        string memory data = string(abi.encode(alice_batcher, alice_signer));
+        bytes32 itemID = keccak256(abi.encodePacked(data));
+
+        registry.addItemWithKeys{value: 0.01 ether}(data, alice_batcher, alice_signer);
+
+        // Warp 10 days into the future (way past any period)
+        vm.warp(block.timestamp + 10 days);
+
+        // "Challengeable Forever" - still challengeable
+        assertTrue(registry.isChallengeable(itemID));
     }
 
     function test_IsChallengeable_ReincludedAlwaysTrue() public {
@@ -424,12 +438,66 @@ contract KlerosSequencerManagerTest is Test {
         assertTrue(registry.isValidForSync(itemID));
     }
 
-    function test_IsValidForSync_ReincludedAlwaysTrue() public {
-        // Register directly (sets to Reincluded status)
+    function test_IsValidForSync_ReincludedAfterMaturity() public {
+        // Register directly (sets to Reincluded status with old timestamp)
         alice_itemID = _registerOperator(alice_batcher, alice_signer);
 
-        // Reincluded items are always valid for sync
+        // Reincluded items with passed maturity period are valid for sync
+        // (registerOperatorDirectly sets an old timestamp for this purpose)
         assertTrue(registry.isValidForSync(alice_itemID));
+    }
+
+    function test_IsValidForSync_ReincludedDuringMaturity_False() public {
+        // MATURITY TEST (Reincluded): syncAddOperator MUST REVERT for fresh Reincluded items
+        // Create a Reincluded item with current timestamp (just re-included)
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+
+        // Set includedAt to NOW (simulating item just won a dispute)
+        registry.setIncludedAt(alice_itemID, uint48(block.timestamp));
+
+        // Fresh Reincluded items should NOT be valid for sync
+        assertFalse(registry.isValidForSync(alice_itemID));
+    }
+
+    function test_SyncAddOperator_RevertForFreshReincluded() public {
+        // MATURITY TEST (Reincluded): syncAddOperator MUST REVERT for freshly re-included items
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+
+        // Set includedAt to NOW (simulating item just won a dispute)
+        registry.setIncludedAt(alice_itemID, uint48(block.timestamp));
+
+        // Try to sync - should fail because maturity not met
+        vm.expectRevert(KlerosSequencerManager.NotRegisteredInRegistry.selector);
+        manager.syncAddOperator(alice_itemID);
+    }
+
+    function test_SyncAddOperator_SucceedsAfterReinclusionPeriod() public {
+        // Create a Reincluded item with current timestamp
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+
+        // Set includedAt to NOW (simulating item just won a dispute)
+        registry.setIncludedAt(alice_itemID, uint48(block.timestamp));
+
+        // Warp past the reinclusion period (5 minutes in mock)
+        vm.warp(block.timestamp + 6 minutes);
+
+        // Now sync should succeed
+        bytes32 opId = manager.operatorId(alice_batcher, alice_signer);
+        manager.syncAddOperator(alice_itemID);
+
+        assertTrue(manager.isActive(opId));
+    }
+
+    function test_IsChallengeable_FalseForWithdrawalComplete() public {
+        // WITHDRAWAL TEST: Items that have completed withdrawal are NOT challengeable
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+
+        // Set withdrawingTimestamp to simulate completed withdrawal
+        // withdrawingPeriod is 1 minute in mock
+        registry.setWithdrawingTimestamp(alice_itemID, uint48(block.timestamp - 2 minutes));
+
+        // Item with elapsed withdrawal period should NOT be challengeable
+        assertFalse(registry.isChallengeable(alice_itemID));
     }
 
     function test_IsRegisteredInRegistry_FalseForSubmittedDuringPeriod() public {

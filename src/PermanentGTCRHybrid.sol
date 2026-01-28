@@ -39,7 +39,7 @@ interface IWETH {
 
 /**
  * @title PermanentGTCRHybrid
- * @notice A Kleros PermanentGTCR with on-chain operational keys and perpetual challengeability.
+ * @notice A Kleros PermanentGTCR with on-chain operational keys and "Challengeable Forever" semantics.
  * @dev This contract is based on the original Kleros PermanentGTCR:
  *      https://github.com/kleros/pgtcr/blob/master/contracts/src/PermanentGTCR.sol
  *
@@ -51,17 +51,24 @@ interface IWETH {
  *         - `getOperationalKeys()` view function (defaults to submitter if unset)
  *         - `OperationalKeysUpdated` event
  *
- *      2. Perpetual Challengeability for Reincluded Items:
- *         - Original PGTCR: Items become unchallengeable after reinclusionPeriod
- *         - This version: Reincluded items can be challenged AT ANY TIME
+ *      2. "Challengeable Forever" (NO IMMUNITY):
+ *         - Original PGTCR: Items become unchallengeable after their period
+ *         - This version: ALL items (Submitted and Reincluded) can be challenged AT ANY TIME
+ *         - There is NO "safe harbor" after any period
  *         - Reason: Constitutional L2 requires ongoing enforcement of policies
  *           (censorship, MEV, liveness violations can occur at any time)
- *         - Submitted items still have a time-limited challenge period
+ *         - Exception: Items that have completed their withdrawal period are not challengeable
+ *
+ *      3. Maturity Requirement for Activation:
+ *         - Items must wait for their challenge period before being valid for sync:
+ *           - Submitted items: must wait for submissionPeriod
+ *           - Reincluded items: must wait for reinclusionPeriod (after winning dispute)
+ *         - This ensures adequate time for challenges before activation
  *
  *      Item Status Flow:
- *      - Submitted: New item, challengeable during submissionPeriod
+ *      - Submitted: New item, challengeable FOREVER, valid for sync after submissionPeriod
  *      - After submissionPeriod: Call executeRequest() to become Reincluded
- *      - Reincluded: Active license, challengeable forever (for policy violations)
+ *      - Reincluded: Active license, challengeable FOREVER, valid for sync after reinclusionPeriod
  *      - Disputed: Under arbitration
  *      - Absent: Removed or never existed
  *
@@ -365,12 +372,15 @@ contract PermanentGTCRHybrid is IArbitrable, IEvidence {
 
     /**
      * @notice Challenges an item.
-     * @dev For Submitted items: Can only challenge during submissionPeriod (initial registration).
-     *      For Reincluded items: Can challenge at ANY TIME (perpetual challengeability).
+     * @dev "CHALLENGEABLE FOREVER" - Both Submitted and Reincluded items can be
+     *      challenged at ANY TIME. There is no "safe harbor" after any period.
      *
      *      This differs from the original PGTCR which made items unchallengeable after the period.
      *      The Constitutional L2 requires perpetual challengeability for policy enforcement
      *      (censorship, MEV, liveness violations can occur at any time).
+     *
+     *      Exception: Items that have completed their withdrawal period (withdrawingTimestamp +
+     *      withdrawingPeriod elapsed) cannot be challenged - they are effectively exiting.
      *
      * @param _itemID The item ID.
      * @param _evidence Evidence URI.
@@ -382,15 +392,17 @@ contract PermanentGTCRHybrid is IArbitrable, IEvidence {
             revert ItemNotChallengeable();
         }
 
-        // For Submitted items: enforce the submission period (initial registration challenge)
-        // For Reincluded items: NO time restriction (perpetual challengeability for violations)
-        if (item.status == Status.Submitted) {
-            if (block.timestamp > item.includedAt + submissionPeriod) {
-                revert ItemNotChallengeable();
-            }
+        // Prevent challenging items that have effectively finished withdrawing
+        // (withdrawal period elapsed but not yet executed)
+        if (item.withdrawingTimestamp > 0 &&
+            block.timestamp >= item.withdrawingTimestamp + withdrawingPeriod) {
+            revert ItemNotChallengeable();
         }
-        // Note: Reincluded items can be challenged at any time - this is intentional
-        // to allow enforcement of constitutional rules (censorship, MEV, liveness)
+
+        // NOTE: Both Submitted and Reincluded items are challengeable at ANY TIME.
+        // This is the "Challengeable Forever" requirement for Constitutional L2.
+        // There is NO "safe harbor" after any period - constitutional violations
+        // (censorship, MEV, liveness) can occur at any time and must be actionable.
 
         ArbitrationParams storage arbParams = arbitrationParamsChanges[arbitrationParamsChanges.length - 1];
         uint256 arbitrationCost = arbitrator.arbitrationCost(arbParams.arbitratorExtraData);
@@ -771,23 +783,25 @@ contract PermanentGTCRHybrid is IArbitrable, IEvidence {
 
     /**
      * @notice Checks if an item is currently challengeable.
-     * @dev - Submitted items: challengeable during submissionPeriod
+     * @dev - Submitted items: ALWAYS challengeable (no immunity after period)
      *      - Reincluded items: ALWAYS challengeable (perpetual for policy enforcement)
-     *      - Disputed/Absent items: not challengeable
+     *      - Items with elapsed withdrawal period: NOT challengeable
+     *      - Disputed/Absent items: NOT challengeable
      * @param _itemID The item ID.
      * @return True if the item can be challenged right now.
      */
     function isChallengeable(bytes32 _itemID) external view returns (bool) {
         Item storage item = items[_itemID];
 
-        if (item.status == Status.Reincluded) {
-            // Reincluded items are always challengeable
-            return true;
+        // Items that are withdrawing and past the period are not challengeable
+        if (item.withdrawingTimestamp > 0 &&
+            block.timestamp >= item.withdrawingTimestamp + withdrawingPeriod) {
+            return false;
         }
 
-        if (item.status == Status.Submitted) {
-            // Submitted items are challengeable during submission period
-            return block.timestamp <= item.includedAt + submissionPeriod;
+        // Both Submitted and Reincluded items are challengeable forever
+        if (item.status == Status.Submitted || item.status == Status.Reincluded) {
+            return true;
         }
 
         // Disputed or Absent items are not challengeable
@@ -796,24 +810,31 @@ contract PermanentGTCRHybrid is IArbitrable, IEvidence {
 
     /**
      * @notice Checks if an item is valid for sync to SequencerManager.
-     * @dev - Submitted items: valid only AFTER submissionPeriod (passed review)
-     *      - Reincluded items: always valid
+     * @dev MATURITY REQUIREMENT: Items must have been in their current status
+     *      long enough to allow challenges before being activated.
+     *
+     *      - Submitted items: valid only AFTER submissionPeriod (passed initial review)
+     *      - Reincluded items: valid only AFTER reinclusionPeriod (passed re-review)
      *      - Disputed/Absent items: never valid
+     *
      * @param _itemID The item ID.
-     * @return True if the item has passed review and can be used.
+     * @return True if the item has passed its maturity period.
      */
     function isValidForSync(bytes32 _itemID) external view returns (bool) {
         Item storage item = items[_itemID];
 
-        if (item.status == Status.Reincluded) {
-            return true;
-        }
+        uint256 duration;
 
         if (item.status == Status.Submitted) {
-            return block.timestamp > item.includedAt + submissionPeriod;
+            duration = submissionPeriod;
+        } else if (item.status == Status.Reincluded) {
+            duration = reinclusionPeriod;
+        } else {
+            return false;
         }
 
-        return false;
+        // MATURITY CHECK: Item must be older than the required period
+        return block.timestamp > item.includedAt + duration;
     }
 
     // ============ Internal Functions ============

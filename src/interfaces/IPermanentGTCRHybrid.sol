@@ -74,13 +74,16 @@ interface IPermanentGTCRHybrid is IArbitrable {
 
     /**
      * @notice Checks if an item is currently challengeable.
-     * @dev Submitted items: during submissionPeriod. Reincluded: always.
+     * @dev "Challengeable Forever" - Both Submitted and Reincluded items are
+     *      challengeable at ANY TIME. Exception: items that have completed
+     *      withdrawal period are not challengeable.
      */
     function isChallengeable(bytes32 _itemID) external view returns (bool);
 
     /**
-     * @notice Checks if an item is valid for sync (passed challenge period).
-     * @dev Submitted items: after submissionPeriod. Reincluded: always.
+     * @notice Checks if an item is valid for sync (passed maturity period).
+     * @dev - Submitted items: valid after submissionPeriod
+     *      - Reincluded items: valid after reinclusionPeriod
      */
     function isValidForSync(bytes32 _itemID) external view returns (bool);
 
