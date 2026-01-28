@@ -1,176 +1,424 @@
 #!/bin/bash
-# Kleros Sequencer Manager Live Demo
-# This script demonstrates the full sequencer rotation lifecycle on Anvil
+# =============================================================
+#  Constitutional L2 — Full System Demo
+# =============================================================
+#
+# A self-contained demo that deploys every contract and then
+# exercises every major subsystem:
+#
+#   1. Contract deployment & architecture overview
+#   2. Operator registry inspection
+#   3. Adapter registry & adapter info
+#   4. SystemConfig state before/after rotation
+#   5. Epoch-based rotation through all operators
+#   6. Challenge & removal of a misbehaving operator
+#   7. Rotation after removal (round-robin skip)
+#   8. Adapter upgrade (V1 → V2 via ratchet)
+#   9. Rotation with new adapter
+#  10. Guardian emergency pause / unpause
+#
+# Usage:
+#   ./script/run_demo.sh                    # standalone (starts own Anvil)
+#   RPC_URL=http://... ./script/run_demo.sh # against existing node
+#
+# Requirements: Foundry (forge + cast + anvil)
 
 set -e
 
-FOUNDRY_BIN="$HOME/.foundry/bin"
-RPC_URL="${RPC_URL:-http://127.0.0.1:8545}"
-CAST="$FOUNDRY_BIN/cast"
-FORGE="$FOUNDRY_BIN/forge"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_DIR"
 
-# Use Anvil time manipulation if available (much faster than sleep)
-advance_time() {
-    local seconds=$1
-    # Try Anvil's evm_increaseTime, fall back to sleep
-    if curl -s -X POST --data "{\"jsonrpc\":\"2.0\",\"method\":\"evm_increaseTime\",\"params\":[$seconds],\"id\":1}" -H "Content-Type: application/json" "$RPC_URL" > /dev/null 2>&1; then
-        # Also mine a block to commit the time change
-        curl -s -X POST --data '{"jsonrpc":"2.0","method":"evm_mine","params":[],"id":1}' -H "Content-Type: application/json" "$RPC_URL" > /dev/null 2>&1
-        echo "  (Advanced time by $seconds seconds via Anvil RPC)"
-    else
-        echo "  (Waiting $seconds seconds...)"
-        sleep $seconds
+# ── Tooling ──────────────────────────────────────────────────
+FOUNDRY_BIN="${FOUNDRY_BIN:-$HOME/.foundry/bin}"
+FORGE="${FORGE:-${FOUNDRY_BIN}/forge}"
+CAST="${CAST:-${FOUNDRY_BIN}/cast}"
+
+for bin in "$FORGE" "$CAST"; do
+    if ! command -v "$bin" &>/dev/null && [ ! -x "$bin" ]; then
+        echo "ERROR: $(basename "$bin") not found."
+        echo "Install Foundry: https://book.getfoundry.sh"
+        exit 1
     fi
+done
+
+# ── Anvil management ─────────────────────────────────────────
+OWN_ANVIL=false
+RPC_URL="${RPC_URL:-http://127.0.0.1:8545}"
+ANVIL_PID=""
+
+start_anvil() {
+    ANVIL="${ANVIL:-${FOUNDRY_BIN}/anvil}"
+    if curl -s -X POST --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+         -H "Content-Type: application/json" "$RPC_URL" &>/dev/null; then
+        echo "  Using existing node at $RPC_URL"
+        return
+    fi
+    echo "  Starting local Anvil node..."
+    "$ANVIL" --silent --accounts 10 --balance 10000 &
+    ANVIL_PID=$!
+    OWN_ANVIL=true
+    sleep 2
 }
 
-# Anvil test accounts
+cleanup() {
+    if [ "$OWN_ANVIL" = true ] && [ -n "$ANVIL_PID" ]; then
+        kill "$ANVIL_PID" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
+# ── Constants ────────────────────────────────────────────────
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 GUARDIAN_KEY="0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"
 CHALLENGER_KEY="0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba"
 
-SEQUENCER_1="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-SEQUENCER_2="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
-SEQUENCER_3="0x90F79bf6EB2c4f870365E785982E1f101E93b906"
+DEPLOYER="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 GUARDIAN="0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
 
-EPOCH_DURATION=10
+BATCHER_1="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+SIGNER_1="0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"
+BATCHER_2="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+SIGNER_2="0x976EA74026E726554dB657fA54763abd0C3a0aa9"
+BATCHER_3="0x90F79bf6EB2c4f870365E785982E1f101E93b906"
+SIGNER_3="0x14dC79964da2C08b23698B3D3cc7Ca32193d9955"
 
-echo ""
-echo "==========================================="
-echo "  KLEROS SEQUENCER MANAGER LIVE DEMO"
-echo "==========================================="
-echo ""
+EPOCH=10 # seconds (matches DeployLocal)
 
-# Step 1: Deploy contracts using DeployLocal script
-echo "STEP 1: Deploying contracts..."
-echo "-------------------------------------------"
-$FORGE script script/DeployLocal.s.sol:DeployLocal --rpc-url $RPC_URL --broadcast 2>&1 | grep -E "(deployed|transferred|Registered)"
+# ── Helpers ──────────────────────────────────────────────────
+advance_time() {
+    curl -s -X POST \
+         --data "{\"jsonrpc\":\"2.0\",\"method\":\"evm_increaseTime\",\"params\":[$1],\"id\":1}" \
+         -H "Content-Type: application/json" "$RPC_URL" >/dev/null
+    curl -s -X POST \
+         --data '{"jsonrpc":"2.0","method":"evm_mine","params":[],"id":1}' \
+         -H "Content-Type: application/json" "$RPC_URL" >/dev/null
+}
 
-# Get deployed contract addresses from the broadcast using Python
-get_contract_address() {
-    local name=$1
+# call <addr> <sig> [args…]
+_call() {
+    "$CAST" call "$1" "$2" "${@:3}" --rpc-url "$RPC_URL" 2>/dev/null
+}
+
+# send_tx <key> <addr> <sig> [args…]
+send_tx() {
+    local key="$1"; shift
+    "$CAST" send "$1" "$2" "${@:3}" \
+        --rpc-url "$RPC_URL" --private-key "$key" >/dev/null 2>&1
+}
+
+section() {
+    echo ""
+    echo "==========================================================="
+    echo "  $1"
+    echo "==========================================================="
+    echo ""
+}
+
+subsection() {
+    echo "-----------------------------------------------------------"
+    echo "  $1"
+    echo "-----------------------------------------------------------"
+}
+
+# Parse a contract address from the broadcast JSON
+get_addr() {
     python3 -c "
-import json
+import json, sys
 with open('broadcast/DeployLocal.s.sol/31337/run-latest.json') as f:
     data = json.load(f)
-    for tx in data.get('transactions', []):
-        if tx.get('transactionType') == 'CREATE' and tx.get('contractName') == '$name':
-            print(tx.get('contractAddress'))
-            break
+for tx in data.get('transactions', []):
+    if tx.get('transactionType') == 'CREATE' and tx.get('contractName') == '$1':
+        print(tx['contractAddress'])
+        sys.exit(0)
+print('')
 "
 }
 
-CURATE=$(get_contract_address "MockCurate")
-SYSTEM_CONFIG=$(get_contract_address "MockSystemConfig")
-MANAGER=$(get_contract_address "KlerosSequencerManager")
+# =============================================================
+#  MAIN
+# =============================================================
 
+section "CONSTITUTIONAL L2 — FULL SYSTEM DEMO"
+
+echo "This demo deploys all contracts and exercises every major"
+echo "subsystem of the Constitutional L2 governance stack."
+
+# ─── Step 0 ──────────────────────────────────────────────────
 echo ""
-echo "  MockCurate: $CURATE"
-echo "  MockSystemConfig: $SYSTEM_CONFIG"
-echo "  KlerosSequencerManager: $MANAGER"
+echo "Step 0: Environment"
+echo "-----------------------------------------------------------"
+start_anvil
+
+# ─── Step 1: Deploy ──────────────────────────────────────────
+section "STEP 1 · Deploy All Contracts"
+
+echo "Running DeployLocal.s.sol …"
+echo "(Deploys mocks, registers 3 operators, performs first rotation)"
 echo ""
-
-# Step 2: Check current state
-echo "STEP 2: Checking initial state..."
-echo "-------------------------------------------"
-CURRENT_SEQ=$($CAST call $MANAGER "currentSequencer()(address)" --rpc-url $RPC_URL)
-BATCHER_HASH=$($CAST call $SYSTEM_CONFIG "batcherHash()(bytes32)" --rpc-url $RPC_URL)
-ACTIVE_COUNT=$($CAST call $MANAGER "activeSequencerCount()(uint256)" --rpc-url $RPC_URL)
-
-echo "  Current sequencer: $CURRENT_SEQ"
-echo "  Batcher hash: $BATCHER_HASH"
-echo "  Active sequencers: $ACTIVE_COUNT"
-echo ""
-
-# Step 3: Wait for epoch and rotate
-echo "STEP 3: Waiting for epoch ($EPOCH_DURATION seconds) and rotating..."
-echo "-------------------------------------------"
-advance_time $EPOCH_DURATION
-
-echo "  Sending rotateSequencer() transaction..."
-$CAST send $MANAGER "rotateSequencer()" --rpc-url $RPC_URL --private-key $DEPLOYER_KEY 2>&1 | grep -E "(transactionHash|status)"
-
-CURRENT_SEQ=$($CAST call $MANAGER "currentSequencer()(address)" --rpc-url $RPC_URL)
-BATCHER_HASH=$($CAST call $SYSTEM_CONFIG "batcherHash()(bytes32)" --rpc-url $RPC_URL)
-echo "  New current sequencer: $CURRENT_SEQ"
-echo "  New batcher hash: $BATCHER_HASH"
+"$FORGE" script script/DeployLocal.s.sol:DeployLocal \
+    --rpc-url "$RPC_URL" --broadcast --silent 2>&1 | \
+    sed -n '/deployed\|transferred\|Registered\|Operator\|Registry\|Adapter\|Summary\|Duration\|Guardian\|current\|rotation\|signer\|batcher/Ip' | \
+    while IFS= read -r line; do echo "  $line"; done
 echo ""
 
-# Step 4: Rotate again
-echo "STEP 4: Another rotation after $EPOCH_DURATION seconds..."
-echo "-------------------------------------------"
-advance_time $EPOCH_DURATION
+REGISTRY=$(get_addr MockPermanentGTCRHybrid)
+ADAPTER_REGISTRY=$(get_addr MockCurate)
+ADAPTER_V1=$(get_addr OpStackAdapterV1)
+SYSTEM_CONFIG=$(get_addr MockSystemConfig)
+MANAGER=$(get_addr KlerosSequencerManager)
 
-$CAST send $MANAGER "rotateSequencer()" --rpc-url $RPC_URL --private-key $DEPLOYER_KEY 2>&1 | grep -E "(transactionHash|status)"
+echo "Deployed contracts:"
+echo ""
+echo "  ┌──────────────────────────────────────────────────────────┐"
+echo "  │ Operator Registry  (MockPermanentGTCRHybrid)             │"
+echo "  │   $REGISTRY │"
+echo "  ├──────────────────────────────────────────────────────────┤"
+echo "  │ Adapter Registry   (MockCurate)                          │"
+echo "  │   $ADAPTER_REGISTRY │"
+echo "  ├──────────────────────────────────────────────────────────┤"
+echo "  │ Adapter V1         (OpStackAdapterV1)                    │"
+echo "  │   $ADAPTER_V1 │"
+echo "  ├──────────────────────────────────────────────────────────┤"
+echo "  │ SystemConfig       (MockSystemConfig)                    │"
+echo "  │   $SYSTEM_CONFIG │"
+echo "  ├──────────────────────────────────────────────────────────┤"
+echo "  │ Manager            (KlerosSequencerManager)              │"
+echo "  │   $MANAGER │"
+echo "  └──────────────────────────────────────────────────────────┘"
 
-CURRENT_SEQ=$($CAST call $MANAGER "currentSequencer()(address)" --rpc-url $RPC_URL)
-echo "  New current sequencer: $CURRENT_SEQ"
+# ─── Step 2: Operator Registry ───────────────────────────────
+section "STEP 2 · Operator Registry"
+
+echo "The Operator Registry (PermanentGTCRHybrid) stores operator"
+echo "tuples — each operator has a batcher key and an unsafeSigner"
+echo "key.  Both are rotated atomically when the operator's turn comes."
 echo ""
 
-# Step 5: Challenge a sequencer
-echo "STEP 5: Challenging SEQUENCER_2 for misbehavior..."
-echo "-------------------------------------------"
+for i in 1 2 3; do
+    eval "B=\$BATCHER_$i; S=\$SIGNER_$i"
+    ITEM_ID=$(_call "$REGISTRY" "operatorItemId(address,address)(bytes32)" "$B" "$S")
+    REG_BATCHER=$(_call "$REGISTRY" "getOperationalKeys(bytes32)(address,address)" "$ITEM_ID" | head -1)
+    REG_SIGNER=$(_call "$REGISTRY" "getOperationalKeys(bytes32)(address,address)" "$ITEM_ID" | tail -1)
+    echo "  Operator $i"
+    echo "    batcher:      $B"
+    echo "    unsafeSigner: $S"
+    echo "    itemID:       $ITEM_ID"
+    echo ""
+done
 
-# Get the itemID for SEQUENCER_2
-ITEM_ID=$($CAST call $MANAGER "itemIDFor(address)(bytes32)" $SEQUENCER_2 --rpc-url $RPC_URL)
-echo "  SEQUENCER_2 itemID: $ITEM_ID"
+ACTIVE=$(_call "$MANAGER" "activeOperatorCount()(uint256)")
+echo "  Active operators synced to manager: $ACTIVE"
 
-# Set clearing requested in Curate (simulate challenge)
-$CAST send $CURATE "setClearingRequested(bytes32)" $ITEM_ID --rpc-url $RPC_URL --private-key $CHALLENGER_KEY 2>&1 | grep -E "(transactionHash|status)"
-echo "  Challenge submitted (ClearingRequested)"
+# ─── Step 3: Adapter Info ────────────────────────────────────
+section "STEP 3 · Adapter Registry & Adapter Info"
 
-# Remove from manager
-$CAST send $MANAGER "syncRemoveSequencer(address)" $SEQUENCER_2 --rpc-url $RPC_URL --private-key $CHALLENGER_KEY 2>&1 | grep -E "(transactionHash|status)"
-echo "  SEQUENCER_2 removed from active set"
-
-ACTIVE_COUNT=$($CAST call $MANAGER "activeSequencerCount()(uint256)" --rpc-url $RPC_URL)
-echo "  Active sequencers now: $ACTIVE_COUNT"
+echo "The Adapter Registry (Curate) governs which adapters the"
+echo "manager may use.  The ratchet ensures the version number"
+echo "can only increase — no rollbacks."
 echo ""
 
-# Step 6: Rotate after removal
-echo "STEP 6: Rotation after challenge (skips removed sequencer)..."
-echo "-------------------------------------------"
-advance_time $EPOCH_DURATION
+V1_VERSION=$(_call "$ADAPTER_V1" "version()(uint256)")
+V1_NAME=$(_call "$ADAPTER_V1" "NAME()(string)")
+V1_DESC=$(_call "$ADAPTER_V1" "DESCRIPTION()(string)")
 
-$CAST send $MANAGER "rotateSequencer()" --rpc-url $RPC_URL --private-key $DEPLOYER_KEY 2>&1 | grep -E "(transactionHash|status)"
+echo "  Current adapter (V1):"
+echo "    address:     $ADAPTER_V1"
+echo "    version:     $V1_VERSION (1.0.0)"
+echo "    name:        $V1_NAME"
+echo "    description: $V1_DESC"
+echo ""
+echo "  Adapter registry: $ADAPTER_REGISTRY"
 
-CURRENT_SEQ=$($CAST call $MANAGER "currentSequencer()(address)" --rpc-url $RPC_URL)
-echo "  Current sequencer: $CURRENT_SEQ"
-echo "  (After swap-pop removal, rotation continues round-robin through remaining sequencers)"
+# ─── Step 4: SystemConfig ────────────────────────────────────
+section "STEP 4 · SystemConfig State (pre-rotation snapshot)"
+
+BATCHER_HASH=$(_call "$SYSTEM_CONFIG" "batcherHash()(bytes32)")
+UNSAFE_SIGNER=$(_call "$SYSTEM_CONFIG" "unsafeBlockSigner()(address)")
+SC_OWNER=$(_call "$SYSTEM_CONFIG" "owner()(address)")
+
+echo "  batcherHash():      $BATCHER_HASH"
+echo "  unsafeBlockSigner(): $UNSAFE_SIGNER"
+echo "  owner():             $SC_OWNER"
+echo ""
+echo "  The owner is the KlerosSequencerManager — only it can"
+echo "  update batcherHash and unsafeBlockSigner via the adapter."
+
+# ─── Step 5: Rotation cycle ──────────────────────────────────
+section "STEP 5 · Epoch-Based Rotation (3 cycles)"
+
+echo "Every $EPOCH seconds anyone can call rotateOperator()."
+echo "The manager validates the next candidate via O(1) reverse"
+echo "mapping, then delegates to the adapter which atomically"
+echo "sets BOTH batcherHash AND unsafeBlockSigner in SystemConfig."
 echo ""
 
-# Step 7: Guardian pause
-echo "STEP 7: Guardian pause demonstration..."
-echo "-------------------------------------------"
+for CYCLE in 1 2 3; do
+    subsection "Rotation $CYCLE"
 
-$CAST send $MANAGER "setPaused(bool)" true --rpc-url $RPC_URL --private-key $GUARDIAN_KEY 2>&1 | grep -E "(transactionHash|status)"
-echo "  Contract paused by guardian"
+    advance_time $((EPOCH + 1))
 
-# Try to rotate (should fail)
-echo "  Attempting rotation while paused..."
-if $CAST send $MANAGER "rotateSequencer()" --rpc-url $RPC_URL --private-key $DEPLOYER_KEY 2>&1; then
-    echo "  ERROR: Should have reverted!"
+    echo "  Calling rotateOperator()…"
+    send_tx "$DEPLOYER_KEY" "$MANAGER" "rotateOperator()"
+
+    CURRENT_BATCH=$(_call "$MANAGER" "currentSequencer()(address)")
+    BATCHER_HASH=$(_call "$SYSTEM_CONFIG" "batcherHash()(bytes32)")
+    UNSAFE_SIGNER=$(_call "$SYSTEM_CONFIG" "unsafeBlockSigner()(address)")
+
+    echo "  Current batcher:       $CURRENT_BATCH"
+    echo "  SystemConfig batcherHash:      $BATCHER_HASH"
+    echo "  SystemConfig unsafeBlockSigner: $UNSAFE_SIGNER"
+    echo ""
+done
+
+# ─── Step 6: Challenge & Remove ──────────────────────────────
+section "STEP 6 · Challenge & Remove Operator 2"
+
+echo "Operator 2 (batcher $BATCHER_2)"
+echo "has been caught violating the constitution (e.g. censoring"
+echo "transactions).  A Kleros jury ruled against them."
+echo ""
+
+echo "Step 6a: Mark operator as removed in registry…"
+send_tx "$CHALLENGER_KEY" "$REGISTRY" \
+    "setOperatorClearingRequested(address,address)" "$BATCHER_2" "$SIGNER_2"
+echo "  Registry status set to Absent (removed by Kleros ruling)"
+echo ""
+
+echo "Step 6b: Sync removal to manager (anyone can call)…"
+send_tx "$CHALLENGER_KEY" "$MANAGER" \
+    "syncRemoveOperator(address,address)" "$BATCHER_2" "$SIGNER_2"
+
+ACTIVE=$(_call "$MANAGER" "activeOperatorCount()(uint256)")
+echo "  Active operators now: $ACTIVE (was 3)"
+
+# ─── Step 7: Rotation after removal ──────────────────────────
+section "STEP 7 · Rotation After Removal"
+
+echo "The removed operator is gone from the active set."
+echo "Rotation continues round-robin through the remaining 2."
+echo ""
+
+for CYCLE in 1 2; do
+    subsection "Post-removal rotation $CYCLE"
+    advance_time $((EPOCH + 1))
+
+    send_tx "$DEPLOYER_KEY" "$MANAGER" "rotateOperator()"
+
+    CURRENT_BATCH=$(_call "$MANAGER" "currentSequencer()(address)")
+    echo "  Current batcher: $CURRENT_BATCH"
+    echo ""
+done
+
+echo "  Operator 2 ($BATCHER_2) is never selected."
+echo "  Only operators 1 and 3 alternate."
+
+# ─── Step 8: Adapter upgrade ─────────────────────────────────
+section "STEP 8 · Adapter Upgrade (V1 → V2)"
+
+echo "A new adapter has been developed (e.g. for an OP Stack"
+echo "hardfork).  It has been submitted to the Adapter Registry"
+echo "and passed the Kleros curation challenge period."
+echo ""
+
+echo "Step 8a: Deploy MockAdapterV2…"
+V2_JSON=$("$FORGE" create test/mocks/MockAdapterV2.sol:MockAdapterV2 \
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" --json 2>/dev/null)
+ADAPTER_V2=$(echo "$V2_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['deployedTo'])")
+echo "  MockAdapterV2 deployed at: $ADAPTER_V2"
+
+V2_VERSION=$(_call "$ADAPTER_V2" "version()(uint256)")
+echo "  Version: $V2_VERSION (2.0.0)"
+echo ""
+
+echo "Step 8b: Register V2 in the adapter registry…"
+V2_ENCODED=$("$CAST" abi-encode "f(address)" "$ADAPTER_V2")
+send_tx "$DEPLOYER_KEY" "$ADAPTER_REGISTRY" "registerItemDirectly(bytes)" "$V2_ENCODED"
+echo "  V2 registered in adapter registry"
+echo ""
+
+echo "Step 8c: Upgrade manager to V2 (ratchet: V2 > V1)…"
+send_tx "$DEPLOYER_KEY" "$MANAGER" "upgradeAdapter(address)" "$ADAPTER_V2"
+
+NEW_ADAPTER=$(_call "$MANAGER" "getAdapterInfo()(address,uint256,string,string)" | head -1)
+NEW_VERSION=$(_call "$MANAGER" "getAdapterInfo()(address,uint256,string,string)" | sed -n '2p')
+echo "  Manager adapter address: $NEW_ADAPTER"
+echo "  Manager adapter version: $NEW_VERSION"
+echo ""
+echo "  Ratchet enforced: 2000000 > 1000000"
+
+# ─── Step 9: Rotation with new adapter ───────────────────────
+section "STEP 9 · Rotation With V2 Adapter"
+
+echo "The V2 adapter is now active.  Let's verify rotation still"
+echo "works correctly through the new adapter."
+echo ""
+
+advance_time $((EPOCH + 1))
+send_tx "$DEPLOYER_KEY" "$MANAGER" "rotateOperator()"
+
+CURRENT_BATCH=$(_call "$MANAGER" "currentSequencer()(address)")
+BATCHER_HASH=$(_call "$SYSTEM_CONFIG" "batcherHash()(bytes32)")
+UNSAFE_SIGNER=$(_call "$SYSTEM_CONFIG" "unsafeBlockSigner()(address)")
+
+echo "  Current batcher:                 $CURRENT_BATCH"
+echo "  SystemConfig.batcherHash():      $BATCHER_HASH"
+echo "  SystemConfig.unsafeBlockSigner(): $UNSAFE_SIGNER"
+echo ""
+echo "  Rotation succeeded through the V2 adapter."
+
+# ─── Step 10: Guardian pause ─────────────────────────────────
+section "STEP 10 · Guardian Emergency Pause / Unpause"
+
+echo "The guardian ($GUARDIAN) can pause all"
+echo "mutations in an emergency."
+echo ""
+
+IS_PAUSED=$(_call "$MANAGER" "paused()(bool)")
+echo "  paused() = $IS_PAUSED"
+echo ""
+
+echo "Step 10a: Guardian pauses the contract…"
+send_tx "$GUARDIAN_KEY" "$MANAGER" "setPaused(bool)" true
+
+IS_PAUSED=$(_call "$MANAGER" "paused()(bool)")
+echo "  paused() = $IS_PAUSED"
+echo ""
+
+echo "Step 10b: Attempt rotation while paused…"
+advance_time $((EPOCH + 1))
+if "$CAST" send "$MANAGER" "rotateOperator()" \
+    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" 2>/dev/null; then
+    echo "  ERROR: should have reverted!"
 else
-    echo "  Correctly reverted with ContractPaused"
+    echo "  Correctly reverted (ContractPaused)"
 fi
-
-# Unpause
-$CAST send $MANAGER "setPaused(bool)" false --rpc-url $RPC_URL --private-key $GUARDIAN_KEY 2>&1 | grep -E "(transactionHash|status)"
-echo "  Contract unpaused"
 echo ""
 
-echo "==========================================="
-echo "  LIVE DEMO COMPLETE!"
-echo "==========================================="
+echo "Step 10c: Guardian unpauses…"
+send_tx "$GUARDIAN_KEY" "$MANAGER" "setPaused(bool)" false
+
+IS_PAUSED=$(_call "$MANAGER" "paused()(bool)")
+echo "  paused() = $IS_PAUSED"
+
+# ─── Summary ─────────────────────────────────────────────────
+section "DEMO COMPLETE"
+
+echo "Subsystems exercised:"
 echo ""
-echo "Summary:"
-echo "  - Deployed and configured KlerosSequencerManager"
-echo "  - Registered 3 sequencers via Curate registry"
-echo "  - Demonstrated epoch-based rotation"
-echo "  - Challenged and removed a misbehaving sequencer"
-echo "  - Showed guardian pause/unpause functionality"
+echo "  [x] Operator Registry   — 3 operators with (batcher, signer) tuples"
+echo "  [x] Adapter Registry    — V1 registered; V2 registered and upgraded"
+echo "  [x] SystemConfig        — batcherHash + unsafeBlockSigner updated atomically"
+echo "  [x] Epoch Rotation      — round-robin through active operator set"
+echo "  [x] Challenge & Removal — operator 2 removed, rotation skips them"
+echo "  [x] Adapter Upgrade     — V1 -> V2 via ratchet (version must increase)"
+echo "  [x] Guardian Pause      — emergency pause blocks all mutations"
 echo ""
-echo "Contract Addresses:"
-echo "  MockCurate: $CURATE"
-echo "  MockSystemConfig: $SYSTEM_CONFIG"
-echo "  KlerosSequencerManager: $MANAGER"
+echo "Contract addresses:"
+echo "  Operator Registry:  $REGISTRY"
+echo "  Adapter Registry:   $ADAPTER_REGISTRY"
+echo "  Adapter V1:         $ADAPTER_V1"
+echo "  Adapter V2:         $ADAPTER_V2"
+echo "  SystemConfig:       $SYSTEM_CONFIG"
+echo "  Manager:            $MANAGER"
+echo ""

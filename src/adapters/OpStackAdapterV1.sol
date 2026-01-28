@@ -34,14 +34,14 @@ contract OpStackAdapterV1 is IOpStackAdapter {
     /**
      * @inheritdoc IOpStackAdapter
      */
-    function version() external pure override returns (uint256) {
+    function version() external pure virtual override returns (uint256) {
         return VERSION;
     }
 
     /**
      * @inheritdoc IOpStackAdapter
      */
-    function adapterInfo() external pure override returns (string memory name, string memory description) {
+    function adapterInfo() external pure virtual override returns (string memory name, string memory description) {
         return (NAME, DESCRIPTION);
     }
 

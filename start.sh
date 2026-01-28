@@ -339,78 +339,17 @@ show_status() {
 
 run_demo() {
     print_header
-    echo -e "${CYAN}Running Sequencer Rotation Demo${NC}"
+    echo -e "${CYAN}Running Full System Demo${NC}"
+    echo ""
+    echo "This runs a comprehensive, self-contained demo that exercises"
+    echo "every subsystem: operator registry, adapter registry, rotation,"
+    echo "challenge/removal, adapter upgrade, and guardian pause."
     echo ""
 
-    # Check if cast is available
-    if ! command -v cast &> /dev/null; then
-        echo -e "${RED}Error: 'cast' not found${NC}"
-        echo "Please install Foundry: https://book.getfoundry.sh/getting-started/installation"
-        exit 1
-    fi
+    check_foundry
 
-    # Get manager address
-    local MANAGER=$(get_address "KlerosSequencerManager")
-
-    if [ -z "$MANAGER" ] || [ "$MANAGER" = "" ]; then
-        echo -e "${RED}Error: Contracts not deployed${NC}"
-        echo "Start the devnet first: ./start.sh local"
-        exit 1
-    fi
-
-    echo "KlerosSequencerManager: $MANAGER"
-    echo ""
-
-    local L1_RPC="http://localhost:8545"
-    local DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-
-    show_operator() {
-        local batcher=$(cast call "$MANAGER" "currentSequencer()(address)" --rpc-url "$L1_RPC" 2>/dev/null)
-        echo -e "  Current Batcher: ${GREEN}$batcher${NC}"
-    }
-
-    advance_time() {
-        curl -s -X POST --data "{\"jsonrpc\":\"2.0\",\"method\":\"evm_increaseTime\",\"params\":[$1],\"id\":1}" \
-             -H "Content-Type: application/json" "$L1_RPC" > /dev/null
-        curl -s -X POST --data '{"jsonrpc":"2.0","method":"evm_mine","params":[],"id":1}' \
-             -H "Content-Type: application/json" "$L1_RPC" > /dev/null
-    }
-
-    echo "Initial state:"
-    show_operator
-    echo ""
-
-    # Show active operators
-    echo "Active operators (batcher addresses):"
-    local count=$(cast call "$MANAGER" "activeSequencerCount()(uint256)" --rpc-url "$L1_RPC" 2>/dev/null)
-    echo "  Total: $count operators"
-    echo ""
-
-    # Perform rotations
-    for i in 1 2 3; do
-        echo -e "${YELLOW}>>> Rotation $i${NC}"
-        advance_time 15  # Epoch is 10 seconds
-
-        cast send "$MANAGER" "rotateSequencer()" \
-            --rpc-url "$L1_RPC" \
-            --private-key "$DEPLOYER_KEY" \
-            > /dev/null 2>&1
-
-        show_operator
-        echo ""
-        sleep 1
-    done
-
-    echo -e "${GREEN}Demo complete!${NC}"
-    echo ""
-    echo "The batcher has rotated through the active set in round-robin order."
-    echo "In production, this would be called by a keeper bot each epoch."
-    echo ""
-    echo "In a full L2 setup (./start.sh l2), rotating the batcher would:"
-    echo "  1. Update SystemConfig.batcherHash on L1"
-    echo "  2. Update SystemConfig.unsafeBlockSigner on L1"
-    echo "  3. The new operator can now submit batches and sign blocks"
-    echo ""
+    # The demo script is self-contained (starts its own Anvil if needed)
+    exec bash script/run_demo.sh
 }
 
 # =============================================================

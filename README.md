@@ -489,13 +489,13 @@ op/
 │   └── mocks/
 │       ├── MockCurate.sol            # Test Kleros Curate mock
 │       ├── MockPermanentGTCRHybrid.sol # Test Hybrid PGTCR mock
-│       └── MockSystemConfig.sol      # Test SystemConfig mock
+│       ├── MockSystemConfig.sol      # Test SystemConfig mock
+│       └── MockAdapterV2.sol         # V2 adapter stub (for demo/testing)
 ├── script/
-│   ├── DeployLocal.s.sol             # Local Anvil deployment
-│   ├── DeployL2.s.sol                # Full OP Stack L2 deployment
-│   ├── DeploySepolia.s.sol           # Sepolia deployment
+│   ├── DeployLocal.s.sol             # Local Anvil deployment (mocks, offline)
 │   ├── DeployRemote.s.sol            # Sepolia/Mainnet deployment (env-configured)
-│   └── Demo.s.sol                    # Interactive demo script
+│   ├── Demo.s.sol                    # Solidity demo (forge script)
+│   └── run_demo.sh                   # Full system demo (10 scenarios)
 ├── policies/
 │   ├── policy_sequencer_registry.md  # Sequencer constitutional rules
 │   └── policy_adapter_registry.md    # Adapter acceptance criteria
