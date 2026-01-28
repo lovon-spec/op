@@ -78,7 +78,10 @@ services:
         echo "  Court ID:     $$KLEROS_COURT_ID (Blockchain Technical)"
         echo ""
 
-        # Deploy using mainnet script
+        # ============================================================
+        # PHASE 1: Deploy contracts and register operators
+        # ============================================================
+        echo "=== Phase 1: Deploy and Register Operators ==="
         forge script script/DeployMainnet.s.sol:DeployMainnet \
           --rpc-url $$L1_RPC \
           --private-key $$PRIVATE_KEY \
@@ -127,6 +130,72 @@ services:
         # Also save Kleros addresses
         echo "$$KLEROS_GTCR_FACTORY" > .deployments/KlerosGTCRFactory.address
         echo "$$KLEROS_COURT" > .deployments/KlerosCourt.address
+
+        # ============================================================
+        # PHASE 2 & 3: Time advancement and operator activation
+        # (Only in test/fork mode - production requires manual steps)
+        # ============================================================
+        REGISTRY_ADDR=$$(cat .deployments/PermanentGTCRHybrid.address 2>/dev/null || echo "")
+        MANAGER_ADDR=$$(cat .deployments/KlerosSequencerManager.address 2>/dev/null || echo "")
+
+        if [ -n "$$REGISTRY_ADDR" ] && [ -n "$$MANAGER_ADDR" ]; then
+          echo ""
+          echo "=== Phase 2: Execute Requests ==="
+
+          # Extract item IDs from the deployment logs
+          # These are the keccak256 hashes of the operator data
+          ITEM_ID_1=$$(cast keccak "operator1")
+          ITEM_ID_2=$$(cast keccak "operator2")
+          ITEM_ID_3=$$(cast keccak "operator3")
+
+          echo "Item IDs:"
+          echo "  1: $$ITEM_ID_1"
+          echo "  2: $$ITEM_ID_2"
+          echo "  3: $$ITEM_ID_3"
+
+          # Advance time past submission period (300 seconds + buffer)
+          echo "Advancing time past submission period (301 seconds)..."
+          cast rpc evm_increaseTime 301 --rpc-url $$L1_RPC
+          cast rpc evm_mine --rpc-url $$L1_RPC
+
+          # Execute requests
+          echo "Executing requests..."
+          cast send $$REGISTRY_ADDR "executeRequest(bytes32)" $$ITEM_ID_1 \
+            --rpc-url $$L1_RPC --private-key $$PRIVATE_KEY || echo "Request 1 execution failed or already executed"
+          cast send $$REGISTRY_ADDR "executeRequest(bytes32)" $$ITEM_ID_2 \
+            --rpc-url $$L1_RPC --private-key $$PRIVATE_KEY || echo "Request 2 execution failed or already executed"
+          cast send $$REGISTRY_ADDR "executeRequest(bytes32)" $$ITEM_ID_3 \
+            --rpc-url $$L1_RPC --private-key $$PRIVATE_KEY || echo "Request 3 execution failed or already executed"
+
+          echo ""
+          echo "=== Phase 3: Sync and Rotate ==="
+
+          # Advance time past reinclusion period (300 seconds + buffer)
+          echo "Advancing time past reinclusion period (301 seconds)..."
+          cast rpc evm_increaseTime 301 --rpc-url $$L1_RPC
+          cast rpc evm_mine --rpc-url $$L1_RPC
+
+          # Sync operators
+          echo "Syncing operators to manager..."
+          cast send $$MANAGER_ADDR "syncAddOperator(bytes32)" $$ITEM_ID_1 \
+            --rpc-url $$L1_RPC --private-key $$PRIVATE_KEY || echo "Sync 1 failed"
+          cast send $$MANAGER_ADDR "syncAddOperator(bytes32)" $$ITEM_ID_2 \
+            --rpc-url $$L1_RPC --private-key $$PRIVATE_KEY || echo "Sync 2 failed"
+          cast send $$MANAGER_ADDR "syncAddOperator(bytes32)" $$ITEM_ID_3 \
+            --rpc-url $$L1_RPC --private-key $$PRIVATE_KEY || echo "Sync 3 failed"
+
+          # Rotate operator
+          echo "Performing first rotation..."
+          cast send $$MANAGER_ADDR "rotateOperator()" \
+            --rpc-url $$L1_RPC --private-key $$PRIVATE_KEY || echo "Rotation failed"
+
+          # Show current operator
+          echo "Current operator:"
+          cast call $$MANAGER_ADDR "currentOperator()" --rpc-url $$L1_RPC || true
+
+          echo ""
+          echo "=== All deployment phases complete! ==="
+        fi
 
         # Generate L2 configuration
         echo ""

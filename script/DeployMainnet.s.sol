@@ -262,11 +262,12 @@ contract DeployMainnet is Script {
         // Stop initial deployment broadcast
         vm.stopBroadcast();
 
-        // In test/fork mode, register operators directly
+        // In test/fork mode, register operators (Phase 1 only)
+        // Time advancement and Phase 2 (execute/sync) must be done via shell commands
+        // because vm.rpc causes Foundry EVM state inconsistencies with Anvil
         if (!isProduction) {
-            console2.log("=== Test Mode: Registering operators ===");
-            // Pass private key to manage broadcast lifecycle around vm.warp
-            _registerTestOperators(deployerPrivateKey);
+            console2.log("=== Test Mode: Registering operators (Phase 1) ===");
+            _registerTestOperatorsPhase1(deployerPrivateKey);
         } else {
             console2.log("=== Production Mode ===");
             console2.log("Operators must be submitted through the registry.");
@@ -280,78 +281,117 @@ contract DeployMainnet is Script {
         _printSummary();
     }
 
-    function _registerTestOperators(uint256 deployerPrivateKey) internal {
+    /**
+     * @notice Phase 1: Register test operators only.
+     * @dev Time advancement must be done externally via shell commands (evm_increaseTime).
+     *      Using vm.rpc() from within Solidity causes Foundry EVM state inconsistencies.
+     */
+    function _registerTestOperatorsPhase1(uint256 deployerPrivateKey) internal {
         uint256 deposit = registry.submissionMinDeposit();
-        uint256 submissionPeriodDuration = registry.submissionPeriod();
 
         console2.log("Registering 3 test operators...");
 
-        // 1. Register Operators
         vm.startBroadcast(deployerPrivateKey);
         itemID1 = _addOperatorToRegistry("operator1", BATCHER_1, SIGNER_1, deposit);
         itemID2 = _addOperatorToRegistry("operator2", BATCHER_2, SIGNER_2, deposit);
         itemID3 = _addOperatorToRegistry("operator3", BATCHER_3, SIGNER_3, deposit);
         vm.stopBroadcast();
 
-        // 2. Time Travel using Anvil RPC (vm.warp only affects Foundry VM, not Anvil)
-        // We use evm_increaseTime and evm_mine to actually advance time on the Anvil node
-        console2.log("Fast-forwarding past submission period...");
-        _advanceTimeOnNode(submissionPeriodDuration + 1);
+        // Output item IDs for Phase 2 (shell script will use these)
+        console2.log("");
+        console2.log("=== Phase 1 Complete ===");
+        console2.log("Item IDs registered (save these for Phase 2):");
+        console2.log("  ITEM_ID_1:");
+        console2.logBytes32(itemID1);
+        console2.log("  ITEM_ID_2:");
+        console2.logBytes32(itemID2);
+        console2.log("  ITEM_ID_3:");
+        console2.logBytes32(itemID3);
+        console2.log("");
+        console2.log("Next steps (handled by shell script):");
+        console2.log("  1. Advance time past submission period (300s)");
+        console2.log("  2. Execute requests for each item");
+        console2.log("  3. Advance time past reinclusion period (300s)");
+        console2.log("  4. Sync operators and rotate");
+    }
 
-        // 3. Execute Requests
+    /**
+     * @notice Phase 2: Execute requests, sync operators, and rotate.
+     * @dev Called after shell script advances time on Anvil.
+     *      Item IDs are passed via environment variables.
+     */
+    function runPhase2() external {
+        uint256 deployerPrivateKey = vm.envOr(
+            "PRIVATE_KEY",
+            uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80)
+        );
+
+        // Get contract addresses from environment
+        address registryAddr = vm.envAddress("REGISTRY_ADDRESS");
+        address managerAddr = vm.envAddress("MANAGER_ADDRESS");
+
+        // Get item IDs from environment
+        bytes32 id1 = vm.envBytes32("ITEM_ID_1");
+        bytes32 id2 = vm.envBytes32("ITEM_ID_2");
+        bytes32 id3 = vm.envBytes32("ITEM_ID_3");
+
+        registry = PermanentGTCRHybrid(registryAddr);
+        manager = KlerosSequencerManager(managerAddr);
+
+        console2.log("=== Phase 2: Execute, Sync, and Rotate ===");
+
         vm.startBroadcast(deployerPrivateKey);
-        _executeRequest(itemID1, BATCHER_1);
-        _executeRequest(itemID2, BATCHER_2);
-        _executeRequest(itemID3, BATCHER_3);
+
+        // Execute requests
+        console2.log("Executing requests...");
+        _executeRequest(id1, BATCHER_1);
+        _executeRequest(id2, BATCHER_2);
+        _executeRequest(id3, BATCHER_3);
+
         vm.stopBroadcast();
 
-        // 4. Time Travel past reinclusion period
-        uint256 reinclusionPeriodDuration = registry.reinclusionPeriod();
-        console2.log("Fast-forwarding past reinclusion period...");
-        _advanceTimeOnNode(reinclusionPeriodDuration + 1);
+        console2.log("Phase 2a complete. Now advance time past reinclusion period.");
+    }
 
-        // 5. Sync & Rotate
+    /**
+     * @notice Phase 3: Sync operators and rotate after reinclusion period.
+     */
+    function runPhase3() external {
+        uint256 deployerPrivateKey = vm.envOr(
+            "PRIVATE_KEY",
+            uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80)
+        );
+
+        // Get contract addresses from environment
+        address managerAddr = vm.envAddress("MANAGER_ADDRESS");
+
+        // Get item IDs from environment
+        bytes32 id1 = vm.envBytes32("ITEM_ID_1");
+        bytes32 id2 = vm.envBytes32("ITEM_ID_2");
+        bytes32 id3 = vm.envBytes32("ITEM_ID_3");
+
+        manager = KlerosSequencerManager(managerAddr);
+
+        console2.log("=== Phase 3: Sync and Rotate ===");
+
         vm.startBroadcast(deployerPrivateKey);
-        console2.log("Syncing operators to manager...");
-        manager.syncAddOperator(itemID1);
-        manager.syncAddOperator(itemID2);
-        manager.syncAddOperator(itemID3);
 
+        // Sync operators
+        console2.log("Syncing operators to manager...");
+        manager.syncAddOperator(id1);
+        manager.syncAddOperator(id2);
+        manager.syncAddOperator(id3);
+
+        // Rotate
         console2.log("Performing first rotation...");
         manager.rotateOperator();
 
         KlerosSequencerManager.Operator memory current = manager.currentOperator();
         console2.log("Current operator batcher:", current.batcher);
 
-        // Final stop
         vm.stopBroadcast();
-    }
 
-    /**
-     * @notice Advances time on the connected node (Anvil) using RPC calls.
-     * @dev vm.warp() only affects Foundry's internal VM state, not the actual node.
-     *      When using --broadcast, we need to use Anvil's evm_increaseTime and evm_mine
-     *      RPC methods to actually advance the block timestamp on the node.
-     * @param _seconds The number of seconds to advance time.
-     */
-    function _advanceTimeOnNode(uint256 _seconds) internal {
-        // Fetch the RPC URL explicitly from the environment.
-        // In Docker, L1_RPC points to http://l1:8545 (the Anvil container).
-        // Without explicit URL, vm.rpc may default to localhost which is wrong in Docker.
-        string memory rpcUrl = vm.envOr("L1_RPC", string("http://localhost:8545"));
-
-        // Call Anvil's evm_increaseTime RPC method
-        string memory increaseTimeParams = string.concat("[", vm.toString(_seconds), "]");
-        vm.rpc(rpcUrl, "evm_increaseTime", increaseTimeParams);
-
-        // Mine a block to apply the time change
-        vm.rpc(rpcUrl, "evm_mine", "[]");
-
-        // Also update Foundry's VM state to keep them in sync
-        vm.warp(block.timestamp + _seconds);
-        vm.roll(block.number + 1);
-
-        console2.log("  Advanced time by", _seconds, "seconds");
+        console2.log("=== All phases complete! ===");
     }
 
     function _addOperatorToRegistry(
