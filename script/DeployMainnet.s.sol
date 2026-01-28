@@ -293,11 +293,10 @@ contract DeployMainnet is Script {
         itemID3 = _addOperatorToRegistry("operator3", BATCHER_3, SIGNER_3, deposit);
         vm.stopBroadcast();
 
-        // 2. Time Travel & Block Mine (CRITICAL FIX)
+        // 2. Time Travel using Anvil RPC (vm.warp only affects Foundry VM, not Anvil)
+        // We use evm_increaseTime and evm_mine to actually advance time on the Anvil node
         console2.log("Fast-forwarding past submission period...");
-        uint256 newTime1 = block.timestamp + submissionPeriodDuration + 1;
-        vm.warp(newTime1);
-        vm.roll(block.number + 1); // Mine a block to persist time on the fork
+        _advanceTimeOnNode(submissionPeriodDuration + 1);
 
         // 3. Execute Requests
         vm.startBroadcast(deployerPrivateKey);
@@ -306,12 +305,10 @@ contract DeployMainnet is Script {
         _executeRequest(itemID3, BATCHER_3);
         vm.stopBroadcast();
 
-        // 4. Time Travel & Block Mine (CRITICAL FIX)
+        // 4. Time Travel past reinclusion period
         uint256 reinclusionPeriodDuration = registry.reinclusionPeriod();
         console2.log("Fast-forwarding past reinclusion period...");
-        uint256 newTime2 = block.timestamp + reinclusionPeriodDuration + 1;
-        vm.warp(newTime2);
-        vm.roll(block.number + 1); // Mine a block to persist time on the fork
+        _advanceTimeOnNode(reinclusionPeriodDuration + 1);
 
         // 5. Sync & Rotate
         vm.startBroadcast(deployerPrivateKey);
@@ -328,6 +325,28 @@ contract DeployMainnet is Script {
 
         // Final stop
         vm.stopBroadcast();
+    }
+
+    /**
+     * @notice Advances time on the connected node (Anvil) using RPC calls.
+     * @dev vm.warp() only affects Foundry's internal VM state, not the actual node.
+     *      When using --broadcast, we need to use Anvil's evm_increaseTime and evm_mine
+     *      RPC methods to actually advance the block timestamp on the node.
+     * @param _seconds The number of seconds to advance time.
+     */
+    function _advanceTimeOnNode(uint256 _seconds) internal {
+        // Call Anvil's evm_increaseTime RPC method
+        string memory increaseTimeParams = string.concat("[", vm.toString(_seconds), "]");
+        vm.rpc("evm_increaseTime", increaseTimeParams);
+
+        // Mine a block to apply the time change
+        vm.rpc("evm_mine", "[]");
+
+        // Also update Foundry's VM state to keep them in sync
+        vm.warp(block.timestamp + _seconds);
+        vm.roll(block.number + 1);
+
+        console2.log("  Advanced time by", _seconds, "seconds");
     }
 
     function _addOperatorToRegistry(
