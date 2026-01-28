@@ -3,22 +3,12 @@ pragma solidity ^0.8.20;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
-import {PermanentGTCRHybrid} from "../src/PermanentGTCRHybrid.sol";
+import {PermanentGTCRHybrid, IERC20} from "../src/PermanentGTCRHybrid.sol";
 import {IPermanentGTCRHybrid} from "../src/interfaces/IPermanentGTCRHybrid.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
 import {MockCurate} from "../test/mocks/MockCurate.sol";
 import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 import {IArbitrator} from "../src/interfaces/IArbitrator.sol";
-
-/**
- * @title IERC20
- * @notice Minimal ERC20 interface matching PermanentGTCRHybrid.
- */
-interface IERC20 {
-    function transfer(address to, uint256 amount) external returns (bool);
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
-}
 
 /**
  * @title DeployMainnet
