@@ -79,4 +79,11 @@ interface IArbitrator {
      * @return end The end of the appeal period.
      */
     function appealPeriod(uint256 _disputeID) external view returns (uint256 start, uint256 end);
+
+    /**
+     * @notice Appeals a ruling.
+     * @param _disputeID The ID of the dispute to appeal.
+     * @param _extraData Additional data for the arbitrator.
+     */
+    function appeal(uint256 _disputeID, bytes calldata _extraData) external payable;
 }
