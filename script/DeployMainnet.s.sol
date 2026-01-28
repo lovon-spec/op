@@ -335,7 +335,7 @@ contract DeployMainnet is Script {
         bytes32 id2 = vm.envBytes32("ITEM_ID_2");
         bytes32 id3 = vm.envBytes32("ITEM_ID_3");
 
-        registry = PermanentGTCRHybrid(registryAddr);
+        registry = PermanentGTCRHybrid(payable(registryAddr));
         manager = KlerosSequencerManager(managerAddr);
 
         console2.log("=== Phase 2: Execute, Sync, and Rotate ===");
