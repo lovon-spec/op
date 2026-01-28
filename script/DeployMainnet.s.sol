@@ -259,6 +259,9 @@ contract DeployMainnet is Script {
         console2.log("SystemConfig ownership transferred to manager");
         console2.log("");
 
+        // Stop initial deployment broadcast
+        vm.stopBroadcast();
+
         // In test/fork mode, register operators directly
         if (!isProduction) {
             console2.log("=== Test Mode: Registering operators ===");
@@ -271,7 +274,6 @@ contract DeployMainnet is Script {
             console2.log("2. Wait for submission period");
             console2.log("3. Call registry.executeRequest(itemID)");
             console2.log("4. Call manager.syncAddOperator(itemID)");
-            vm.stopBroadcast();
         }
 
         // Output deployment summary
@@ -283,60 +285,46 @@ contract DeployMainnet is Script {
         uint256 submissionPeriodDuration = registry.submissionPeriod();
 
         console2.log("Registering 3 test operators...");
-        console2.log("Deposit per operator:", deposit / 1e15, "finney");
 
-        // Add operators to the registry with explicit operational keys
-        // (broadcast is active from run())
+        // 1. Register Operators
+        vm.startBroadcast(deployerPrivateKey);
         itemID1 = _addOperatorToRegistry("operator1", BATCHER_1, SIGNER_1, deposit);
         itemID2 = _addOperatorToRegistry("operator2", BATCHER_2, SIGNER_2, deposit);
         itemID3 = _addOperatorToRegistry("operator3", BATCHER_3, SIGNER_3, deposit);
-
-        // Stop broadcast to perform vm.warp
         vm.stopBroadcast();
 
-        // Fast-forward time past submission period (only works in fork/test mode)
+        // 2. Time Travel & Block Mine (CRITICAL FIX)
         console2.log("Fast-forwarding past submission period...");
-        vm.warp(block.timestamp + submissionPeriodDuration + 1);
+        uint256 newTime1 = block.timestamp + submissionPeriodDuration + 1;
+        vm.warp(newTime1);
+        vm.roll(block.number + 1); // Mine a block to persist time on the fork
 
-        // Restart broadcast for execute requests
+        // 3. Execute Requests
         vm.startBroadcast(deployerPrivateKey);
-
-        // Execute requests to finalize registration
         _executeRequest(itemID1, BATCHER_1);
         _executeRequest(itemID2, BATCHER_2);
         _executeRequest(itemID3, BATCHER_3);
-
-        // Stop broadcast for next warp
         vm.stopBroadcast();
 
-        // Fast-forward past reinclusion period (required for maturity)
+        // 4. Time Travel & Block Mine (CRITICAL FIX)
         uint256 reinclusionPeriodDuration = registry.reinclusionPeriod();
         console2.log("Fast-forwarding past reinclusion period...");
-        vm.warp(block.timestamp + reinclusionPeriodDuration + 1);
+        uint256 newTime2 = block.timestamp + reinclusionPeriodDuration + 1;
+        vm.warp(newTime2);
+        vm.roll(block.number + 1); // Mine a block to persist time on the fork
 
-        // Restart broadcast for sync and rotation
+        // 5. Sync & Rotate
         vm.startBroadcast(deployerPrivateKey);
-
-        // Sync operators to manager using item IDs
         console2.log("Syncing operators to manager...");
         manager.syncAddOperator(itemID1);
         manager.syncAddOperator(itemID2);
         manager.syncAddOperator(itemID3);
 
-        console2.log("Operators synced:");
-        console2.log("  Operator 1: batcher=", BATCHER_1, "signer=", SIGNER_1);
-        console2.log("  Operator 2: batcher=", BATCHER_2, "signer=", SIGNER_2);
-        console2.log("  Operator 3: batcher=", BATCHER_3, "signer=", SIGNER_3);
-
-        // Perform first rotation
-        console2.log("");
         console2.log("Performing first rotation...");
         manager.rotateOperator();
 
         KlerosSequencerManager.Operator memory current = manager.currentOperator();
-        console2.log("Current operator:");
-        console2.log("  Batcher:", current.batcher);
-        console2.log("  Unsafe signer:", current.unsafeSigner);
+        console2.log("Current operator batcher:", current.batcher);
 
         // Final stop
         vm.stopBroadcast();

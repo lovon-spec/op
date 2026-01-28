@@ -419,6 +419,7 @@ contract PermanentGTCRHybrid is IArbitrable, IEvidence {
         uint256 challengeID = item.challengeCount;
         item.challengeCount++;
         item.status = Status.Disputed;
+        // forge-lint: disable-next-line(unsafe-typecast)
         item.arbitrationDeposit = uint128(arbitrationCost);
 
         Challenge storage challenge = challenges[_itemID][challengeID];
@@ -767,7 +768,7 @@ contract PermanentGTCRHybrid is IArbitrable, IEvidence {
 
     // ============ View Functions ============
 
-    function itemCount() external view returns (uint256) {
+    function itemCount() external pure returns (uint256) {
         // Note: Original uses itemList array, simplified here
         return 0; // Would need to track separately
     }
@@ -847,7 +848,7 @@ contract PermanentGTCRHybrid is IArbitrable, IEvidence {
         } else {
             // ERC20 token
             uint256 balanceBefore = token.balanceOf(address(this));
-            token.transferFrom(msg.sender, address(this), _amount);
+            require(token.transferFrom(msg.sender, address(this), _amount), "Transfer failed");
             uint256 balanceAfter = token.balanceOf(address(this));
             return balanceAfter - balanceBefore;
         }
@@ -859,7 +860,7 @@ contract PermanentGTCRHybrid is IArbitrable, IEvidence {
         if (address(token) == address(0)) {
             _sendValue(_to, _amount);
         } else {
-            token.transfer(_to, _amount);
+            require(token.transfer(_to, _amount), "Transfer failed");
         }
     }
 
