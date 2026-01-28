@@ -335,12 +335,17 @@ contract DeployMainnet is Script {
      * @param _seconds The number of seconds to advance time.
      */
     function _advanceTimeOnNode(uint256 _seconds) internal {
+        // Fetch the RPC URL explicitly from the environment.
+        // In Docker, L1_RPC points to http://l1:8545 (the Anvil container).
+        // Without explicit URL, vm.rpc may default to localhost which is wrong in Docker.
+        string memory rpcUrl = vm.envOr("L1_RPC", string("http://localhost:8545"));
+
         // Call Anvil's evm_increaseTime RPC method
         string memory increaseTimeParams = string.concat("[", vm.toString(_seconds), "]");
-        vm.rpc("evm_increaseTime", increaseTimeParams);
+        vm.rpc(rpcUrl, "evm_increaseTime", increaseTimeParams);
 
         // Mine a block to apply the time change
-        vm.rpc("evm_mine", "[]");
+        vm.rpc(rpcUrl, "evm_mine", "[]");
 
         // Also update Foundry's VM state to keep them in sync
         vm.warp(block.timestamp + _seconds);
