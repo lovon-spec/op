@@ -5,6 +5,8 @@ import {Script, console2} from "forge-std/Script.sol";
 import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
 import {MockCurate} from "../test/mocks/MockCurate.sol";
+import {MockPermanentGTCRHybrid} from "../test/mocks/MockPermanentGTCRHybrid.sol";
+import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 
 /**
  * @title Demo
@@ -46,8 +48,10 @@ contract Demo is Script {
 
     uint256 constant EPOCH_DURATION = 10; // 10 seconds for demo
 
-    MockCurate public curate;
+    MockPermanentGTCRHybrid public registry;
+    MockCurate public adapterRegistry;
     MockSystemConfig public systemConfig;
+    OpStackAdapterV1 public adapter;
     KlerosSequencerManager public manager;
 
     function run() external {
@@ -88,7 +92,9 @@ contract Demo is Script {
         console2.log("===========================================");
         console2.log("");
         console2.log("Contract Addresses:");
-        console2.log("  MockCurate:", address(curate));
+        console2.log("  Operator Registry:", address(registry));
+        console2.log("  Adapter Registry:", address(adapterRegistry));
+        console2.log("  Adapter:", address(adapter));
         console2.log("  MockSystemConfig:", address(systemConfig));
         console2.log("  KlerosSequencerManager:", address(manager));
     }
@@ -99,15 +105,31 @@ contract Demo is Script {
 
         vm.startBroadcast(DEPLOYER_KEY);
 
-        curate = new MockCurate();
-        console2.log("  MockCurate deployed at:", address(curate));
+        // Deploy operator registry (PermanentGTCRHybrid)
+        registry = new MockPermanentGTCRHybrid();
+        console2.log("  MockPermanentGTCRHybrid (operator registry) deployed at:", address(registry));
+
+        // Deploy adapter registry (Curate for adapter governance)
+        adapterRegistry = new MockCurate();
+        console2.log("  MockCurate (adapter registry) deployed at:", address(adapterRegistry));
+
+        // Deploy adapter
+        adapter = new OpStackAdapterV1();
+        console2.log("  OpStackAdapterV1 deployed at:", address(adapter));
+
+        // Register adapter in adapter registry
+        bytes memory adapterData = abi.encode(address(adapter));
+        adapterRegistry.registerItemDirectly(adapterData);
+        console2.log("  Adapter registered in adapter registry");
 
         systemConfig = new MockSystemConfig();
         console2.log("  MockSystemConfig deployed at:", address(systemConfig));
 
         manager = new KlerosSequencerManager(
-            address(curate),
-            address(systemConfig),
+            address(registry),       // Operator registry
+            address(systemConfig),   // SystemConfig
+            address(adapterRegistry),// Adapter registry
+            address(adapter),        // Initial adapter
             EPOCH_DURATION,
             GUARDIAN
         );
@@ -121,24 +143,24 @@ contract Demo is Script {
     }
 
     function _step2_registerOperators() internal {
-        console2.log("STEP 2: Registering operators in Curate...");
+        console2.log("STEP 2: Registering operators in registry...");
         console2.log("-------------------------------------------");
         console2.log("  Each operator is a tuple: (batcher, unsafeSigner)");
         console2.log("");
 
         vm.startBroadcast(DEPLOYER_KEY);
 
-        curate.registerOperatorDirectly(BATCHER_1, SIGNER_1);
+        registry.registerOperatorDirectly(BATCHER_1, SIGNER_1);
         console2.log("  Registered Operator 1:");
         console2.log("    batcher:", BATCHER_1);
         console2.log("    signer: ", SIGNER_1);
 
-        curate.registerOperatorDirectly(BATCHER_2, SIGNER_2);
+        registry.registerOperatorDirectly(BATCHER_2, SIGNER_2);
         console2.log("  Registered Operator 2:");
         console2.log("    batcher:", BATCHER_2);
         console2.log("    signer: ", SIGNER_2);
 
-        curate.registerOperatorDirectly(BATCHER_3, SIGNER_3);
+        registry.registerOperatorDirectly(BATCHER_3, SIGNER_3);
         console2.log("  Registered Operator 3:");
         console2.log("    batcher:", BATCHER_3);
         console2.log("    signer: ", SIGNER_3);
@@ -222,10 +244,10 @@ contract Demo is Script {
 
         vm.startBroadcast(CHALLENGER_KEY);
 
-        // Simulate a challenge in Curate (sets status to ClearingRequested)
-        curate.setOperatorClearingRequested(BATCHER_2, SIGNER_2);
+        // Simulate a challenge in registry (sets status to Absent/removed)
+        registry.setOperatorClearingRequested(BATCHER_2, SIGNER_2);
         console2.log("  Challenge submitted for Operator 2");
-        console2.log("  Status changed to ClearingRequested");
+        console2.log("  Status changed to Absent (removed)");
 
         // Anyone can now sync-remove the challenged operator
         manager.syncRemoveOperator(BATCHER_2, SIGNER_2);

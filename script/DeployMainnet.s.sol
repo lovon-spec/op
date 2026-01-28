@@ -305,6 +305,11 @@ contract DeployMainnet is Script {
         _executeRequest(itemID2, BATCHER_2);
         _executeRequest(itemID3, BATCHER_3);
 
+        // Fast-forward past reinclusion period (required for maturity)
+        uint256 reinclusionPeriodDuration = registry.reinclusionPeriod();
+        console2.log("Fast-forwarding past reinclusion period...");
+        vm.warp(block.timestamp + reinclusionPeriodDuration + 1);
+
         // Sync operators to manager using item IDs
         console2.log("Syncing operators to manager...");
         manager.syncAddOperator(itemID1);

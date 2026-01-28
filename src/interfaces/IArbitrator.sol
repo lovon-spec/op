@@ -71,4 +71,12 @@ interface IArbitrator {
      * @return status The status (0: waiting, 1: appealable, 2: solved).
      */
     function disputeStatus(uint256 _disputeID) external view returns (uint256 status);
+
+    /**
+     * @notice Gets the appeal period for a dispute.
+     * @param _disputeID The ID of the dispute.
+     * @return start The start of the appeal period.
+     * @return end The end of the appeal period.
+     */
+    function appealPeriod(uint256 _disputeID) external view returns (uint256 start, uint256 end);
 }

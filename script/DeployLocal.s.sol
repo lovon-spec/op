@@ -5,13 +5,17 @@ import {Script, console2} from "forge-std/Script.sol";
 import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
 import {MockCurate} from "../test/mocks/MockCurate.sol";
+import {MockPermanentGTCRHybrid} from "../test/mocks/MockPermanentGTCRHybrid.sol";
+import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 
 /**
  * @title DeployLocal
- * @notice Deployment script for local Anvil testing.
+ * @notice Deployment script for local Anvil testing with Green Adapter Architecture.
  *
  * This deploys:
- * - MockCurate (simulating Kleros Curate Classic)
+ * - MockPermanentGTCRHybrid (simulating Kleros operator registry)
+ * - MockCurate (simulating Kleros adapter registry)
+ * - OpStackAdapterV1 (the sequencer rotation adapter)
  * - MockSystemConfig (simulating OP Stack SystemConfig)
  * - KlerosSequencerManager (the main contract)
  *
@@ -42,8 +46,10 @@ contract DeployLocal is Script {
 
     uint256 constant EPOCH_DURATION = 10; // 10 seconds for demo
 
-    MockCurate public curate;
+    MockPermanentGTCRHybrid public registry;
+    MockCurate public adapterRegistry;
     MockSystemConfig public systemConfig;
+    OpStackAdapterV1 public adapter;
     KlerosSequencerManager public manager;
 
     function run() external {
@@ -54,23 +60,40 @@ contract DeployLocal is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // Deploy MockCurate (simulating Kleros registry)
-        curate = new MockCurate();
-        console2.log("MockCurate deployed at:", address(curate));
+        // Deploy operator registry (PermanentGTCRHybrid)
+        registry = new MockPermanentGTCRHybrid();
+        console2.log("MockPermanentGTCRHybrid (operator registry) deployed at:", address(registry));
+
+        // Deploy adapter registry (Curate for adapter governance)
+        adapterRegistry = new MockCurate();
+        console2.log("MockCurate (adapter registry) deployed at:", address(adapterRegistry));
+
+        // Deploy adapter
+        adapter = new OpStackAdapterV1();
+        console2.log("OpStackAdapterV1 deployed at:", address(adapter));
+
+        // Register adapter in adapter registry
+        bytes memory adapterData = abi.encode(address(adapter));
+        adapterRegistry.registerItemDirectly(adapterData);
+        console2.log("Adapter registered in adapter registry");
 
         // Deploy MockSystemConfig (simulating OP Stack SystemConfig)
         systemConfig = new MockSystemConfig();
         console2.log("MockSystemConfig deployed at:", address(systemConfig));
 
-        // Deploy KlerosSequencerManager
+        // Deploy KlerosSequencerManager with Green Adapter Architecture
         manager = new KlerosSequencerManager(
-            address(curate),
-            address(systemConfig),
+            address(registry),       // Operator registry
+            address(systemConfig),   // SystemConfig
+            address(adapterRegistry),// Adapter registry
+            address(adapter),        // Initial adapter
             EPOCH_DURATION,
             GUARDIAN
         );
         console2.log("KlerosSequencerManager deployed at:", address(manager));
-        console2.log("  Registry:", address(curate));
+        console2.log("  Operator Registry:", address(registry));
+        console2.log("  Adapter Registry:", address(adapterRegistry));
+        console2.log("  Adapter:", address(adapter));
         console2.log("  SystemConfig:", address(systemConfig));
         console2.log("  Epoch Duration:", EPOCH_DURATION, "seconds");
         console2.log("  Guardian:", GUARDIAN);
@@ -81,7 +104,7 @@ contract DeployLocal is Script {
 
         // Register test operators in the mock registry
         // Each operator is a tuple of (batcher, unsafeSigner)
-        console2.log("\nRegistering operators in Kleros Curate:");
+        console2.log("\nRegistering operators in operator registry:");
         _registerOperator(BATCHER_1, SIGNER_1, 1);
         _registerOperator(BATCHER_2, SIGNER_2, 2);
         _registerOperator(BATCHER_3, SIGNER_3, 3);
@@ -109,7 +132,9 @@ contract DeployLocal is Script {
 
         // Output deployment info
         console2.log("\n=== Deployment Summary ===");
-        console2.log("MockCurate:", address(curate));
+        console2.log("Operator Registry:", address(registry));
+        console2.log("Adapter Registry:", address(adapterRegistry));
+        console2.log("Adapter:", address(adapter));
         console2.log("MockSystemConfig:", address(systemConfig));
         console2.log("KlerosSequencerManager:", address(manager));
         console2.log("\nTo rotate operator (after epoch ends):");
@@ -119,7 +144,7 @@ contract DeployLocal is Script {
     }
 
     function _registerOperator(address batcher, address unsafeSigner, uint256 num) internal {
-        curate.registerOperatorDirectly(batcher, unsafeSigner);
+        registry.registerOperatorDirectly(batcher, unsafeSigner);
         console2.log("  Operator", num, "registered: batcher=", batcher);
     }
 }

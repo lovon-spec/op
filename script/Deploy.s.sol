@@ -6,7 +6,7 @@ import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
 
 /**
  * @title Deploy
- * @notice Deployment script for KlerosSequencerManager.
+ * @notice Deployment script for KlerosSequencerManager with Green Adapter Architecture.
  *
  * Usage:
  *   forge script script/Deploy.s.sol:Deploy \
@@ -17,8 +17,10 @@ import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
  *
  * Required environment variables:
  *   - PRIVATE_KEY: Deployer private key
- *   - REGISTRY: Address of Kleros Curate Classic registry
+ *   - REGISTRY: Address of Kleros PermanentGTCRHybrid registry (operators)
  *   - SYSTEM_CONFIG: Address of OP Stack SystemConfig
+ *   - ADAPTER_REGISTRY: Address of Kleros Curate registry (adapters)
+ *   - INITIAL_ADAPTER: Address of initial OpStackAdapter
  *   - EPOCH_DURATION: Duration of each epoch in seconds
  *   - GUARDIAN: Address of guardian (can be 0x0 to disable)
  */
@@ -27,12 +29,16 @@ contract Deploy is Script {
         // Load configuration from environment
         address registry = vm.envAddress("REGISTRY");
         address systemConfig = vm.envAddress("SYSTEM_CONFIG");
+        address adapterRegistry = vm.envAddress("ADAPTER_REGISTRY");
+        address initialAdapter = vm.envAddress("INITIAL_ADAPTER");
         uint256 epochDuration = vm.envUint("EPOCH_DURATION");
         address guardian = vm.envAddress("GUARDIAN");
 
         console2.log("Deploying KlerosSequencerManager with:");
-        console2.log("  Registry:", registry);
+        console2.log("  Registry (operators):", registry);
         console2.log("  SystemConfig:", systemConfig);
+        console2.log("  Adapter Registry:", adapterRegistry);
+        console2.log("  Initial Adapter:", initialAdapter);
         console2.log("  Epoch Duration:", epochDuration);
         console2.log("  Guardian:", guardian);
 
@@ -41,6 +47,8 @@ contract Deploy is Script {
         KlerosSequencerManager manager = new KlerosSequencerManager(
             registry,
             systemConfig,
+            adapterRegistry,
+            initialAdapter,
             epochDuration,
             guardian
         );
