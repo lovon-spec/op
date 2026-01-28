@@ -3,16 +3,18 @@
 # Constitutional L2 - Quick Start Script
 #
 # Usage:
-#   ./start.sh              # Start local devnet (L1 only)
-#   ./start.sh local        # Start local devnet with Anvil L1
+#   ./start.sh              # Start local devnet (L1 only, mocks, no internet needed)
+#   ./start.sh local        # Same as above
 #   ./start.sh l2           # Start full L2 stack (L1 + op-geth + op-node + op-batcher)
 #   ./start.sh stop         # Stop all services
 #   ./start.sh logs         # View logs
 #   ./start.sh status       # Show status
 #   ./start.sh demo         # Run rotation demo
 #   ./start.sh clean        # Clean all data and start fresh
-#   ./start.sh mainnet-fork # Test on forked mainnet with real Kleros
-#   ./start.sh mainnet      # Deploy to real mainnet (requires .env.mainnet)
+#
+# Remote deployments (no Docker, requires Foundry + funded wallet):
+#   ./start.sh sepolia      # Deploy to Sepolia (requires .env.sepolia)
+#   ./start.sh mainnet      # Deploy to Mainnet (requires .env.mainnet)
 #
 
 set -e
@@ -39,8 +41,8 @@ print_header() {
 print_usage() {
     echo "Usage: $0 [command]"
     echo ""
-    echo "Commands:"
-    echo "  local     Start L1 devnet and deploy contracts (default)"
+    echo "Local Commands (Docker, offline-capable):"
+    echo "  local     Start L1 devnet and deploy mock contracts (default)"
     echo "  l2        Start full L2 stack (includes op-geth, op-node, op-batcher)"
     echo "  stop      Stop all services"
     echo "  logs      View logs (follow mode)"
@@ -48,9 +50,9 @@ print_usage() {
     echo "  demo      Run sequencer rotation demo"
     echo "  clean     Clean all data and start fresh"
     echo ""
-    echo "Mainnet Commands:"
-    echo "  mainnet-fork  Fork mainnet with real Kleros contracts (no ETH needed)"
-    echo "  mainnet       Deploy to real mainnet (requires .env.mainnet)"
+    echo "Remote Commands (no Docker, requires Foundry + RPC):"
+    echo "  sepolia   Deploy to Sepolia testnet (requires .env.sepolia)"
+    echo "  mainnet   Deploy to Ethereum mainnet (requires .env.mainnet)"
     echo ""
     echo "  help      Show this help message"
     echo ""
@@ -64,6 +66,19 @@ check_docker() {
     fi
     if ! docker compose version &> /dev/null; then
         echo -e "${RED}Error: Docker Compose is not installed${NC}"
+        exit 1
+    fi
+}
+
+check_foundry() {
+    if ! command -v forge &> /dev/null; then
+        echo -e "${RED}Error: Foundry (forge) is not installed${NC}"
+        echo "Please install Foundry: https://book.getfoundry.sh/getting-started/installation"
+        exit 1
+    fi
+    if ! command -v cast &> /dev/null; then
+        echo -e "${RED}Error: Foundry (cast) is not installed${NC}"
+        echo "Please install Foundry: https://book.getfoundry.sh/getting-started/installation"
         exit 1
     fi
 }
@@ -130,6 +145,10 @@ get_address() {
     # Read address from individual .address file (no Python/jq needed)
     docker compose exec -T deployer cat /app/.deployments/"$1".address 2>/dev/null || echo ""
 }
+
+# =============================================================
+# Local Commands (Docker-based, offline-capable)
+# =============================================================
 
 start_local() {
     print_header
@@ -395,222 +414,156 @@ run_demo() {
 }
 
 # =============================================================
-# Mainnet Fork Functions
+# Remote Deployment Commands (no Docker)
 # =============================================================
 
-COMPOSE_MAINNET="docker compose -f docker-compose.yml -f docker-compose.mainnet.yml"
+deploy_remote() {
+    local MODE="$1"        # "sepolia" or "mainnet"
+    local ENV_FILE=".env.${MODE}"
 
-# Default mainnet RPC (can be overridden via MAINNET_RPC_URL env var)
-DEFAULT_MAINNET_RPC="https://mainnet.infura.io/v3/cd6912e033cd4849a244e3a1217a5a14"
-
-start_mainnet_fork() {
     print_header
-    echo -e "${GREEN}Starting Constitutional L2 on forked Mainnet...${NC}"
-    echo -e "${CYAN}Using REAL Kleros contracts!${NC}"
-    echo -e "${YELLOW}(Local fork - no real ETH needed)${NC}"
-    echo ""
+    check_foundry
 
-    # Check for Mainnet RPC URL
-    local MAINNET_RPC="${MAINNET_RPC_URL:-$DEFAULT_MAINNET_RPC}"
-    echo "Using Mainnet RPC: $MAINNET_RPC"
-    echo ""
-    echo "Kleros Contracts (Mainnet):"
-    echo "  PermanentGTCRFactory: 0x69816B499b0eD9a60ac52cF2beB24827E5F13A89"
-    echo "  KlerosCore (Court):   0x988b3a538b618c7a603e1c11ab82cd16dbe28069"
-    echo "  Court ID 4:           Blockchain (Technical)"
-    echo ""
-
-    # Start L1 (forked Mainnet) and deployer
-    echo "Step 1/3: Forking Mainnet and deploying contracts..."
-    MAINNET_RPC_URL="$MAINNET_RPC" $COMPOSE_MAINNET up -d l1 deployer
-
-    if ! wait_for_deployment; then
-        echo -e "${RED}Deployment failed. Check logs with: ./start.sh logs${NC}"
-        exit 1
-    fi
-
-    # Wait for L2 config
-    echo "Step 2/3: Waiting for L2 configuration..."
-    if ! wait_for_l2_config; then
-        echo -e "${RED}L2 config generation failed.${NC}"
-        exit 1
-    fi
-
-    # Start L2 services
-    echo "Step 3/3: Starting L2 services..."
-    MAINNET_RPC_URL="$MAINNET_RPC" $COMPOSE_MAINNET --profile l2 up -d
-
-    # Wait for L2
-    if ! wait_for_l2; then
-        echo -e "${YELLOW}L2 may still be starting. Check logs.${NC}"
-    fi
-
-    local MANAGER=$(get_address "KlerosSequencerManager")
-    local REGISTRY=$(cat .deployments/KlerosGTCRFactory.address 2>/dev/null || echo "N/A")
-    local SYSCONFIG=$(get_address "MockSystemConfig")
-
-    echo ""
-    echo -e "${GREEN}================================================================${NC}"
-    echo -e "${GREEN}  Constitutional L2 - Forked Mainnet with Real Kleros!${NC}"
-    echo -e "${GREEN}================================================================${NC}"
-    echo ""
-    echo "Endpoints:"
-    echo "  L1 RPC:     http://localhost:8545  (forked Mainnet, chain ID: 1)"
-    echo "  L2 RPC:     http://localhost:9545  (op-geth, chain ID: 42069)"
-    echo "  L2 WS:      ws://localhost:9546"
-    echo "  Rollup RPC: http://localhost:9547  (op-node)"
-    echo ""
-    echo "Deployed Contracts:"
-    echo "  KlerosSequencerManager: $MANAGER"
-    echo "  Operator Registry:      (deployed via Kleros factory)"
-    echo "  MockSystemConfig:       $SYSCONFIG"
-    echo ""
-    echo -e "${CYAN}This uses REAL Kleros contracts on a local fork.${NC}"
-    echo "Operators are registered in a real PermanentGTCR instance."
-    echo "Disputes would go to Kleros Court ID 4 (Blockchain Technical)."
-    echo ""
-    echo "Try the demo:"
-    echo "  ./start.sh demo"
-    echo ""
-}
-
-start_mainnet_real() {
-    print_header
-    echo -e "${GREEN}Deploying Constitutional L2 to Mainnet...${NC}"
-    echo -e "${RED}(REAL deployment - uses REAL ETH!)${NC}"
-    echo ""
-
-    # Check for .env.mainnet
-    if [ ! -f ".env.mainnet" ]; then
-        echo -e "${RED}Error: .env.mainnet not found${NC}"
+    # Check for env file
+    if [ ! -f "$ENV_FILE" ]; then
+        echo -e "${RED}Error: ${ENV_FILE} not found${NC}"
         echo ""
-        echo "Create .env.mainnet with:"
-        echo "  MAINNET_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY"
-        echo "  MAINNET_BEACON_URL=https://beacon.example.com"
-        echo "  DEPLOYER_PRIVATE_KEY=0x...  (funded with ~1 ETH)"
-        echo "  SEQUENCER_PRIVATE_KEY=0x..."
-        echo "  BATCHER_PRIVATE_KEY=0x..."
+        echo "Create it from the example:"
+        echo "  cp ${ENV_FILE}.example ${ENV_FILE}"
+        echo "  # Edit ${ENV_FILE} with your values"
         echo ""
         exit 1
     fi
 
     # Source the env file
     set -a
-    source .env.mainnet
+    source "$ENV_FILE"
     set +a
 
-    # Validate required vars
-    if [ -z "$MAINNET_RPC_URL" ] || [ -z "$DEPLOYER_PRIVATE_KEY" ]; then
-        echo -e "${RED}Error: Missing required variables in .env.mainnet${NC}"
-        echo "Required: MAINNET_RPC_URL, DEPLOYER_PRIVATE_KEY"
+    # Validate required variables
+    if [ -z "$RPC_URL" ]; then
+        echo -e "${RED}Error: RPC_URL not set in ${ENV_FILE}${NC}"
+        exit 1
+    fi
+    if [ -z "$KLEROS_COURT" ]; then
+        echo -e "${RED}Error: KLEROS_COURT not set in ${ENV_FILE}${NC}"
+        exit 1
+    fi
+    if [ -z "$WETH" ]; then
+        echo -e "${RED}Error: WETH not set in ${ENV_FILE}${NC}"
+        exit 1
+    fi
+    if [ -z "$PRIVATE_KEY" ]; then
+        echo -e "${RED}Error: PRIVATE_KEY not set in ${ENV_FILE}${NC}"
         exit 1
     fi
 
-    echo "Using Mainnet RPC: $MAINNET_RPC_URL"
+    echo -e "${GREEN}Deploying Constitutional L2 to ${MODE}...${NC}"
+    echo ""
+    echo "Configuration:"
+    echo "  RPC URL:      $RPC_URL"
+    echo "  Kleros Court: $KLEROS_COURT"
+    echo "  WETH:         $WETH"
+    echo "  Production:   ${PRODUCTION:-false}"
     echo ""
 
-    echo -e "${RED}================================================================${NC}"
-    echo -e "${RED}  WARNING: MAINNET DEPLOYMENT - REAL VALUE AT STAKE!${NC}"
-    echo -e "${RED}================================================================${NC}"
+    # Mainnet safety warning
+    if [ "$MODE" = "mainnet" ]; then
+        echo -e "${RED}================================================================${NC}"
+        echo -e "${RED}  WARNING: MAINNET DEPLOYMENT - REAL VALUE AT STAKE!${NC}"
+        echo -e "${RED}================================================================${NC}"
+        echo ""
+        echo "This will deploy contracts to Ethereum Mainnet."
+        echo "Press Ctrl+C to cancel, or wait 10 seconds to continue..."
+        sleep 10
+    fi
+
+    # Build first
+    echo "Building contracts..."
+    forge build
+
+    # Build forge script command
+    local FORGE_CMD="forge script script/DeployRemote.s.sol:DeployRemote"
+    FORGE_CMD="$FORGE_CMD --rpc-url $RPC_URL"
+    FORGE_CMD="$FORGE_CMD --broadcast"
+
+    # Add verification if etherscan key is available
+    if [ -n "$ETHERSCAN_API_KEY" ]; then
+        FORGE_CMD="$FORGE_CMD --verify"
+        echo "Contract verification enabled (Etherscan)"
+    fi
+
+    # Use --slow for mainnet to avoid rate limits
+    if [ "$MODE" = "mainnet" ]; then
+        FORGE_CMD="$FORGE_CMD --slow"
+    fi
+
     echo ""
-    echo "This will deploy contracts to Ethereum Mainnet."
-    echo "Press Ctrl+C to cancel, or wait 10 seconds to continue..."
-    sleep 10
+    echo "Running deployment..."
+    echo "  $FORGE_CMD"
+    echo ""
 
-    # For real mainnet, we need beacon for blobs
-    export USE_BEACON=true
-    export PRODUCTION=true
-
-    # Start with real Mainnet config
-    echo "Step 1/3: Deploying contracts to Mainnet..."
-    $COMPOSE_MAINNET up -d l1 deployer
-
-    if ! wait_for_deployment; then
-        echo -e "${RED}Deployment failed. Check logs.${NC}"
-        exit 1
-    fi
-
-    echo "Step 2/3: Waiting for L2 configuration..."
-    if ! wait_for_l2_config; then
-        echo -e "${RED}L2 config generation failed.${NC}"
-        exit 1
-    fi
-
-    echo "Step 3/3: Starting L2 services..."
-    $COMPOSE_MAINNET --profile l2 up -d
-
-    if ! wait_for_l2; then
-        echo -e "${YELLOW}L2 may still be starting. Check logs.${NC}"
-    fi
-
-    local MANAGER=$(get_address "KlerosSequencerManager")
+    # Execute deployment
+    eval "$FORGE_CMD"
 
     echo ""
     echo -e "${GREEN}================================================================${NC}"
-    echo -e "${GREEN}  Constitutional L2 - Deployed to Mainnet!${NC}"
+    echo -e "${GREEN}  Deployment to ${MODE} complete!${NC}"
     echo -e "${GREEN}================================================================${NC}"
     echo ""
-    echo "Endpoints:"
-    echo "  L1 (Mainnet): $MAINNET_RPC_URL"
-    echo "  L2 RPC:       http://localhost:9545"
+    echo "Check the broadcast/ directory for deployment artifacts."
     echo ""
-    echo "Contracts (on Mainnet):"
-    echo "  KlerosSequencerManager: $MANAGER"
-    echo ""
-    echo -e "${GREEN}Your L2 is now running on Mainnet!${NC}"
-    echo ""
+
+    if [ "$PRODUCTION" != "true" ]; then
+        echo "Test mode: Operators were pre-registered in Phase 1."
+        echo "To complete setup, run Phase 2 and Phase 3 manually."
+        echo ""
+    else
+        echo "Production mode: Register operators through the Kleros registry."
+        echo "See the deployment summary above for contract addresses."
+        echo ""
+    fi
 }
 
-stop_mainnet() {
-    echo "Stopping Mainnet services..."
-    $COMPOSE_MAINNET --profile l2 down
-    echo -e "${GREEN}All services stopped${NC}"
-}
-
-clean_mainnet() {
-    echo "Cleaning Mainnet data..."
-    $COMPOSE_MAINNET --profile l2 down -v
-    rm -rf .deployments docker/config/*.json docker/config/jwt.txt
-    echo -e "${GREEN}All Mainnet data cleaned${NC}"
-}
-
+# =============================================================
 # Main
-check_docker
+# =============================================================
 
 case "${1:-local}" in
     local|start)
+        check_docker
         start_local
         ;;
     l2|full)
+        check_docker
         start_l2
         ;;
     stop)
+        check_docker
         stop_services
         ;;
     clean)
+        check_docker
         clean_all
         ;;
     logs)
+        check_docker
         show_logs
         ;;
     status)
+        check_docker
         show_status
         ;;
     demo)
+        check_docker
         run_demo
         ;;
-    # Mainnet commands
-    mainnet-fork|fork)
-        start_mainnet_fork
+    # Remote deployment commands
+    sepolia)
+        deploy_remote sepolia
         ;;
     mainnet)
-        start_mainnet_real
-        ;;
-    mainnet-stop)
-        stop_mainnet
-        ;;
-    mainnet-clean)
-        clean_mainnet
+        deploy_remote mainnet
         ;;
     help|--help|-h)
         print_usage

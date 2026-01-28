@@ -11,8 +11,11 @@ import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 import {IArbitrator} from "../src/interfaces/IArbitrator.sol";
 
 /**
- * @title DeployMainnet
- * @notice Deployment script for mainnet (or mainnet fork) using Kleros arbitration.
+ * @title DeployRemote
+ * @notice Deployment script for Sepolia or Mainnet using Kleros arbitration.
+ *
+ * All network-specific addresses are read from environment variables,
+ * making this a single script that works for both Sepolia and Mainnet.
  *
  * This deploys:
  * - PermanentGTCRHybrid: Faithful PGTCR implementation + on-chain operational keys
@@ -21,94 +24,62 @@ import {IArbitrator} from "../src/interfaces/IArbitrator.sol";
  * - MockSystemConfig (simulating OP Stack SystemConfig - replace with real in production)
  * - KlerosSequencerManager with snapshot + reverse mapping + adapter pattern
  *
- * Architecture:
- * - Uses PermanentGTCRHybrid (based on real Kleros PGTCR)
- * - Hybrid registry stores operational keys on-chain (not in IPFS)
- * - Manager uses O(1) reverse mapping for registry validation
- * - Hot-swappable adapter pattern for surviving OP Stack hardforks
- * - Full compatibility with Kleros arbitration and UI
+ * Required environment variables:
+ *   KLEROS_COURT   - Address of KlerosCore arbitrator
+ *   WETH           - Address of WETH (deposit token)
  *
- * Real Kleros Contracts (Mainnet):
- * - KlerosCore (Court):   0x988b3a538b618c7a603e1c11ab82cd16dbe28069
- * - Court ID 4:           Blockchain (Technical)
- * - WETH:                 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+ * Optional environment variables (with defaults):
+ *   COURT_ID                - Court ID (default: 4, Blockchain Technical)
+ *   MIN_JURORS              - Minimum jurors for disputes (default: 3)
+ *   SUBMISSION_DEPOSIT      - Submission deposit in wei (default: test=0.01 ETH, prod=0.5 ETH)
+ *   SUBMISSION_PERIOD       - Challenge period in seconds (default: test=300, prod=604800)
+ *   REINCLUSION_PERIOD      - Reinclusion period in seconds (default: test=300, prod=604800)
+ *   WITHDRAWING_PERIOD      - Withdrawing period in seconds (default: test=60, prod=86400)
+ *   EPOCH_DURATION          - Epoch duration in seconds (default: test=3600, prod=86400)
+ *   PRODUCTION              - Set to "true" for production parameters (default: false)
  *
  * Usage:
- *   # Fork mode (local testing)
- *   anvil --fork-url https://mainnet.infura.io/v3/YOUR_KEY &
- *   forge script script/DeployMainnet.s.sol:DeployMainnet --rpc-url http://127.0.0.1:8545 --broadcast
+ *   # Sepolia
+ *   source .env.sepolia
+ *   forge script script/DeployRemote.s.sol:DeployRemote --rpc-url $RPC_URL --broadcast
  *
- *   # Production mode
- *   PRODUCTION=true forge script script/DeployMainnet.s.sol:DeployMainnet \
- *     --rpc-url https://mainnet.infura.io/v3/YOUR_KEY \
- *     --private-key $DEPLOYER_KEY \
- *     --broadcast --verify
+ *   # Mainnet
+ *   source .env.mainnet
+ *   PRODUCTION=true forge script script/DeployRemote.s.sol:DeployRemote \
+ *     --rpc-url $RPC_URL --private-key $DEPLOYER_KEY --broadcast --verify
  */
-contract DeployMainnet is Script {
-    // ============ Kleros Mainnet Contracts ============
+contract DeployRemote is Script {
+    // ============ Default Parameters (used when env vars not set) ============
 
-    /// @notice KlerosCore (arbitrator) on mainnet
-    address constant KLEROS_COURT = 0x988b3A538b618C7A603e1c11Ab82Cd16dbE28069;
-
-    /// @notice WETH on mainnet
-    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-
-    /// @notice Blockchain (Technical) court ID
-    uint96 constant COURT_ID = 4;
-
-    /// @notice Minimum jurors for disputes
-    uint256 constant MIN_JURORS = 3;
-
-    // ============ Registry Parameters ============
-
-    /// @notice Minimum deposit for adding an operator (0.01 ETH for testing)
+    // Defaults for test mode
     uint256 constant SUBMISSION_MIN_DEPOSIT_TEST = 0.01 ether;
-
-    /// @notice Minimum deposit for production (0.5 ETH)
-    uint256 constant SUBMISSION_MIN_DEPOSIT_PROD = 0.5 ether;
-
-    /// @notice Challenge period for testing (5 minutes)
     uint256 constant SUBMISSION_PERIOD_TEST = 5 minutes;
-
-    /// @notice Challenge period for production (7 days)
-    uint256 constant SUBMISSION_PERIOD_PROD = 7 days;
-
-    /// @notice Reinclusion period (same as submission)
     uint256 constant REINCLUSION_PERIOD_TEST = 5 minutes;
-    uint256 constant REINCLUSION_PERIOD_PROD = 7 days;
-
-    /// @notice Withdrawing period
     uint256 constant WITHDRAWING_PERIOD_TEST = 1 minutes;
-    uint256 constant WITHDRAWING_PERIOD_PROD = 1 days;
-
-    /// @notice Arbitration params cooldown
+    uint256 constant EPOCH_DURATION_TEST = 1 hours;
     uint256 constant ARBITRATION_COOLDOWN = 1 hours;
 
-    // ============ Manager Parameters ============
-
-    /// @notice Epoch duration for testing (1 hour)
-    uint256 constant EPOCH_DURATION_TEST = 1 hours;
-
-    /// @notice Epoch duration for production (24 hours)
+    // Defaults for production mode
+    uint256 constant SUBMISSION_MIN_DEPOSIT_PROD = 0.5 ether;
+    uint256 constant SUBMISSION_PERIOD_PROD = 7 days;
+    uint256 constant REINCLUSION_PERIOD_PROD = 7 days;
+    uint256 constant WITHDRAWING_PERIOD_PROD = 1 days;
     uint256 constant EPOCH_DURATION_PROD = 24 hours;
 
-    // ============ Test Accounts (Anvil defaults) ============
+    // ============ Test Accounts (Anvil defaults, only used in test mode) ============
 
     address constant DEPLOYER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
-    // Operator 1: batcher and unsafe signer
     address constant BATCHER_1 = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
     address constant SIGNER_1 = 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc;
 
-    // Operator 2: batcher and unsafe signer
     address constant BATCHER_2 = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
     address constant SIGNER_2 = 0x976EA74026E726554dB657fA54763abd0C3a0aa9;
 
-    // Operator 3: batcher and unsafe signer
     address constant BATCHER_3 = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
     address constant SIGNER_3 = 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955;
 
-    address constant GUARDIAN = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65;
+    address constant DEFAULT_GUARDIAN = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65;
 
     // ============ State ============
 
@@ -120,22 +91,52 @@ contract DeployMainnet is Script {
 
     bool public isProduction;
 
-    // Track item IDs for syncing
     bytes32 public itemID1;
     bytes32 public itemID2;
     bytes32 public itemID3;
 
     function run() external {
-        // Check if this is production or test mode
+        // ============ Read configuration from environment ============
+        address klerosCourt = vm.envAddress("KLEROS_COURT");
+        address weth = vm.envAddress("WETH");
+
+        uint96 courtId = uint96(vm.envOr("COURT_ID", uint256(4)));
+        uint256 minJurors = vm.envOr("MIN_JURORS", uint256(3));
+
         isProduction = vm.envOr("PRODUCTION", false);
+
+        address guardian = vm.envOr("GUARDIAN", isProduction ? address(0) : DEFAULT_GUARDIAN);
 
         uint256 deployerPrivateKey = vm.envOr(
             "PRIVATE_KEY",
             uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80)
         );
 
-        console2.log("=== Constitutional L2 - Mainnet Deployment ===");
-        console2.log("Mode:", isProduction ? "PRODUCTION" : "TEST/FORK");
+        // Select parameters based on mode, with env var overrides
+        uint256 submissionMinDeposit = vm.envOr(
+            "SUBMISSION_DEPOSIT",
+            isProduction ? SUBMISSION_MIN_DEPOSIT_PROD : SUBMISSION_MIN_DEPOSIT_TEST
+        );
+        uint256 submissionPeriod = vm.envOr(
+            "SUBMISSION_PERIOD",
+            isProduction ? SUBMISSION_PERIOD_PROD : SUBMISSION_PERIOD_TEST
+        );
+        uint256 reinclusionPeriod = vm.envOr(
+            "REINCLUSION_PERIOD",
+            isProduction ? REINCLUSION_PERIOD_PROD : REINCLUSION_PERIOD_TEST
+        );
+        uint256 withdrawingPeriod = vm.envOr(
+            "WITHDRAWING_PERIOD",
+            isProduction ? WITHDRAWING_PERIOD_PROD : WITHDRAWING_PERIOD_TEST
+        );
+        uint256 epochDuration = vm.envOr(
+            "EPOCH_DURATION",
+            isProduction ? EPOCH_DURATION_PROD : EPOCH_DURATION_TEST
+        );
+
+        // ============ Log configuration ============
+        console2.log("=== Constitutional L2 - Remote Deployment ===");
+        console2.log("Mode:", isProduction ? "PRODUCTION" : "TEST");
         console2.log("Architecture: Hybrid PGTCR + Snapshot Manager");
         console2.log("");
 
@@ -146,23 +147,17 @@ contract DeployMainnet is Script {
         console2.log("Balance:", deployer.balance / 1e18, "ETH");
         console2.log("");
 
-        console2.log("Kleros Court:", KLEROS_COURT);
-        console2.log("Court ID:", COURT_ID, "(Blockchain Technical)");
+        console2.log("Kleros Court:", klerosCourt);
+        console2.log("WETH:", weth);
+        console2.log("Court ID:", courtId);
         console2.log("");
 
         // Create arbitrator extra data (court ID + min jurors)
-        bytes memory arbitratorExtraData = abi.encode(COURT_ID, MIN_JURORS);
+        bytes memory arbitratorExtraData = abi.encode(courtId, minJurors);
 
-        // Get arbitration cost from real Kleros court
-        uint256 arbitrationCost = IArbitrator(KLEROS_COURT).arbitrationCost(arbitratorExtraData);
+        // Get arbitration cost from Kleros court
+        uint256 arbitrationCost = IArbitrator(klerosCourt).arbitrationCost(arbitratorExtraData);
         console2.log("Arbitration cost:", arbitrationCost / 1e15, "finney");
-
-        // Select parameters based on mode
-        uint256 submissionMinDeposit = isProduction ? SUBMISSION_MIN_DEPOSIT_PROD : SUBMISSION_MIN_DEPOSIT_TEST;
-        uint256 submissionPeriod = isProduction ? SUBMISSION_PERIOD_PROD : SUBMISSION_PERIOD_TEST;
-        uint256 reinclusionPeriod = isProduction ? REINCLUSION_PERIOD_PROD : REINCLUSION_PERIOD_TEST;
-        uint256 withdrawingPeriod = isProduction ? WITHDRAWING_PERIOD_PROD : WITHDRAWING_PERIOD_TEST;
-        uint256 epochDuration = isProduction ? EPOCH_DURATION_PROD : EPOCH_DURATION_TEST;
 
         console2.log("Submission deposit:", submissionMinDeposit / 1e15, "finney");
         console2.log("Submission period:", submissionPeriod / 60, "minutes");
@@ -172,10 +167,8 @@ contract DeployMainnet is Script {
         // ============ Deploy PermanentGTCRHybrid ============
         console2.log("Deploying PermanentGTCRHybrid registry...");
 
-        // Deploy with WETH address
-        registry = new PermanentGTCRHybrid(WETH);
+        registry = new PermanentGTCRHybrid(weth);
 
-        // Stake multipliers [challenge, winner, loser, shared] in basis points (10000 = 100%)
         uint256[4] memory stakeMultipliers = [
             uint256(10000), // 100% challenge stake
             uint256(5000),  // 50% winner stake
@@ -183,12 +176,11 @@ contract DeployMainnet is Script {
             uint256(5000)   // 50% shared stake
         ];
 
-        // Initialize the registry
         registry.initialize(
-            deployer,  // governor
-            IArbitrator(KLEROS_COURT),
+            deployer,
+            IArbitrator(klerosCourt),
             arbitratorExtraData,
-            IERC20(address(0)),  // Native ETH for deposits
+            IERC20(address(0)),
             submissionMinDeposit,
             submissionPeriod,
             reinclusionPeriod,
@@ -243,7 +235,7 @@ contract DeployMainnet is Script {
             address(adapterRegistry),
             address(adapter),
             epochDuration,
-            GUARDIAN
+            guardian
         );
         console2.log("KlerosSequencerManager deployed at:", address(manager));
         console2.log("  Operator Registry:", address(registry));
@@ -251,7 +243,7 @@ contract DeployMainnet is Script {
         console2.log("  Adapter Registry:", address(adapterRegistry));
         console2.log("  Initial Adapter:", address(adapter));
         console2.log("  Epoch Duration:", epochDuration / 60, "minutes");
-        console2.log("  Guardian:", GUARDIAN);
+        console2.log("  Guardian:", guardian);
         console2.log("");
 
         // Transfer SystemConfig ownership to manager
@@ -259,12 +251,10 @@ contract DeployMainnet is Script {
         console2.log("SystemConfig ownership transferred to manager");
         console2.log("");
 
-        // Stop initial deployment broadcast
         vm.stopBroadcast();
 
-        // In test/fork mode, register operators (Phase 1 only)
+        // In test mode, register operators (Phase 1 only)
         // Time advancement and Phase 2 (execute/sync) must be done via shell commands
-        // because vm.rpc causes Foundry EVM state inconsistencies with Anvil
         if (!isProduction) {
             console2.log("=== Test Mode: Registering operators (Phase 1) ===");
             _registerTestOperatorsPhase1(deployerPrivateKey);
@@ -277,15 +267,9 @@ contract DeployMainnet is Script {
             console2.log("4. Call manager.syncAddOperator(itemID)");
         }
 
-        // Output deployment summary
-        _printSummary();
+        _printSummary(klerosCourt, courtId);
     }
 
-    /**
-     * @notice Phase 1: Register test operators only.
-     * @dev Time advancement must be done externally via shell commands (evm_increaseTime).
-     *      Using vm.rpc() from within Solidity causes Foundry EVM state inconsistencies.
-     */
     function _registerTestOperatorsPhase1(uint256 deployerPrivateKey) internal {
         uint256 deposit = registry.submissionMinDeposit();
 
@@ -297,7 +281,6 @@ contract DeployMainnet is Script {
         itemID3 = _addOperatorToRegistry("operator3", BATCHER_3, SIGNER_3, deposit);
         vm.stopBroadcast();
 
-        // Output item IDs for Phase 2 (shell script will use these)
         console2.log("");
         console2.log("=== Phase 1 Complete ===");
         console2.log("Item IDs registered (save these for Phase 2):");
@@ -318,7 +301,6 @@ contract DeployMainnet is Script {
     /**
      * @notice Phase 2: Execute requests, sync operators, and rotate.
      * @dev Called after shell script advances time on Anvil.
-     *      Item IDs are passed via environment variables.
      */
     function runPhase2() external {
         uint256 deployerPrivateKey = vm.envOr(
@@ -326,11 +308,9 @@ contract DeployMainnet is Script {
             uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80)
         );
 
-        // Get contract addresses from environment
         address registryAddr = vm.envAddress("REGISTRY_ADDRESS");
         address managerAddr = vm.envAddress("MANAGER_ADDRESS");
 
-        // Get item IDs from environment
         bytes32 id1 = vm.envBytes32("ITEM_ID_1");
         bytes32 id2 = vm.envBytes32("ITEM_ID_2");
         bytes32 id3 = vm.envBytes32("ITEM_ID_3");
@@ -342,7 +322,6 @@ contract DeployMainnet is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // Execute requests
         console2.log("Executing requests...");
         _executeRequest(id1, BATCHER_1);
         _executeRequest(id2, BATCHER_2);
@@ -362,10 +341,8 @@ contract DeployMainnet is Script {
             uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80)
         );
 
-        // Get contract addresses from environment
         address managerAddr = vm.envAddress("MANAGER_ADDRESS");
 
-        // Get item IDs from environment
         bytes32 id1 = vm.envBytes32("ITEM_ID_1");
         bytes32 id2 = vm.envBytes32("ITEM_ID_2");
         bytes32 id3 = vm.envBytes32("ITEM_ID_3");
@@ -376,13 +353,11 @@ contract DeployMainnet is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // Sync operators
         console2.log("Syncing operators to manager...");
         manager.syncAddOperator(id1);
         manager.syncAddOperator(id2);
         manager.syncAddOperator(id3);
 
-        // Rotate
         console2.log("Performing first rotation...");
         manager.rotateOperator();
 
@@ -400,15 +375,10 @@ contract DeployMainnet is Script {
         address unsafeSigner,
         uint256 deposit
     ) internal returns (bytes32 itemID) {
-        // Item data is just a label (for UI display), keys are stored separately
         string memory itemData = name;
-
-        // Add item with explicit operational keys
         itemID = registry.addItemWithKeys{value: deposit}(itemData, batcher, unsafeSigner);
-
         console2.log("  Added operator:", name, "itemID:");
         console2.logBytes32(itemID);
-
         return itemID;
     }
 
@@ -420,7 +390,7 @@ contract DeployMainnet is Script {
         }
     }
 
-    function _printSummary() internal view {
+    function _printSummary(address klerosCourt, uint96 courtId) internal view {
         console2.log("");
         console2.log("===========================================");
         console2.log("       DEPLOYMENT SUMMARY");
@@ -429,9 +399,9 @@ contract DeployMainnet is Script {
         console2.log("Architecture: Hybrid PGTCR + Snapshot Manager");
         console2.log("Based on: https://github.com/kleros/pgtcr");
         console2.log("");
-        console2.log("Kleros Contracts (Mainnet):");
-        console2.log("  Kleros Court:        ", KLEROS_COURT);
-        console2.log("  Court ID:             4 (Blockchain Technical)");
+        console2.log("Kleros Contracts:");
+        console2.log("  Kleros Court:        ", klerosCourt);
+        console2.log("  Court ID:            ", courtId);
         console2.log("");
         console2.log("Deployed Contracts:");
         console2.log("  Operator Registry:   ", address(registry));
@@ -469,8 +439,8 @@ contract DeployMainnet is Script {
         console2.log("  Withdrawing period:  ", registry.withdrawingPeriod() / 60, "minutes");
         console2.log("");
         if (!isProduction) {
-            console2.log("TEST MODE: Operators pre-registered and synced.");
-            console2.log("Run './start.sh demo' to see rotation in action.");
+            console2.log("TEST MODE: Operators pre-registered.");
+            console2.log("Run Phase 2/3 shell commands to activate operators.");
         }
         console2.log("===========================================");
     }

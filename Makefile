@@ -85,26 +85,26 @@ docker-demo:
 # =============================================================
 
 deploy-sepolia:
-	@if [ -z "$(DEPLOYER_PRIVATE_KEY)" ]; then \
-		echo "Error: DEPLOYER_PRIVATE_KEY not set"; \
+	@if [ -z "$(PRIVATE_KEY)" ]; then \
+		echo "Error: PRIVATE_KEY not set"; \
 		echo "Run: source .env.sepolia"; \
 		exit 1; \
 	fi
-	forge script script/DeploySepolia.s.sol:DeploySepolia \
-		--rpc-url $(L1_RPC) \
+	forge script script/DeployRemote.s.sol:DeployRemote \
+		--rpc-url $(RPC_URL) \
 		--broadcast \
 		--verify
 
 deploy-mainnet:
-	@if [ -z "$(DEPLOYER_PRIVATE_KEY)" ]; then \
-		echo "Error: DEPLOYER_PRIVATE_KEY not set"; \
+	@if [ -z "$(PRIVATE_KEY)" ]; then \
+		echo "Error: PRIVATE_KEY not set"; \
 		echo "Run: source .env.mainnet"; \
 		exit 1; \
 	fi
 	@echo "WARNING: Deploying to mainnet!"
 	@read -p "Press Enter to continue or Ctrl+C to abort..."
-	forge script script/DeployMainnet.s.sol:DeployMainnet \
-		--rpc-url $(L1_RPC) \
+	forge script script/DeployRemote.s.sol:DeployRemote \
+		--rpc-url $(RPC_URL) \
 		--broadcast \
 		--verify \
 		--slow

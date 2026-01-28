@@ -339,10 +339,9 @@ cp .env.sepolia.example .env.sepolia
 
 ```bash
 source .env.sepolia
-forge script script/DeploySepolia.s.sol:DeploySepolia \
-  --rpc-url $L1_RPC \
-  --broadcast \
-  --verify
+./start.sh sepolia
+# Or manually:
+# forge script script/DeployRemote.s.sol:DeployRemote --rpc-url $RPC_URL --broadcast --verify
 ```
 
 3. **Transfer SystemConfig Ownership**
@@ -385,7 +384,7 @@ python self_activation_agent.py --config config.yaml
 - Guardian multisig set up
 - Keeper infrastructure ready
 
-See `script/DeployMainnet.s.sol` for detailed deployment steps.
+See `script/DeployRemote.s.sol` for detailed deployment steps.
 
 ## Self-Activation Agent
 
@@ -495,7 +494,7 @@ op/
 │   ├── DeployLocal.s.sol             # Local Anvil deployment
 │   ├── DeployL2.s.sol                # Full OP Stack L2 deployment
 │   ├── DeploySepolia.s.sol           # Sepolia deployment
-│   ├── DeployMainnet.s.sol           # Mainnet deployment (with adapter)
+│   ├── DeployRemote.s.sol            # Sepolia/Mainnet deployment (env-configured)
 │   └── Demo.s.sol                    # Interactive demo script
 ├── policies/
 │   ├── policy_sequencer_registry.md  # Sequencer constitutional rules
