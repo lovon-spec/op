@@ -39,18 +39,31 @@ interface IWETH {
 
 /**
  * @title PermanentGTCRHybrid
- * @notice A Kleros PermanentGTCR with on-chain operational keys extension.
+ * @notice A Kleros PermanentGTCR with on-chain operational keys and perpetual challengeability.
  * @dev This contract is based on the original Kleros PermanentGTCR:
  *      https://github.com/kleros/pgtcr/blob/master/contracts/src/PermanentGTCR.sol
  *
- *      The ONLY additions are:
- *      - `itemKeys` mapping for on-chain operational keys (batcher/signer)
- *      - `setOperationalKeys()` function for item owners to set keys
- *      - `getOperationalKeys()` view function (defaults to submitter if unset)
- *      - `OperationalKeysUpdated` event
+ *      MODIFICATIONS from original PGTCR:
  *
- *      All other logic is preserved from the original PGTCR to maintain
- *      Kleros UI compatibility and arbitration flow.
+ *      1. Hybrid Extension (on-chain operational keys):
+ *         - `itemKeys` mapping for on-chain operational keys (batcher/signer)
+ *         - `setOperationalKeys()` function for item owners to set keys
+ *         - `getOperationalKeys()` view function (defaults to submitter if unset)
+ *         - `OperationalKeysUpdated` event
+ *
+ *      2. Perpetual Challengeability for Reincluded Items:
+ *         - Original PGTCR: Items become unchallengeable after reinclusionPeriod
+ *         - This version: Reincluded items can be challenged AT ANY TIME
+ *         - Reason: Constitutional L2 requires ongoing enforcement of policies
+ *           (censorship, MEV, liveness violations can occur at any time)
+ *         - Submitted items still have a time-limited challenge period
+ *
+ *      Item Status Flow:
+ *      - Submitted: New item, challengeable during submissionPeriod
+ *      - After submissionPeriod: Call executeRequest() to become Reincluded
+ *      - Reincluded: Active license, challengeable forever (for policy violations)
+ *      - Disputed: Under arbitration
+ *      - Absent: Removed or never existed
  *
  * Trust assumptions (from original):
  * - Arbitrator is trusted to rule correctly.
@@ -352,6 +365,13 @@ contract PermanentGTCRHybrid is IArbitrable, IEvidence {
 
     /**
      * @notice Challenges an item.
+     * @dev For Submitted items: Can only challenge during submissionPeriod (initial registration).
+     *      For Reincluded items: Can challenge at ANY TIME (perpetual challengeability).
+     *
+     *      This differs from the original PGTCR which made items unchallengeable after the period.
+     *      The Constitutional L2 requires perpetual challengeability for policy enforcement
+     *      (censorship, MEV, liveness violations can occur at any time).
+     *
      * @param _itemID The item ID.
      * @param _evidence Evidence URI.
      */
@@ -362,8 +382,15 @@ contract PermanentGTCRHybrid is IArbitrable, IEvidence {
             revert ItemNotChallengeable();
         }
 
-        uint256 period = item.status == Status.Submitted ? submissionPeriod : reinclusionPeriod;
-        if (block.timestamp > item.includedAt + period) revert ItemNotChallengeable();
+        // For Submitted items: enforce the submission period (initial registration challenge)
+        // For Reincluded items: NO time restriction (perpetual challengeability for violations)
+        if (item.status == Status.Submitted) {
+            if (block.timestamp > item.includedAt + submissionPeriod) {
+                revert ItemNotChallengeable();
+            }
+        }
+        // Note: Reincluded items can be challenged at any time - this is intentional
+        // to allow enforcement of constitutional rules (censorship, MEV, liveness)
 
         ArbitrationParams storage arbParams = arbitrationParamsChanges[arbitrationParamsChanges.length - 1];
         uint256 arbitrationCost = arbitrator.arbitrationCost(arbParams.arbitratorExtraData);
@@ -740,6 +767,53 @@ contract PermanentGTCRHybrid is IArbitrable, IEvidence {
     function isRegistered(bytes32 _itemID) external view returns (bool) {
         Status status = items[_itemID].status;
         return status == Status.Submitted || status == Status.Reincluded;
+    }
+
+    /**
+     * @notice Checks if an item is currently challengeable.
+     * @dev - Submitted items: challengeable during submissionPeriod
+     *      - Reincluded items: ALWAYS challengeable (perpetual for policy enforcement)
+     *      - Disputed/Absent items: not challengeable
+     * @param _itemID The item ID.
+     * @return True if the item can be challenged right now.
+     */
+    function isChallengeable(bytes32 _itemID) external view returns (bool) {
+        Item storage item = items[_itemID];
+
+        if (item.status == Status.Reincluded) {
+            // Reincluded items are always challengeable
+            return true;
+        }
+
+        if (item.status == Status.Submitted) {
+            // Submitted items are challengeable during submission period
+            return block.timestamp <= item.includedAt + submissionPeriod;
+        }
+
+        // Disputed or Absent items are not challengeable
+        return false;
+    }
+
+    /**
+     * @notice Checks if an item is valid for sync to SequencerManager.
+     * @dev - Submitted items: valid only AFTER submissionPeriod (passed review)
+     *      - Reincluded items: always valid
+     *      - Disputed/Absent items: never valid
+     * @param _itemID The item ID.
+     * @return True if the item has passed review and can be used.
+     */
+    function isValidForSync(bytes32 _itemID) external view returns (bool) {
+        Item storage item = items[_itemID];
+
+        if (item.status == Status.Reincluded) {
+            return true;
+        }
+
+        if (item.status == Status.Submitted) {
+            return block.timestamp > item.includedAt + submissionPeriod;
+        }
+
+        return false;
     }
 
     // ============ Internal Functions ============

@@ -76,6 +76,7 @@ contract KlerosSequencerManager {
     error AdapterVersionNotHigher();
     error AdapterCallFailed();
     error NoAdapterSet();
+    error ChallengePeriodNotPassed();
 
     // ============ Types ============
 
@@ -308,9 +309,12 @@ contract KlerosSequencerManager {
     /**
      * @notice Checks if an operator is registered in the registry (O(1) via reverse mapping).
      * @dev Uses snapshot + reverse mapping for efficient validation.
+     *      IMPORTANT: Items must have passed their challenge period to be considered valid.
+     *      - Submitted items: must be past submissionPeriod
+     *      - Reincluded items: always valid (already passed a challenge period or won dispute)
      * @param batcher The batcher address.
      * @param unsafeSigner The unsafe block signer address.
-     * @return True if registered and keys still match.
+     * @return True if registered, challenge period passed, and keys still match.
      */
     function isRegisteredInRegistry(address batcher, address unsafeSigner) public view returns (bool) {
         // 1. Get OpId from keys
@@ -320,16 +324,48 @@ contract KlerosSequencerManager {
         bytes32 itemID = opIdToItemId[opId];
         if (itemID == bytes32(0)) return false;
 
-        // 3. Verify liveness (Registry check)
-        (IPermanentGTCRHybrid.Status status,,,,,,) = registry.items(itemID);
-        if (status != IPermanentGTCRHybrid.Status.Submitted &&
-            status != IPermanentGTCRHybrid.Status.Reincluded) {
+        // 3. Verify item is valid in registry
+        if (!_isItemValidInRegistry(itemID)) {
             return false;
         }
 
         // 4. Verify sync (Keys still match in registry?)
         (address regBatcher, address regSigner) = registry.getOperationalKeys(itemID);
         return (regBatcher == batcher && regSigner == unsafeSigner);
+    }
+
+    /**
+     * @notice Checks if an item is valid for use (passed challenge period).
+     * @dev - Submitted items: valid only after submissionPeriod has elapsed
+     *      - Reincluded items: always valid (passed initial period or won dispute)
+     *      - Disputed/Absent items: never valid
+     * @param _itemID The registry item ID.
+     * @return True if the item is valid for operator duties.
+     */
+    function _isItemValidInRegistry(bytes32 _itemID) internal view returns (bool) {
+        (
+            IPermanentGTCRHybrid.Status status,
+            ,
+            ,
+            ,
+            uint48 includedAt,
+            ,
+
+        ) = registry.items(_itemID);
+
+        if (status == IPermanentGTCRHybrid.Status.Reincluded) {
+            // Reincluded items have already passed their challenge period or won a dispute
+            return true;
+        }
+
+        if (status == IPermanentGTCRHybrid.Status.Submitted) {
+            // Submitted items must have passed the submission period
+            uint256 submissionPeriod = registry.submissionPeriod();
+            return block.timestamp > includedAt + submissionPeriod;
+        }
+
+        // Disputed or Absent items are not valid
+        return false;
     }
 
     /**
@@ -360,13 +396,13 @@ contract KlerosSequencerManager {
     /**
      * @notice Adds an operator to the active set by Kleros item ID.
      * @dev Snapshots keys from registry and creates reverse mapping.
+     *      IMPORTANT: Item must have passed its challenge period before syncing.
+     *      For Submitted items, this means waiting for submissionPeriod to elapse.
      * @param _itemID The Kleros registry item ID.
      */
     function syncAddOperator(bytes32 _itemID) external notPaused {
-        // 1. Check Registry Status
-        (IPermanentGTCRHybrid.Status status,,,,,,) = registry.items(_itemID);
-        if (status != IPermanentGTCRHybrid.Status.Submitted &&
-            status != IPermanentGTCRHybrid.Status.Reincluded) {
+        // 1. Check item is valid (passed challenge period)
+        if (!_isItemValidInRegistry(_itemID)) {
             revert NotRegisteredInRegistry();
         }
 
@@ -456,6 +492,7 @@ contract KlerosSequencerManager {
     /**
      * @notice Adds an operator by addresses (legacy interface).
      * @dev Computes itemID from addresses. Use syncAddOperator(itemID) for new integrations.
+     *      IMPORTANT: Item must have passed its challenge period before syncing.
      * @param batcher The batcher address.
      * @param unsafeSigner The unsafe block signer address.
      */
@@ -470,9 +507,8 @@ contract KlerosSequencerManager {
         // This requires the keys to be the itemID computed from encoded data
         bytes32 itemID = keccak256(abi.encodePacked(abi.encode(batcher, unsafeSigner)));
 
-        (IPermanentGTCRHybrid.Status status,,,,,,) = registry.items(itemID);
-        if (status != IPermanentGTCRHybrid.Status.Submitted &&
-            status != IPermanentGTCRHybrid.Status.Reincluded) {
+        // Check item is valid (passed challenge period)
+        if (!_isItemValidInRegistry(itemID)) {
             revert NotRegisteredInRegistry();
         }
 

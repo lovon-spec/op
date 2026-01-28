@@ -72,6 +72,18 @@ interface IPermanentGTCRHybrid is IArbitrable {
     function withdrawingPeriod() external view returns (uint256);
     function isRegistered(bytes32 _itemID) external view returns (bool);
 
+    /**
+     * @notice Checks if an item is currently challengeable.
+     * @dev Submitted items: during submissionPeriod. Reincluded: always.
+     */
+    function isChallengeable(bytes32 _itemID) external view returns (bool);
+
+    /**
+     * @notice Checks if an item is valid for sync (passed challenge period).
+     * @dev Submitted items: after submissionPeriod. Reincluded: always.
+     */
+    function isValidForSync(bytes32 _itemID) external view returns (bool);
+
     // ============ Hybrid Extension ============
 
     /**

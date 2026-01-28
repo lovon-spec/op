@@ -327,6 +327,134 @@ contract KlerosSequencerManagerTest is Test {
         manager.syncRemoveOperator(alice_itemID);
     }
 
+    // ============ Challenge Period Validation Tests ============
+
+    function test_SyncAddOperator_RevertDuringChallengePeriod() public {
+        // Submit item via addItemWithKeys (starts in Submitted status)
+        string memory data = string(abi.encode(alice_batcher, alice_signer));
+        bytes32 itemID = keccak256(abi.encodePacked(data));
+
+        registry.addItemWithKeys{value: 0.01 ether}(data, alice_batcher, alice_signer);
+
+        // Try to sync during challenge period - should fail
+        vm.expectRevert(KlerosSequencerManager.NotRegisteredInRegistry.selector);
+        manager.syncAddOperator(itemID);
+    }
+
+    function test_SyncAddOperator_SucceedsAfterChallengePeriod() public {
+        // Submit item via addItemWithKeys (starts in Submitted status)
+        string memory data = string(abi.encode(alice_batcher, alice_signer));
+        bytes32 itemID = keccak256(abi.encodePacked(data));
+
+        registry.addItemWithKeys{value: 0.01 ether}(data, alice_batcher, alice_signer);
+
+        // Warp past the challenge period (5 minutes in mock)
+        vm.warp(block.timestamp + 6 minutes);
+
+        // Now sync should succeed
+        bytes32 opId = manager.operatorId(alice_batcher, alice_signer);
+        vm.expectEmit(true, true, true, false);
+        emit OperatorAdded(opId, alice_batcher, alice_signer);
+
+        manager.syncAddOperator(itemID);
+
+        assertTrue(manager.isActive(opId));
+        assertEq(manager.activeOperatorCount(), 1);
+    }
+
+    function test_IsChallengeable_SubmittedDuringPeriod() public {
+        // Submit item (starts in Submitted status)
+        string memory data = string(abi.encode(alice_batcher, alice_signer));
+        bytes32 itemID = keccak256(abi.encodePacked(data));
+
+        registry.addItemWithKeys{value: 0.01 ether}(data, alice_batcher, alice_signer);
+
+        // During challenge period, should be challengeable
+        assertTrue(registry.isChallengeable(itemID));
+    }
+
+    function test_IsChallengeable_SubmittedAfterPeriod() public {
+        // Submit item (starts in Submitted status)
+        string memory data = string(abi.encode(alice_batcher, alice_signer));
+        bytes32 itemID = keccak256(abi.encodePacked(data));
+
+        registry.addItemWithKeys{value: 0.01 ether}(data, alice_batcher, alice_signer);
+
+        // Warp past the challenge period
+        vm.warp(block.timestamp + 6 minutes);
+
+        // After period, Submitted items are no longer challengeable
+        assertFalse(registry.isChallengeable(itemID));
+    }
+
+    function test_IsChallengeable_ReincludedAlwaysTrue() public {
+        // Register directly (sets to Reincluded status)
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+
+        // Reincluded items are always challengeable (perpetual challengeability)
+        assertTrue(registry.isChallengeable(alice_itemID));
+
+        // Even after a long time
+        vm.warp(block.timestamp + 365 days);
+        assertTrue(registry.isChallengeable(alice_itemID));
+    }
+
+    function test_IsValidForSync_SubmittedDuringPeriod() public {
+        // Submit item (starts in Submitted status)
+        string memory data = string(abi.encode(alice_batcher, alice_signer));
+        bytes32 itemID = keccak256(abi.encodePacked(data));
+
+        registry.addItemWithKeys{value: 0.01 ether}(data, alice_batcher, alice_signer);
+
+        // During challenge period, should NOT be valid for sync
+        assertFalse(registry.isValidForSync(itemID));
+    }
+
+    function test_IsValidForSync_SubmittedAfterPeriod() public {
+        // Submit item (starts in Submitted status)
+        string memory data = string(abi.encode(alice_batcher, alice_signer));
+        bytes32 itemID = keccak256(abi.encodePacked(data));
+
+        registry.addItemWithKeys{value: 0.01 ether}(data, alice_batcher, alice_signer);
+
+        // Warp past the challenge period
+        vm.warp(block.timestamp + 6 minutes);
+
+        // After period, Submitted items ARE valid for sync
+        assertTrue(registry.isValidForSync(itemID));
+    }
+
+    function test_IsValidForSync_ReincludedAlwaysTrue() public {
+        // Register directly (sets to Reincluded status)
+        alice_itemID = _registerOperator(alice_batcher, alice_signer);
+
+        // Reincluded items are always valid for sync
+        assertTrue(registry.isValidForSync(alice_itemID));
+    }
+
+    function test_IsRegisteredInRegistry_FalseForSubmittedDuringPeriod() public {
+        // Submit item (starts in Submitted status)
+        string memory data = string(abi.encode(alice_batcher, alice_signer));
+
+        registry.addItemWithKeys{value: 0.01 ether}(data, alice_batcher, alice_signer);
+
+        // During challenge period, manager should NOT consider it registered
+        assertFalse(manager.isRegisteredInRegistry(alice_batcher, alice_signer));
+    }
+
+    function test_IsRegisteredInRegistry_TrueForSubmittedAfterPeriod() public {
+        // Submit item (starts in Submitted status)
+        string memory data = string(abi.encode(alice_batcher, alice_signer));
+
+        registry.addItemWithKeys{value: 0.01 ether}(data, alice_batcher, alice_signer);
+
+        // Warp past the challenge period
+        vm.warp(block.timestamp + 6 minutes);
+
+        // After period, manager should consider it registered
+        assertTrue(manager.isRegisteredInRegistry(alice_batcher, alice_signer));
+    }
+
     // ============ Sync Remove Tests (Legacy by addresses) ============
 
     function test_SyncRemoveOperator_LegacyByAddresses() public {

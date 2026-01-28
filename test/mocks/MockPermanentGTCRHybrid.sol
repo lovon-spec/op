@@ -139,6 +139,36 @@ contract MockPermanentGTCRHybrid is IPermanentGTCRHybrid {
         return status == Status.Submitted || status == Status.Reincluded;
     }
 
+    function isChallengeable(bytes32 _itemID) external view override returns (bool) {
+        Item storage item = _items[_itemID];
+
+        if (item.status == Status.Reincluded) {
+            // Reincluded items are always challengeable
+            return true;
+        }
+
+        if (item.status == Status.Submitted) {
+            // Submitted items are challengeable during submission period
+            return block.timestamp <= item.includedAt + submissionPeriod;
+        }
+
+        return false;
+    }
+
+    function isValidForSync(bytes32 _itemID) external view override returns (bool) {
+        Item storage item = _items[_itemID];
+
+        if (item.status == Status.Reincluded) {
+            return true;
+        }
+
+        if (item.status == Status.Submitted) {
+            return block.timestamp > item.includedAt + submissionPeriod;
+        }
+
+        return false;
+    }
+
     function getOperationalKeys(bytes32 _itemID) public view override returns (
         address batcher,
         address unsafeSigner
