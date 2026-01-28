@@ -11,10 +11,14 @@ import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 import {IArbitrator} from "../src/interfaces/IArbitrator.sol";
 
 /**
- * @title IERC20Minimal
- * @notice Minimal ERC20 interface for deployment.
+ * @title IERC20
+ * @notice Minimal ERC20 interface matching PermanentGTCRHybrid.
  */
-interface IERC20Minimal {}
+interface IERC20 {
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+}
 
 /**
  * @title DeployMainnet
@@ -54,7 +58,7 @@ contract DeployMainnet is Script {
     // ============ Kleros Mainnet Contracts ============
 
     /// @notice KlerosCore (arbitrator) on mainnet
-    address constant KLEROS_COURT = 0x988b3a538b618c7a603e1c11ab82cd16dbe28069;
+    address constant KLEROS_COURT = 0x988b3A538b618C7A603e1c11Ab82Cd16dbE28069;
 
     /// @notice WETH on mainnet
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
@@ -194,7 +198,7 @@ contract DeployMainnet is Script {
             deployer,  // governor
             IArbitrator(KLEROS_COURT),
             arbitratorExtraData,
-            IERC20Minimal(address(0)),  // Native ETH for deposits
+            IERC20(address(0)),  // Native ETH for deposits
             submissionMinDeposit,
             submissionPeriod,
             reinclusionPeriod,
