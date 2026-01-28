@@ -262,7 +262,8 @@ contract DeployMainnet is Script {
         // In test/fork mode, register operators directly
         if (!isProduction) {
             console2.log("=== Test Mode: Registering operators ===");
-            _registerTestOperators();
+            // Pass private key to manage broadcast lifecycle around vm.warp
+            _registerTestOperators(deployerPrivateKey);
         } else {
             console2.log("=== Production Mode ===");
             console2.log("Operators must be submitted through the registry.");
@@ -270,15 +271,14 @@ contract DeployMainnet is Script {
             console2.log("2. Wait for submission period");
             console2.log("3. Call registry.executeRequest(itemID)");
             console2.log("4. Call manager.syncAddOperator(itemID)");
+            vm.stopBroadcast();
         }
-
-        vm.stopBroadcast();
 
         // Output deployment summary
         _printSummary();
     }
 
-    function _registerTestOperators() internal {
+    function _registerTestOperators(uint256 deployerPrivateKey) internal {
         uint256 deposit = registry.submissionMinDeposit();
         uint256 submissionPeriodDuration = registry.submissionPeriod();
 
@@ -286,23 +286,36 @@ contract DeployMainnet is Script {
         console2.log("Deposit per operator:", deposit / 1e15, "finney");
 
         // Add operators to the registry with explicit operational keys
+        // (broadcast is active from run())
         itemID1 = _addOperatorToRegistry("operator1", BATCHER_1, SIGNER_1, deposit);
         itemID2 = _addOperatorToRegistry("operator2", BATCHER_2, SIGNER_2, deposit);
         itemID3 = _addOperatorToRegistry("operator3", BATCHER_3, SIGNER_3, deposit);
 
+        // Stop broadcast to perform vm.warp
+        vm.stopBroadcast();
+
         // Fast-forward time past submission period (only works in fork/test mode)
         console2.log("Fast-forwarding past submission period...");
         vm.warp(block.timestamp + submissionPeriodDuration + 1);
+
+        // Restart broadcast for execute requests
+        vm.startBroadcast(deployerPrivateKey);
 
         // Execute requests to finalize registration
         _executeRequest(itemID1, BATCHER_1);
         _executeRequest(itemID2, BATCHER_2);
         _executeRequest(itemID3, BATCHER_3);
 
+        // Stop broadcast for next warp
+        vm.stopBroadcast();
+
         // Fast-forward past reinclusion period (required for maturity)
         uint256 reinclusionPeriodDuration = registry.reinclusionPeriod();
         console2.log("Fast-forwarding past reinclusion period...");
         vm.warp(block.timestamp + reinclusionPeriodDuration + 1);
+
+        // Restart broadcast for sync and rotation
+        vm.startBroadcast(deployerPrivateKey);
 
         // Sync operators to manager using item IDs
         console2.log("Syncing operators to manager...");
@@ -324,6 +337,9 @@ contract DeployMainnet is Script {
         console2.log("Current operator:");
         console2.log("  Batcher:", current.batcher);
         console2.log("  Unsafe signer:", current.unsafeSigner);
+
+        // Final stop
+        vm.stopBroadcast();
     }
 
     function _addOperatorToRegistry(
