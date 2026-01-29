@@ -5,7 +5,7 @@
 # This script runs a complete OP Stack devnet:
 # - L1: Anvil
 # - L2: op-geth + op-node
-# - Batcher: op-batcher (3 instances for rotation demo)
+# - Batcher: op-batcher (3 instances for rotation testing)
 # - Sequencer control: KlerosSequencerManager
 #
 
@@ -436,9 +436,9 @@ echo "Logs: $LOG_DIR/"
 echo ""
 
 # ============================================================
-print_header "DEMO: Sequencer Rotation"
+print_header "TEST: Sequencer Rotation"
 
-echo "Demonstrating sequencer rotation via KlerosSequencerManager..."
+echo "Testing sequencer rotation via KlerosSequencerManager..."
 echo ""
 
 advance_time() {

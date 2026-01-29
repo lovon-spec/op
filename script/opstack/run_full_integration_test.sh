@@ -1,10 +1,10 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# KLEROS SEQUENCER MANAGER - OP STACK INTEGRATION DEMO
+# KLEROS SEQUENCER MANAGER - OP STACK INTEGRATION TEST
 # ═══════════════════════════════════════════════════════════════════════════════
 #
-# This script demonstrates the integration between KlerosSequencerManager and
-# the OP Stack architecture. It shows how the Kleros-governed rotation system
+# This script tests the integration between KlerosSequencerManager and
+# the OP Stack architecture. It verifies how the Kleros-governed rotation system
 # controls which sequencer/batcher is authorized to submit L2 batches to L1.
 #
 # Components:
@@ -105,8 +105,8 @@ print_warning() {
     echo -e "${YELLOW}    ! $1${NC}"
 }
 
-print_header "KLEROS SEQUENCER MANAGER - FULL OP STACK DEMO"
-echo "This demo simulates a complete OP Stack with:"
+print_header "KLEROS SEQUENCER MANAGER - FULL OP STACK INTEGRATION TEST"
+echo "This integration test simulates a complete OP Stack with:"
 echo "  - L1 chain (Anvil)"
 echo "  - Multiple sequencer/batcher processes"
 echo "  - Kleros-governed rotation between sequencers"
@@ -292,14 +292,14 @@ sleep 3
 # ============================================================
 # PHASE 9: Summary
 # ============================================================
-print_header "DEMO COMPLETE - SUMMARY"
+print_header "INTEGRATION TEST COMPLETE - SUMMARY"
 
 echo "L1 Contracts:"
 echo "  - MockCurate (Kleros TCR): $CURATE"
 echo "  - MockSystemConfig (OP Stack): $SYSTEM_CONFIG"
 echo "  - KlerosSequencerManager: $MANAGER"
 echo ""
-echo "Demonstrated Features:"
+echo "Tested Features:"
 echo "  [x] L1 contract deployment and configuration"
 echo "  [x] Multiple batcher processes checking authorization"
 echo "  [x] Epoch-based sequencer rotation"
@@ -307,7 +307,7 @@ echo "  [x] Only authorized batcher submits batches"
 echo "  [x] Challenge and removal of misbehaving sequencer"
 echo "  [x] Guardian pause/unpause for emergencies"
 echo ""
-echo "This shows how KlerosSequencerManager integrates with OP Stack:"
+echo "This test verifies how KlerosSequencerManager integrates with OP Stack:"
 echo "  1. Manager controls SystemConfig.batcherHash"
 echo "  2. Each batcher checks if its address matches batcherHash"
 echo "  3. Only the authorized batcher's submissions are valid"

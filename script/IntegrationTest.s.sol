@@ -9,10 +9,10 @@ import {MockPermanentGTCRHybrid} from "../test/mocks/MockPermanentGTCRHybrid.sol
 import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 
 /**
- * @title Demo
- * @notice Demonstrates the full operator rotation lifecycle.
+ * @title IntegrationTest
+ * @notice Integration test for the full operator rotation lifecycle.
  *
- * This script shows:
+ * This script tests:
  * 1. Deployment of all contracts
  * 2. Registration of operators (batcher, unsafeSigner tuples) in Curate registry
  * 3. Syncing operators to the manager
@@ -22,9 +22,9 @@ import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
  *
  * Usage:
  *   anvil &
- *   forge script script/Demo.s.sol:Demo --rpc-url http://127.0.0.1:8545 --broadcast -vvvv
+ *   forge script script/IntegrationTest.s.sol:IntegrationTest --rpc-url http://127.0.0.1:8545 --broadcast -vvvv
  */
-contract Demo is Script {
+contract IntegrationTest is Script {
     // Test accounts from Anvil's default mnemonic
     uint256 constant DEPLOYER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     uint256 constant GUARDIAN_KEY = 0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a;
@@ -46,7 +46,7 @@ contract Demo is Script {
     address constant BATCHER_3 = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
     address constant SIGNER_3 = 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955;
 
-    uint256 constant EPOCH_DURATION = 10; // 10 seconds for demo
+    uint256 constant EPOCH_DURATION = 10; // 10 seconds for testing
 
     MockPermanentGTCRHybrid public registry;
     MockCurate public adapterRegistry;
@@ -57,7 +57,7 @@ contract Demo is Script {
     function run() external {
         console2.log("");
         console2.log("===========================================");
-        console2.log("  KLEROS SEQUENCER MANAGER DEMO");
+        console2.log("  KLEROS SEQUENCER MANAGER INTEGRATION TEST");
         console2.log("  (Operator Tuple Model)");
         console2.log("===========================================");
         console2.log("");
@@ -83,12 +83,12 @@ contract Demo is Script {
         // Step 7: Rotation skips removed operator
         _step7_rotationAfterChallenge();
 
-        // Step 8: Guardian pause demo
+        // Step 8: Guardian pause test
         _step8_guardianPause();
 
         console2.log("");
         console2.log("===========================================");
-        console2.log("  DEMO COMPLETE!");
+        console2.log("  INTEGRATION TEST COMPLETE!");
         console2.log("===========================================");
         console2.log("");
         console2.log("Contract Addresses:");
@@ -292,7 +292,7 @@ contract Demo is Script {
     }
 
     function _step8_guardianPause() internal {
-        console2.log("STEP 8: Guardian pause demonstration...");
+        console2.log("STEP 8: Guardian pause test...");
         console2.log("-------------------------------------------");
 
         vm.startBroadcast(GUARDIAN_KEY);

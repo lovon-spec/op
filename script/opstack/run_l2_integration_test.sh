@@ -1,7 +1,7 @@
 #!/bin/bash
-# Full OP Stack L2 Demo with Kleros Sequencer Rotation
+# Full OP Stack L2 Integration Test with Kleros Sequencer Rotation
 #
-# This script runs a complete simulation showing:
+# This script runs a complete integration test showing:
 # 1. L1 (Anvil) with KlerosSequencerManager controlling SystemConfig
 # 2. Simulated L2 producing blocks
 # 3. Multiple batchers checking authorization
@@ -40,7 +40,7 @@ BATCH_INBOX="0xff00000000000000000000000000000000000000"
 EPOCH_DURATION=10
 
 PIDS=()
-LOG_DIR="/tmp/op-demo-logs"
+LOG_DIR="/tmp/op-integration-test-logs"
 mkdir -p "$LOG_DIR"
 
 cleanup() {
@@ -85,7 +85,7 @@ clear
 echo -e "${MAGENTA}"
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║                                                                ║"
-echo "║     KLEROS SEQUENCER MANAGER - FULL OP STACK DEMO              ║"
+echo "║     KLEROS SEQUENCER MANAGER - FULL OP STACK INTEGRATION TEST  ║"
 echo "║                                                                ║"
 echo "║     Decentralized Sequencer Rotation for OP Stack              ║"
 echo "║                                                                ║"
@@ -246,7 +246,7 @@ show_status
 echo ""
 echo -e "${MAGENTA}"
 echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║                      DEMO COMPLETE                             ║"
+echo "║                 INTEGRATION TEST COMPLETE                      ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 echo ""
@@ -259,7 +259,7 @@ echo "  • Misbehaving sequencer challenged and removed"
 echo ""
 echo "Log files available at: $LOG_DIR/"
 echo ""
-echo -e "${YELLOW}Press Enter to stop the demo and cleanup...${NC}"
+echo -e "${YELLOW}Press Enter to stop the integration test and cleanup...${NC}"
 read
 
 echo "Stopping..."

@@ -1,10 +1,10 @@
 #!/bin/bash
 # =============================================================
-#  Constitutional L2 — Full System Demo
+#  Constitutional L2 — Full System Integration Test
 # =============================================================
 #
-# A self-contained demo that deploys every contract and then
-# exercises every major subsystem:
+# A self-contained integration test that deploys every contract
+# and exercises every major subsystem:
 #
 #   1. Contract deployment & architecture overview
 #   2. Operator registry inspection
@@ -18,8 +18,8 @@
 #  10. Guardian emergency pause / unpause
 #
 # Usage:
-#   ./script/run_demo.sh                    # standalone (starts own Anvil)
-#   RPC_URL=http://... ./script/run_demo.sh # against existing node
+#   ./script/run_integration_test.sh                    # standalone (starts own Anvil)
+#   RPC_URL=http://... ./script/run_integration_test.sh # against existing node
 #
 # Requirements: Foundry (forge + cast + anvil)
 
@@ -153,9 +153,9 @@ print('')
 #  MAIN
 # =============================================================
 
-section "CONSTITUTIONAL L2 — FULL SYSTEM DEMO"
+section "CONSTITUTIONAL L2 — FULL SYSTEM INTEGRATION TEST"
 
-echo "This demo deploys all contracts and exercises every major"
+echo "This integration test deploys all contracts and exercises every major"
 echo "subsystem of the Constitutional L2 governance stack."
 
 # ─── Step 0 ──────────────────────────────────────────────────
@@ -418,9 +418,9 @@ IS_PAUSED=$(_call "$MANAGER" "paused()(bool)")
 echo "  paused() = $IS_PAUSED"
 
 # ─── Summary ─────────────────────────────────────────────────
-section "DEMO COMPLETE"
+section "INTEGRATION TEST COMPLETE"
 
-echo "Subsystems exercised:"
+echo "Subsystems tested:"
 echo ""
 echo "  [x] Operator Registry   — 3 operators with (batcher, signer) tuples"
 echo "  [x] Adapter Registry    — V1 registered; V2 registered and upgraded"

@@ -81,10 +81,10 @@ cast send --rpc-url http://localhost:9545 \
 cast block-number --rpc-url http://localhost:9545
 ```
 
-### Try the Operator Rotation Demo
+### Run the Integration Test
 
 ```bash
-./start.sh demo
+./start.sh test
 ```
 
 ### View Status and Logs
@@ -490,12 +490,12 @@ op/
 │       ├── MockCurate.sol            # Test Kleros Curate mock
 │       ├── MockPermanentGTCRHybrid.sol # Test Hybrid PGTCR mock
 │       ├── MockSystemConfig.sol      # Test SystemConfig mock
-│       └── MockAdapterV2.sol         # V2 adapter stub (for demo/testing)
+│       └── MockAdapterV2.sol         # V2 adapter stub (for testing)
 ├── script/
 │   ├── DeployLocal.s.sol             # Local Anvil deployment (mocks, offline)
 │   ├── DeployRemote.s.sol            # Sepolia/Mainnet deployment (env-configured)
-│   ├── Demo.s.sol                    # Solidity demo (forge script)
-│   └── run_demo.sh                   # Full system demo (10 scenarios)
+│   ├── IntegrationTest.s.sol         # Solidity integration test (forge script)
+│   └── run_integration_test.sh       # Full system integration test (10 scenarios)
 ├── policies/
 │   ├── policy_sequencer_registry.md  # Sequencer constitutional rules
 │   └── policy_adapter_registry.md    # Adapter acceptance criteria

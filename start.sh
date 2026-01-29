@@ -9,7 +9,7 @@
 #   ./start.sh stop         # Stop all services
 #   ./start.sh logs         # View logs
 #   ./start.sh status       # Show status
-#   ./start.sh demo         # Run rotation demo
+#   ./start.sh test         # Run integration test
 #   ./start.sh clean        # Clean all data and start fresh
 #
 # Remote deployments (no Docker, requires Foundry + funded wallet):
@@ -47,7 +47,7 @@ print_usage() {
     echo "  stop      Stop all services"
     echo "  logs      View logs (follow mode)"
     echo "  status    Show current status"
-    echo "  demo      Run sequencer rotation demo"
+    echo "  test      Run integration test (full system test)"
     echo "  clean     Clean all data and start fresh"
     echo ""
     echo "Remote Commands (no Docker, requires Foundry + RPC):"
@@ -191,7 +191,7 @@ start_local() {
     echo ""
     echo "Next steps:"
     echo "  ./start.sh l2       - Start full L2 stack"
-    echo "  ./start.sh demo     - Run sequencer rotation demo"
+    echo "  ./start.sh test     - Run integration test"
     echo "  ./start.sh status   - Check service status"
     echo "  ./start.sh logs     - View logs"
     echo "  ./start.sh stop     - Stop all services"
@@ -260,7 +260,7 @@ start_l2() {
     echo "    --value 0.1ether 0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
     echo ""
     echo "Commands:"
-    echo "  ./start.sh demo     - Run sequencer rotation demo"
+    echo "  ./start.sh test     - Run integration test"
     echo "  ./start.sh status   - Check service status"
     echo "  ./start.sh logs     - View logs"
     echo "  ./start.sh stop     - Stop all services"
@@ -337,19 +337,19 @@ show_status() {
     echo ""
 }
 
-run_demo() {
+run_test() {
     print_header
-    echo -e "${CYAN}Running Full System Demo${NC}"
+    echo -e "${CYAN}Running Full System Integration Test${NC}"
     echo ""
-    echo "This runs a comprehensive, self-contained demo that exercises"
+    echo "This runs a comprehensive, self-contained integration test that exercises"
     echo "every subsystem: operator registry, adapter registry, rotation,"
     echo "challenge/removal, adapter upgrade, and guardian pause."
     echo ""
 
     check_foundry
 
-    # The demo script is self-contained (starts its own Anvil if needed)
-    exec bash script/run_demo.sh
+    # The integration test script is self-contained (starts its own Anvil if needed)
+    exec bash script/run_integration_test.sh
 }
 
 # =============================================================
@@ -493,9 +493,9 @@ case "${1:-local}" in
         check_docker
         show_status
         ;;
-    demo)
+    test)
         check_docker
-        run_demo
+        run_test
         ;;
     # Remote deployment commands
     sepolia)
