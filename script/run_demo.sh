@@ -135,6 +135,20 @@ print('')
 "
 }
 
+# Parse a contract address from DeployV2 broadcast JSON
+get_v2_addr() {
+    python3 -c "
+import json, sys
+with open('broadcast/DeployV2.s.sol/31337/run-latest.json') as f:
+    data = json.load(f)
+for tx in data.get('transactions', []):
+    if tx.get('transactionType') == 'CREATE' and tx.get('contractName') == '$1':
+        print(tx['contractAddress'])
+        sys.exit(0)
+print('')
+"
+}
+
 # =============================================================
 #  MAIN
 # =============================================================
@@ -322,9 +336,11 @@ echo "and passed the Kleros curation challenge period."
 echo ""
 
 echo "Step 8a: Deploy MockAdapterV2…"
-V2_JSON=$("$FORGE" create test/mocks/MockAdapterV2.sol:MockAdapterV2 \
-    --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" --json 2>/dev/null)
-ADAPTER_V2=$(echo "$V2_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['deployedTo'])")
+"$FORGE" script script/DeployV2.s.sol:DeployV2 \
+    --rpc-url "$RPC_URL" --broadcast --silent 2>&1 | \
+    sed -n '/deployed\|Version/Ip' | \
+    while IFS= read -r line; do echo "  $line"; done
+ADAPTER_V2=$(get_v2_addr MockAdapterV2)
 echo "  MockAdapterV2 deployed at: $ADAPTER_V2"
 
 V2_VERSION=$(_call "$ADAPTER_V2" "version()(uint256)")
