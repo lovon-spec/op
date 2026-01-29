@@ -514,12 +514,15 @@ contract KlerosSequencerManagerTest is Test {
         // Submit item (starts in Submitted status)
         string memory data = string(abi.encode(alice_batcher, alice_signer));
 
-        registry.addItemWithKeys{value: 0.01 ether}(data, alice_batcher, alice_signer);
+        bytes32 itemID = registry.addItemWithKeys{value: 0.01 ether}(data, alice_batcher, alice_signer);
 
-        // Warp past the challenge period
+        // Warp past the challenge period (submission period is 5 minutes in mock)
         vm.warp(block.timestamp + 6 minutes);
 
-        // After period, manager should consider it registered
+        // Sync the operator to the manager (this populates opIdToItemId mapping)
+        manager.syncAddOperator(itemID);
+
+        // After period and sync, manager should consider it registered
         assertTrue(manager.isRegisteredInRegistry(alice_batcher, alice_signer));
     }
 
@@ -561,13 +564,17 @@ contract KlerosSequencerManagerTest is Test {
     function test_RotateOperator_RotatesThroughAllOperators() public {
         _setupThreeOperators();
 
+        // Track timestamps explicitly to avoid any Foundry quirks
+        uint256 startTime = block.timestamp;
+
         // First rotation -> alice (index 0)
         manager.rotateOperator();
         KlerosSequencerManager.Operator memory current = manager.currentOperator();
         assertEq(current.batcher, alice_batcher);
         assertEq(current.unsafeSigner, alice_signer);
 
-        vm.warp(block.timestamp + EPOCH_DURATION);
+        // Warp to startTime + 1 epoch
+        vm.warp(startTime + EPOCH_DURATION);
 
         // Second rotation -> bob (index 1)
         manager.rotateOperator();
@@ -575,7 +582,8 @@ contract KlerosSequencerManagerTest is Test {
         assertEq(current.batcher, bob_batcher);
         assertEq(current.unsafeSigner, bob_signer);
 
-        vm.warp(block.timestamp + EPOCH_DURATION);
+        // Warp to startTime + 2 epochs
+        vm.warp(startTime + 2 * EPOCH_DURATION);
 
         // Third rotation -> charlie (index 2)
         manager.rotateOperator();
@@ -583,7 +591,8 @@ contract KlerosSequencerManagerTest is Test {
         assertEq(current.batcher, charlie_batcher);
         assertEq(current.unsafeSigner, charlie_signer);
 
-        vm.warp(block.timestamp + EPOCH_DURATION);
+        // Warp to startTime + 3 epochs
+        vm.warp(startTime + 3 * EPOCH_DURATION);
 
         // Fourth rotation -> wraps to alice (index 0)
         manager.rotateOperator();
