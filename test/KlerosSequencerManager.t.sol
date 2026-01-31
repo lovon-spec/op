@@ -772,23 +772,27 @@ contract KlerosSequencerManagerTest is Test {
         // First rotation
         manager.rotateOperator();
 
-        // Test at various points after epoch
+        // Track timestamp explicitly to avoid Foundry quirks with block.timestamp
+        uint256 ts = block.timestamp;
 
         // At exactly epoch end (start of grace period)
-        vm.warp(block.timestamp + EPOCH_DURATION);
+        ts = ts + EPOCH_DURATION;
+        vm.warp(ts);
         vm.prank(alice_batcher);
         manager.rotateOperator();
         assertEq(manager.currentOperator().batcher, bob_batcher);
 
         // Mid-grace period
-        vm.warp(block.timestamp + EPOCH_DURATION + 300); // 5 minutes into grace period
+        ts = ts + EPOCH_DURATION + 300; // 5 minutes into grace period
+        vm.warp(ts);
         vm.prank(bob_batcher);
         manager.rotateOperator();
         assertEq(manager.currentOperator().batcher, charlie_batcher);
 
         // After grace period (dead man's switch)
         uint256 gracePeriod = manager.GRACE_PERIOD();
-        vm.warp(block.timestamp + EPOCH_DURATION + gracePeriod + 100);
+        ts = ts + EPOCH_DURATION + gracePeriod + 100;
+        vm.warp(ts);
         vm.prank(charlie_batcher);
         manager.rotateOperator();
         assertEq(manager.currentOperator().batcher, alice_batcher);
