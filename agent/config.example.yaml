@@ -5,6 +5,10 @@
 # Each operator must run their own agent with their specific keys.
 # The agent monitors on-chain state and automatically starts/stops
 # the operator's OP Stack services when they become active.
+#
+# The agent also implements the Active Handoff Protocol:
+# - At epoch end, stops sequencing, flushes batches, calls rotateOperator()
+# - This ensures zero-downtime transitions with no L2 re-orgs
 
 # L1 RPC endpoint
 l1_rpc: "http://localhost:8545"
@@ -18,6 +22,12 @@ batcher_address: "0x..."
 # This operator's unsafe signer address (the key that signs P2P blocks)
 unsafe_signer_address: "0x..."
 
+# Private key for calling rotateOperator() during Active Handoff
+# IMPORTANT: Must be the private key for either batcher_address or unsafe_signer_address
+# The contract only allows the current operator to call rotateOperator() during the grace period
+# WARNING: Keep this secure! Consider using environment variable substitution or a secrets manager
+private_key: "0x..."
+
 # How often to check on-chain state (seconds)
 # Recommended: ~1 L1 block time (12s for mainnet)
 poll_interval: 12
@@ -26,3 +36,17 @@ poll_interval: 12
 # These are the admin RPC endpoints for your local op-node and op-batcher
 op_node_admin_url: "http://localhost:7545"
 op_batcher_admin_url: "http://localhost:7546"
+
+# ============ Active Handoff Settings ============
+
+# Start handoff preparation this many seconds before epoch ends
+# The agent will transition to HANDOFF_PENDING state and prepare to rotate
+# Recommended: 60 seconds (gives time to prepare without cutting it too close)
+handoff_lead_time: 60
+
+# Maximum time (seconds) to wait for batch flush to complete
+# If batches don't flush within this time, handoff proceeds anyway
+# Recommended: 300 seconds (5 minutes)
+# Note: GRACE_PERIOD on-chain is 600 seconds (10 minutes), so flush_timeout
+#       should be less than that to leave time for the rotateOperator() tx
+flush_timeout: 300
