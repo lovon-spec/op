@@ -10,6 +10,7 @@ A Constitutional L2 is an Optimistic Rollup where sequencer operation is governe
 - **Superchain Compliant**: "Green" status with ProxyAdmin to Optimism Security Council
 - **Hot-Swappable Adapters**: Survive OP Stack hardforks without contract upgrades
 - **Decentralized Sequencer Rotation**: Multiple operators take turns producing blocks
+- **Active Handoff Protocol**: Zero-downtime operator transitions with grace period protection
 - **Cold Staker / Hot Operator Model**: Separate stake ownership from operational keys
 - **Atomic Key Rotation**: Both batcher and unsafe signer keys rotated together
 - **Self-Activation Agents**: Operators run local agents that start/stop services based on on-chain state
@@ -206,16 +207,71 @@ This is a **constitutional requirement** - operators that produce blocks while u
 
 See [`agent/`](./agent/) for a reference implementation.
 
+### Active Handoff Protocol
+
+The Active Handoff protocol ensures **zero-downtime** operator transitions with no L2 re-orgs. It uses a **3-Phase State Machine**:
+
+```
+                    ACTIVE HANDOFF 3-PHASE STATE MACHINE
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                                                                         │
+  │   Phase 1: PROTECTED           Phase 2: VOLUNTARY         Phase 3: FORCED
+  │   (0 → epochDuration)          (+ GRACE_PERIOD)           (Dead Man's Switch)
+  │                                                                         │
+  │   ┌─────────────────────┐  ┌───────────────────────┐  ┌───────────────┐ │
+  │   │ Nobody can rotate   │  │ ONLY current operator │  │ Anyone can    │ │
+  │   │ Standard operation  │  │ can trigger rotation  │  │ force rotate  │ │
+  │   │                     │  │                       │  │               │ │
+  │   │ Operator produces   │  │ Operator:             │  │ Liveness      │ │
+  │   │ blocks normally     │  │ 1. Stops sequencing   │  │ fallback if   │ │
+  │   │                     │  │ 2. Flushes batches    │  │ operator is   │ │
+  │   │                     │  │ 3. Calls rotate()     │  │ unresponsive  │ │
+  │   └─────────────────────┘  └───────────────────────┘  └───────────────┘ │
+  │                                                                         │
+  │   Time: 0 ─────────────── epochDuration ────────── +GRACE_PERIOD ────▶  │
+  │                                (1 hour)              (10 minutes)       │
+  │                                                                         │
+  └─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Why Active Handoff?**
+
+The previous "Hard Stop" model allowed third-party keepers to immediately rotate after epoch ends. This caused **L2 re-orgs** because:
+1. Outgoing operator has "unsafe" blocks not yet batched to L1
+2. Keeper calls `rotateOperator()` → new operator takes over
+3. Old operator's batch tx reverts (no longer authorized)
+4. New operator builds from last *safe* L1 head → user transactions orphaned
+
+**The Solution: Grace Period**
+
+| Phase | Time Window | Who Can Rotate | Purpose |
+|-------|-------------|----------------|---------|
+| **1 - Protected** | `0` → `epochDuration` | Nobody | Standard operation |
+| **2 - Voluntary** | `epochDuration` → `+GRACE_PERIOD` | **Current Operator Only** | Flush batches, then rotate atomically |
+| **3 - Forced** | After Phase 2 | Anyone | Dead Man's Switch (liveness fallback) |
+
+**The Handoff Sequence (Operator Agent):**
+1. **Monitor**: Watch for epoch end approaching
+2. **Prepare**: Stop accepting new transactions
+3. **Flush**: Force `op-batcher` to submit all pending unsafe blocks to L1
+4. **Rotate**: Call `rotateOperator()` (ideally in same tx or immediately after batch confirms)
+5. **Handover**: New operator's agent sees L1 state change and immediately starts sequencing
+
+**Constants:**
+- `GRACE_PERIOD = 600` (10 minutes)
+
 ### How It Works
 
 1. **Operators Register**: Submit operational keys to Hybrid PGTCR with deposit + Constitutional Declaration
 2. **Community Curation**: Challenge period allows disputing unfit operators (Sybil, unqualified)
 3. **Sync to Manager**: Call `syncAddOperator(itemID)` to snapshot keys and create reverse mapping
-4. **Epoch Rotation**: Keeper calls `rotateOperator()` each epoch
-5. **Adapter Execution**: Manager delegates to adapter via delegatecall for OP Stack compatibility
-6. **Atomic Update**: Adapter sets BOTH `batcherHash` AND `unsafeBlockSigner` in SystemConfig
-7. **Self-Activation**: Operator agents detect the change and start/stop services
-8. **Constitutional Enforcement**: Misbehaving operators challenged via Kleros
+4. **Epoch Operation**: Operator produces blocks for `epochDuration`
+5. **Active Handoff**: At epoch end, operator flushes batches and calls `rotateOperator()` (grace period protects this)
+6. **Adapter Execution**: Manager delegates to adapter via delegatecall for OP Stack compatibility
+7. **Atomic Update**: Adapter sets BOTH `batcherHash` AND `unsafeBlockSigner` in SystemConfig
+8. **Self-Activation**: New operator's agent detects the change and immediately starts sequencing
+9. **Constitutional Enforcement**: Misbehaving operators challenged via Kleros
 
 ### Constitutional Rules (Summary)
 
@@ -250,6 +306,9 @@ IPermanentGTCRHybrid public immutable registry;     // Operator registry (Hybrid
 ISystemConfig public immutable systemConfig;        // OP Stack SystemConfig
 ICurate public immutable adapterRegistry;           // Adapter registry (Curate)
 uint256 public immutable epochDuration;             // Rotation interval
+
+// Constants
+uint256 public constant GRACE_PERIOD = 600;         // 10 min grace period for Active Handoff
 
 // Adapter state
 IOpStackAdapter public opAdapter;                   // Current adapter
@@ -405,7 +464,9 @@ python self_activation_agent.py --config config.yaml
 
 ## Keeper Integration
 
-Set up automatic rotation using Gelato, Chainlink Automation, or a custom keeper.
+Keepers serve as a **liveness fallback** (Dead Man's Switch) - they can only force rotation after the grace period expires (Phase 3).
+
+**Important**: Under normal operation, the **current operator** initiates rotation during the grace period (Phase 2). Keepers are only needed if an operator fails to rotate.
 
 ### Gelato Web3 Functions
 
@@ -415,22 +476,37 @@ Web3Function.onRun(async (context) => {
 
   const manager = new ethers.Contract(
     userArgs.managerAddress,
-    ["function timeUntilNextRotation() view returns (uint256)",
-     "function rotateOperator()"],
+    [
+      "function epochDuration() view returns (uint256)",
+      "function GRACE_PERIOD() view returns (uint256)",
+      "function lastRotationTimestamp() view returns (uint256)",
+      "function rotateOperator()"
+    ],
     provider
   );
 
-  const timeLeft = await manager.timeUntilNextRotation();
-  if (timeLeft > 0) {
-    return { canExec: false, message: `${timeLeft}s until rotation` };
+  const epochDuration = await manager.epochDuration();
+  const gracePeriod = await manager.GRACE_PERIOD();
+  const lastRotation = await manager.lastRotationTimestamp();
+  const now = Math.floor(Date.now() / 1000);
+
+  // Keepers can only rotate after epoch + grace period (Phase 3 - Dead Man's Switch)
+  const deadMansSwitchTime = lastRotation.add(epochDuration).add(gracePeriod);
+
+  if (now <= deadMansSwitchTime) {
+    const timeLeft = deadMansSwitchTime.sub(now);
+    return { canExec: false, message: `${timeLeft}s until Dead Man's Switch` };
   }
 
+  // Phase 3: Force rotation if operator hasn't rotated
   return {
     canExec: true,
     callData: manager.interface.encodeFunctionData("rotateOperator")
   };
 });
 ```
+
+**Note**: Keepers forcing rotation in Phase 3 may cause L2 re-orgs if the outgoing operator has unflushed batches. This is an acceptable tradeoff for liveness - a stalled chain is worse than a re-org.
 
 ## Security Considerations
 
@@ -541,7 +617,16 @@ A: Technically yes, but it's not recommended for security. The Cold Staker model
 A: 1) Register in Hybrid PGTCR with Constitutional Declaration, 2) Optionally set operational keys, 3) Wait for challenge period, 4) Call `syncAddOperator(itemID)`, 5) Deploy self-activation agent.
 
 **Q: What happens during rotation?**
-A: 1) Keeper calls `rotateOperator()`, 2) Manager validates operator via O(1) reverse mapping, 3) Manager calls adapter via delegatecall, 4) Adapter sets batcherHash and unsafeBlockSigner in SystemConfig, 5) Self-activation agents detect the change.
+A: 1) Current operator's agent detects epoch end, 2) Agent stops sequencing and flushes batches to L1, 3) Agent calls `rotateOperator()`, 4) Manager validates and calls adapter via delegatecall, 5) Adapter sets batcherHash and unsafeBlockSigner in SystemConfig, 6) New operator's agent detects the change and starts sequencing.
+
+**Q: What is the Active Handoff protocol?**
+A: Active Handoff is a 3-phase state machine that ensures zero-downtime operator transitions. During the "grace period" after epoch ends, only the current operator can trigger rotation. This prevents L2 re-orgs by allowing the outgoing operator to flush their batch queue before handing over control.
+
+**Q: Why can't keepers immediately rotate after epoch ends?**
+A: To prevent L2 re-orgs. If a keeper forces rotation while the outgoing operator has unflushed "unsafe" blocks, those blocks would be orphaned. The grace period (10 minutes) gives the operator time to flush batches and trigger rotation themselves.
+
+**Q: What if the current operator doesn't rotate during the grace period?**
+A: After the grace period expires (Phase 3 - Dead Man's Switch), anyone can force rotation. This ensures liveness even if an operator is unresponsive, though it may cause a re-org if they had unflushed batches.
 
 **Q: What is a "Superchain Green" chain?**
 A: A chain that maintains Optimism Security Council oversight via ProxyAdmin while allowing custom governance (like Kleros) for operational aspects. This ensures coordinated upgrades remain possible.

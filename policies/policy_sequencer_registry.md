@@ -51,7 +51,29 @@ Operators must not manipulate transaction ordering to extract value from users.
 * **Violation:** Producing a block or posting a batch to L1 with a timestamp $t$ where `manager.isCurrentOperator(...)` returned `false`.
 * **Rationale:** This enforces the rotation mechanics. A "zombie" sequencer confusing the network is a constitutional violation.
 
-### IV. Liveness (The "99% Rule")
+### IV. Active Handoff Compliance (The "Clean Exit" Rule)
+Operators must execute an orderly handoff at epoch end to prevent L2 re-orgs.
+
+* **Requirement:** At epoch end, the Operator MUST:
+    1. Stop accepting new transactions
+    2. Flush all pending unsafe blocks to L1 via `op-batcher`
+    3. Call `rotateOperator()` during the grace period (within `GRACE_PERIOD` = 10 minutes after epoch ends)
+
+* **Violation:** Failing to call `rotateOperator()` during the grace period, forcing a third-party keeper to execute the "Dead Man's Switch" (Phase 3).
+
+* **Impact of Violation:** When a keeper forces rotation after the grace period:
+    * Any unflushed batches from the outgoing operator will be rejected by L1 (no longer authorized batcher)
+    * Transactions in those batches are orphaned, causing an L2 re-org
+    * Users suffer rollback of their transactions
+
+* **Defense:** The Operator may prove:
+    * L1 network congestion prevented the batch tx from confirming
+    * L1 outage or gas price spike made batching infeasible
+    * Agent failure with evidence of attempted handoff
+
+* **Rationale:** The Active Handoff protocol ensures zero-downtime transitions. Operators who fail to execute it harm users by causing re-orgs.
+
+### V. Liveness (The "99% Rule")
 * **Violation:** Failing to produce blocks for more than **5 minutes** during the Operator's assigned epoch, absent an L1 outage or global OP Stack halt.
 
 ---
@@ -92,3 +114,14 @@ Challengers must demonstrate **harm** to the user.
 * **Required Evidence:**
     1.  **L1 Reference:** The L1 Transaction Hash where the batch was posted.
     2.  **Timestamp Mismatch:** A screenshot or Etherscan link showing the L1 block timestamp was outside the Operator's epoch.
+
+### D. For Active Handoff Violations (On-Chain Proof)
+* **Required Evidence:**
+    1.  **Grace Period Expiry:** Proof that the grace period expired without the operator calling `rotateOperator()`.
+        * Show `lastRotationTimestamp` + `epochDuration` + `GRACE_PERIOD` < timestamp of the forced rotation tx.
+    2.  **Forced Rotation:** The L1 Transaction Hash where a third party (not the operator's batcher or unsafeSigner) called `rotateOperator()`.
+    3.  **Re-org Evidence (if claiming user harm):**
+        * Block numbers of orphaned L2 blocks
+        * Transaction hashes that were rolled back
+        * User attestations or explorer evidence of reverted transactions
+* **Attribution:** The `OperatorRotated` event will show the outgoing operator. The caller of `rotateOperator()` in Phase 3 proves forced rotation.
