@@ -5,13 +5,14 @@ pragma solidity ^0.8.20;
  * @title IOpStackAdapter
  * @notice Interface for OP Stack sequencer rotation adapters.
  * @dev Adapters implement chain-specific logic for rotating sequencers.
- *      This allows the KlerosSequencerManager to survive OP Stack hardforks
- *      by hot-swapping adapters without changing the core manager contract.
+ *      This allows the SharedSequencerHub to survive OP Stack hardforks
+ *      by hot-swapping adapters without changing the core hub contract.
  *
  *      Key design principles:
  *      - "Ratchet" versioning: new adapters must have strictly higher version
  *      - "Hydra" defense: multiple adapters can be deployed to GTCR registry
- *      - Adapters are called via delegatecall from the manager
+ *      - Adapters are called via delegatecall from the Hub
+ *      - Hub must be the owner of target SystemConfig contracts
  */
 interface IOpStackAdapter {
     // ============ Errors ============

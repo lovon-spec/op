@@ -49,9 +49,15 @@ coverage:
 anvil:
 	anvil --port 8545 --block-time 2
 
-# Deploy contracts to local Anvil
+# Deploy contracts to local Anvil (legacy single-chain)
 deploy-local:
 	forge script script/DeployLocal.s.sol:DeployLocal \
+		--rpc-url http://127.0.0.1:8545 \
+		--broadcast
+
+# Deploy KSSN architecture to local Anvil
+deploy-kssn:
+	forge script script/DeployKSSN.s.sol:DeployKSSN \
 		--rpc-url http://127.0.0.1:8545 \
 		--broadcast
 
@@ -151,7 +157,8 @@ help:
 	@echo ""
 	@echo "Local Development:"
 	@echo "  make anvil        - Start local Anvil node"
-	@echo "  make deploy-local - Deploy to local Anvil"
+	@echo "  make deploy-local - Deploy legacy single-chain to local Anvil"
+	@echo "  make deploy-kssn  - Deploy KSSN Hub-and-Spoke to local Anvil"
 	@echo "  make demo         - Run interactive demo"
 	@echo ""
 	@echo "Docker (Full OP Stack):"

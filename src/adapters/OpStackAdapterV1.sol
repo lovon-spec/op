@@ -12,8 +12,13 @@ import {ISystemConfig} from "../interfaces/ISystemConfig.sol";
  *      - setUnsafeBlockSigner() for P2P block signing authorization
  *
  *      This adapter is designed to be called via delegatecall from
- *      KlerosSequencerManager, which must be the owner of the target
- *      SystemConfig contract.
+ *      SharedSequencerHub, which must be the owner of the target
+ *      SystemConfig contract(s).
+ *
+ *      KSSN Architecture:
+ *      - Hub owns all connected SystemConfig contracts
+ *      - Hub delegatecalls to adapter for version-specific logic
+ *      - Adapter code executes in Hub's context (msg.sender = Hub)
  *
  *      Version: 1.0.0 (1000000)
  */
