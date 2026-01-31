@@ -36,17 +36,21 @@ contract IntegrationTest is Script {
 
     // Operator 1: batcher (account 1) + unsafeSigner (account 4)
     address constant BATCHER_1 = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+    uint256 constant BATCHER_1_KEY = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
     address constant SIGNER_1 = 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc;
 
     // Operator 2: batcher (account 2) + unsafeSigner (account 5)
     address constant BATCHER_2 = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
+    uint256 constant BATCHER_2_KEY = 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a;
     address constant SIGNER_2 = 0x976EA74026E726554dB657fA54763abd0C3a0aa9;
 
     // Operator 3: batcher (account 3) + unsafeSigner (account 6)
     address constant BATCHER_3 = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
+    uint256 constant BATCHER_3_KEY = 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6;
     address constant SIGNER_3 = 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955;
 
     uint256 constant EPOCH_DURATION = 10; // 10 seconds for testing
+    uint256 constant GRACE_PERIOD = 600;  // 10 minutes grace period
 
     MockPermanentGTCRHybrid public registry;
     MockCurate public adapterRegistry;
@@ -217,14 +221,17 @@ contract IntegrationTest is Script {
     }
 
     function _step5_secondRotation() internal {
-        console2.log("STEP 5: Wait for epoch and rotate again...");
+        console2.log("STEP 5: Wait for epoch and rotate (Active Handoff)...");
         console2.log("-------------------------------------------");
+        console2.log("  Active Handoff: Only current operator can rotate during grace period");
 
-        // Wait for epoch to end
+        // Wait for epoch to end (entering grace period)
         console2.log("  Waiting for epoch to end (", EPOCH_DURATION, "seconds)...");
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
 
-        vm.startBroadcast(DEPLOYER_KEY);
+        // Current operator (Operator 1) initiates rotation during grace period
+        console2.log("  Current operator (Operator 1) calling rotateOperator()...");
+        vm.startBroadcast(BATCHER_1_KEY);
 
         manager.rotateOperator();
 
@@ -259,35 +266,39 @@ contract IntegrationTest is Script {
     }
 
     function _step7_rotationAfterChallenge() internal {
-        console2.log("STEP 7: Rotation after challenge...");
+        console2.log("STEP 7: Rotation after challenge (Active Handoff)...");
         console2.log("-------------------------------------------");
 
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
-
-        vm.startBroadcast(DEPLOYER_KEY);
 
         KlerosSequencerManager.Operator memory current = manager.currentOperator();
         console2.log("  Current operator before rotation:");
         console2.log("    batcher:", current.batcher);
 
+        // Current operator (Operator 2) initiates rotation
+        // Note: Operator 2 was challenged but is still current until rotated
+        vm.startBroadcast(BATCHER_2_KEY);
         manager.rotateOperator();
+        vm.stopBroadcast();
 
-        console2.log("  >>> Rotation executed!");
+        console2.log("  >>> Rotation executed (by current operator during grace period)!");
         current = manager.currentOperator();
         console2.log("  New current operator:");
         console2.log("    batcher:", current.batcher);
         console2.log("    signer: ", current.unsafeSigner);
 
-        // Wait and rotate again to show it wraps
+        // Wait and rotate again to show it wraps (Operator 3 rotates)
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
-        manager.rotateOperator();
 
-        console2.log("  >>> Another rotation...");
+        vm.startBroadcast(BATCHER_3_KEY);
+        manager.rotateOperator();
+        vm.stopBroadcast();
+
+        console2.log("  >>> Another rotation (by Operator 3)...");
         current = manager.currentOperator();
         console2.log("  Current operator:");
         console2.log("    batcher:", current.batcher);
 
-        vm.stopBroadcast();
         console2.log("");
     }
 

@@ -235,15 +235,7 @@ The Active Handoff protocol ensures **zero-downtime** operator transitions with 
   └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Why Active Handoff?**
-
-The previous "Hard Stop" model allowed third-party keepers to immediately rotate after epoch ends. This caused **L2 re-orgs** because:
-1. Outgoing operator has "unsafe" blocks not yet batched to L1
-2. Keeper calls `rotateOperator()` → new operator takes over
-3. Old operator's batch tx reverts (no longer authorized)
-4. New operator builds from last *safe* L1 head → user transactions orphaned
-
-**The Solution: Grace Period**
+**3-Phase Rotation:**
 
 | Phase | Time Window | Who Can Rotate | Purpose |
 |-------|-------------|----------------|---------|
@@ -251,7 +243,9 @@ The previous "Hard Stop" model allowed third-party keepers to immediately rotate
 | **2 - Voluntary** | `epochDuration` → `+GRACE_PERIOD` | **Current Operator Only** | Flush batches, then rotate atomically |
 | **3 - Forced** | After Phase 2 | Anyone | Dead Man's Switch (liveness fallback) |
 
-**The Handoff Sequence (Operator Agent):**
+The grace period ensures the outgoing operator can flush all pending batches to L1 before triggering rotation, preventing any transaction orphaning.
+
+**Handoff Sequence (Operator Agent):**
 1. **Monitor**: Watch for epoch end approaching
 2. **Prepare**: Stop accepting new transactions
 3. **Flush**: Force `op-batcher` to submit all pending unsafe blocks to L1

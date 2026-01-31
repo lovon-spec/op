@@ -79,15 +79,7 @@ The agent implements the **Active Handoff Protocol** to ensure zero-downtime tra
 
 **GRACE_PERIOD = 600 seconds (10 minutes)**
 
-### Why Active Handoff Matters
-
-Without Active Handoff, third-party keepers could force rotation immediately after epoch ends, causing **L2 re-orgs**:
-1. Operator has "unsafe" blocks not yet batched to L1
-2. Keeper calls `rotateOperator()` → new operator takes over
-3. Old operator's batch tx **reverts** (no longer authorized)
-4. User transactions in those blocks are **orphaned**
-
-The grace period ensures the outgoing operator can flush their batch queue before triggering rotation.
+The grace period ensures the outgoing operator can flush all pending batches to L1 before triggering rotation, preventing any transaction orphaning.
 
 ## How It Works
 
