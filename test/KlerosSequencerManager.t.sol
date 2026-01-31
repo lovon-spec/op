@@ -568,6 +568,7 @@ contract KlerosSequencerManagerTest is Test {
         uint256 startTime = block.timestamp;
 
         // First rotation -> alice (index 0)
+        // No current operator, so anyone can rotate
         manager.rotateOperator();
         KlerosSequencerManager.Operator memory current = manager.currentOperator();
         assertEq(current.batcher, alice_batcher);
@@ -577,6 +578,8 @@ contract KlerosSequencerManagerTest is Test {
         vm.warp(startTime + EPOCH_DURATION);
 
         // Second rotation -> bob (index 1)
+        // Current operator (alice) triggers the rotation during grace period
+        vm.prank(alice_batcher);
         manager.rotateOperator();
         current = manager.currentOperator();
         assertEq(current.batcher, bob_batcher);
@@ -586,6 +589,8 @@ contract KlerosSequencerManagerTest is Test {
         vm.warp(startTime + 2 * EPOCH_DURATION);
 
         // Third rotation -> charlie (index 2)
+        // Current operator (bob) triggers the rotation during grace period
+        vm.prank(bob_batcher);
         manager.rotateOperator();
         current = manager.currentOperator();
         assertEq(current.batcher, charlie_batcher);
@@ -595,6 +600,8 @@ contract KlerosSequencerManagerTest is Test {
         vm.warp(startTime + 3 * EPOCH_DURATION);
 
         // Fourth rotation -> wraps to alice (index 0)
+        // Current operator (charlie) triggers the rotation during grace period
+        vm.prank(charlie_batcher);
         manager.rotateOperator();
         current = manager.currentOperator();
         assertEq(current.batcher, alice_batcher);
@@ -627,6 +634,8 @@ contract KlerosSequencerManagerTest is Test {
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         // Second rotation -> should skip bob and go to charlie
+        // Current operator (alice) triggers rotation during grace period
+        vm.prank(alice_batcher);
         manager.rotateOperator();
         current = manager.currentOperator();
         assertEq(current.batcher, charlie_batcher);
@@ -660,6 +669,198 @@ contract KlerosSequencerManagerTest is Test {
         manager.setPaused(true);
 
         vm.expectRevert(KlerosSequencerManager.ContractPaused.selector);
+        manager.rotateOperator();
+    }
+
+    // ============ Grace Period Tests (Active Handoff) ============
+
+    function test_GracePeriod_ConstantValue() public view {
+        // GRACE_PERIOD should be 10 minutes (600 seconds)
+        assertEq(manager.GRACE_PERIOD(), 600);
+    }
+
+    function test_GracePeriod_FirstRotationAnyoneCanRotate() public {
+        // First rotation (no current operator) - anyone can rotate during grace period
+        _setupThreeOperators();
+
+        // We're in grace period (after epoch, before dead man's switch)
+        // But since there's no current operator yet, anyone can rotate
+        address randomKeeper = address(0xBEEF);
+        vm.prank(randomKeeper);
+        manager.rotateOperator();
+
+        // Verify rotation succeeded
+        KlerosSequencerManager.Operator memory current = manager.currentOperator();
+        assertEq(current.batcher, alice_batcher);
+    }
+
+    function test_GracePeriod_OnlyCurrentOperatorDuringGracePeriod() public {
+        _setupThreeOperators();
+
+        // First rotation to set alice as current operator
+        manager.rotateOperator();
+
+        // Warp to exactly end of epoch (start of grace period)
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        // Random keeper should NOT be able to rotate during grace period
+        address randomKeeper = address(0xBEEF);
+        vm.prank(randomKeeper);
+        vm.expectRevert(KlerosSequencerManager.OnlyCurrentOperatorDuringGracePeriod.selector);
+        manager.rotateOperator();
+    }
+
+    function test_GracePeriod_CurrentOperatorBatcherCanRotate() public {
+        _setupThreeOperators();
+
+        // First rotation to set alice as current operator
+        manager.rotateOperator();
+
+        // Warp to grace period
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        // Current operator's BATCHER should be able to rotate
+        vm.prank(alice_batcher);
+        manager.rotateOperator();
+
+        // Verify rotation happened
+        KlerosSequencerManager.Operator memory current = manager.currentOperator();
+        assertEq(current.batcher, bob_batcher);
+    }
+
+    function test_GracePeriod_CurrentOperatorSignerCanRotate() public {
+        _setupThreeOperators();
+
+        // First rotation to set alice as current operator
+        manager.rotateOperator();
+
+        // Warp to grace period
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        // Current operator's UNSAFE SIGNER should be able to rotate
+        vm.prank(alice_signer);
+        manager.rotateOperator();
+
+        // Verify rotation happened
+        KlerosSequencerManager.Operator memory current = manager.currentOperator();
+        assertEq(current.batcher, bob_batcher);
+    }
+
+    function test_GracePeriod_DeadMansSwitchAnyoneCanRotate() public {
+        _setupThreeOperators();
+
+        // First rotation to set alice as current operator
+        manager.rotateOperator();
+
+        // Warp past epoch + grace period (Dead Man's Switch / Phase 3)
+        uint256 gracePeriod = manager.GRACE_PERIOD();
+        vm.warp(block.timestamp + EPOCH_DURATION + gracePeriod + 1);
+
+        // Anyone can rotate after grace period expires
+        address randomKeeper = address(0xBEEF);
+        vm.prank(randomKeeper);
+        manager.rotateOperator();
+
+        // Verify rotation happened
+        KlerosSequencerManager.Operator memory current = manager.currentOperator();
+        assertEq(current.batcher, bob_batcher);
+    }
+
+    function test_GracePeriod_CurrentOperatorCanAlwaysRotateAfterEpoch() public {
+        _setupThreeOperators();
+
+        // First rotation
+        manager.rotateOperator();
+
+        // Test at various points after epoch
+
+        // At exactly epoch end (start of grace period)
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        vm.prank(alice_batcher);
+        manager.rotateOperator();
+        assertEq(manager.currentOperator().batcher, bob_batcher);
+
+        // Mid-grace period
+        vm.warp(block.timestamp + EPOCH_DURATION + 300); // 5 minutes into grace period
+        vm.prank(bob_batcher);
+        manager.rotateOperator();
+        assertEq(manager.currentOperator().batcher, charlie_batcher);
+
+        // After grace period (dead man's switch)
+        uint256 gracePeriod = manager.GRACE_PERIOD();
+        vm.warp(block.timestamp + EPOCH_DURATION + gracePeriod + 100);
+        vm.prank(charlie_batcher);
+        manager.rotateOperator();
+        assertEq(manager.currentOperator().batcher, alice_batcher);
+    }
+
+    function test_GracePeriod_RandomKeeperRevertsAtVariousPoints() public {
+        _setupThreeOperators();
+        manager.rotateOperator(); // alice is now current
+
+        address randomKeeper = address(0xBEEF);
+        uint256 gracePeriod = manager.GRACE_PERIOD();
+
+        // At exact epoch end
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        vm.prank(randomKeeper);
+        vm.expectRevert(KlerosSequencerManager.OnlyCurrentOperatorDuringGracePeriod.selector);
+        manager.rotateOperator();
+
+        // 1 second into grace period
+        vm.warp(block.timestamp + 1);
+        vm.prank(randomKeeper);
+        vm.expectRevert(KlerosSequencerManager.OnlyCurrentOperatorDuringGracePeriod.selector);
+        manager.rotateOperator();
+
+        // 1 second before grace period ends
+        vm.warp(block.timestamp + gracePeriod - 2);
+        vm.prank(randomKeeper);
+        vm.expectRevert(KlerosSequencerManager.OnlyCurrentOperatorDuringGracePeriod.selector);
+        manager.rotateOperator();
+
+        // Exactly at grace period end (still within)
+        vm.warp(block.timestamp + 1);
+        vm.prank(randomKeeper);
+        vm.expectRevert(KlerosSequencerManager.OnlyCurrentOperatorDuringGracePeriod.selector);
+        manager.rotateOperator();
+    }
+
+    function test_GracePeriod_BoundaryConditions() public {
+        _setupThreeOperators();
+        manager.rotateOperator(); // alice is now current
+
+        uint256 rotationTime = block.timestamp;
+        address randomKeeper = address(0xBEEF);
+        uint256 gracePeriod = manager.GRACE_PERIOD();
+
+        // At exactly epochDuration + gracePeriod (still Phase 2)
+        vm.warp(rotationTime + EPOCH_DURATION + gracePeriod);
+        vm.prank(randomKeeper);
+        vm.expectRevert(KlerosSequencerManager.OnlyCurrentOperatorDuringGracePeriod.selector);
+        manager.rotateOperator();
+
+        // 1 second after (Phase 3 - Dead Man's Switch)
+        vm.warp(rotationTime + EPOCH_DURATION + gracePeriod + 1);
+        vm.prank(randomKeeper);
+        manager.rotateOperator(); // Should succeed
+        assertEq(manager.currentOperator().batcher, bob_batcher);
+    }
+
+    function test_GracePeriod_OtherOperatorCannotRotate() public {
+        _setupThreeOperators();
+        manager.rotateOperator(); // alice is now current
+
+        // Warp to grace period
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        // Bob (next operator in queue) should NOT be able to force rotation
+        vm.prank(bob_batcher);
+        vm.expectRevert(KlerosSequencerManager.OnlyCurrentOperatorDuringGracePeriod.selector);
+        manager.rotateOperator();
+
+        vm.prank(bob_signer);
+        vm.expectRevert(KlerosSequencerManager.OnlyCurrentOperatorDuringGracePeriod.selector);
         manager.rotateOperator();
     }
 
@@ -782,6 +983,8 @@ contract KlerosSequencerManagerTest is Test {
         assertEq(current.batcher, alice_batcher);
 
         vm.warp(block.timestamp + EPOCH_DURATION);
+        // Current operator (alice) triggers rotation during grace period
+        vm.prank(alice_batcher);
         manager.rotateOperator();
         current = manager.currentOperator();
         assertEq(current.batcher, alice_batcher);
@@ -972,6 +1175,8 @@ contract KlerosSequencerManagerTest is Test {
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         // Rotation should work with new adapter
+        // Current operator (alice) triggers rotation during grace period
+        vm.prank(alice_batcher);
         manager.rotateOperator();
         current = manager.currentOperator();
         assertEq(current.batcher, bob_batcher);

@@ -77,6 +77,7 @@ contract KlerosSequencerManager {
     error AdapterCallFailed();
     error NoAdapterSet();
     error ChallengePeriodNotPassed();
+    error OnlyCurrentOperatorDuringGracePeriod();
 
     // ============ Types ============
 
@@ -103,6 +104,12 @@ contract KlerosSequencerManager {
 
     /// @notice Duration of each epoch in seconds.
     uint256 public immutable epochDuration;
+
+    // ============ Constants ============
+
+    /// @notice Grace period after epoch ends during which only the current operator can rotate.
+    /// @dev This enables "Active Handoff" - the operator can flush their batch queue before rotating.
+    uint256 public constant GRACE_PERIOD = 600; // 10 minutes
 
     // ============ State ============
 
@@ -556,10 +563,43 @@ contract KlerosSequencerManager {
     /**
      * @notice Rotates to the next valid operator and updates SystemConfig.
      * @dev Uses O(1) validation via reverse mapping.
+     *
+     *      Implements "Active Handoff" 3-Phase State Machine:
+     *      - Phase 1 (Protected): 0 to epochDuration - Nobody can rotate
+     *      - Phase 2 (Voluntary): epochDuration to epochDuration + GRACE_PERIOD - Only current operator can rotate
+     *      - Phase 3 (Forced): After Phase 2 - Anyone can rotate (Dead Man's Switch)
+     *
+     *      Phase 2 enables zero-downtime handoffs: the outgoing operator flushes their
+     *      batch queue before triggering rotation, preventing L2 re-orgs.
      */
     function rotateOperator() external notPaused {
-        if (block.timestamp < lastRotationTimestamp + epochDuration) revert EpochNotEnded();
+        // 1. Calculate timing
+        uint256 timeSinceStart = block.timestamp - lastRotationTimestamp;
+
+        // Phase 1 check: Protected period - nobody can rotate
+        if (timeSinceStart < epochDuration) revert EpochNotEnded();
+
         if (activeOperators.length == 0) revert NoActiveOperators();
+
+        // 2. Check if there's a current operator to protect
+        //    Grace period only applies when there IS a current operator.
+        //    If no current operator (first rotation or recovery), anyone can rotate.
+        bool hasCurrentOperator = (currentIndex < activeOperators.length);
+
+        if (hasCurrentOperator) {
+            // 3. Identify if caller is the current operator
+            Operator memory currentOp = activeOperators[currentIndex];
+            bool isCallerCurrentOperator = (msg.sender == currentOp.batcher || msg.sender == currentOp.unsafeSigner);
+
+            // 4. Phase Logic: Determine if we're in Dead Man's Switch (Phase 3)
+            bool isDeadMansSwitch = timeSinceStart > (epochDuration + GRACE_PERIOD);
+
+            // Enforce Phase 2 exclusivity: Only current operator can rotate during grace period
+            if (!isDeadMansSwitch && !isCallerCurrentOperator) {
+                revert OnlyCurrentOperatorDuringGracePeriod();
+            }
+        }
+        // If no current operator, skip grace period check - allows bootstrap/recovery
 
         uint256 initialLen = activeOperators.length;
         uint256 checks = 0;
