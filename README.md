@@ -1,21 +1,21 @@
-# Constitutional L2 - OP Stack with Kleros Governance
+# Kleros Shared Sequencer Network (KSSN)
 
-A fully decentralized Layer 2 rollup based on the OP Stack (Superchain), with constitutional governance powered by Kleros subjective dispute resolution.
+A fully decentralized shared sequencing layer for multiple OP Stack chains, with constitutional governance powered by Kleros subjective dispute resolution.
 
-## What is a Constitutional L2?
+## What is KSSN?
 
-A Constitutional L2 is an Optimistic Rollup where sequencer operation is governed by a **constitution** - a set of rules that operators must follow, enforced through decentralized dispute resolution rather than code alone.
+The **Kleros Shared Sequencer Network** centralizes sequencing authority for multiple OP Stack chains into a single "Hub" contract while preserving their individual sovereignty via a Federalist Policy system. It implements **enshrined Proposer-Builder Separation (ePBS)** for capital efficiency and liability separation.
 
 **Key Features:**
-- **Superchain Compliant**: "Green" status with ProxyAdmin to Optimism Security Council
-- **Hot-Swappable Adapters**: Survive OP Stack hardforks without contract upgrades
-- **Decentralized Sequencer Rotation**: Multiple operators take turns producing blocks
-- **Active Handoff Protocol**: Zero-downtime operator transitions with grace period protection
-- **Cold Staker / Hot Operator Model**: Separate stake ownership from operational keys
-- **Atomic Key Rotation**: Both batcher and unsafe signer keys rotated together
-- **Self-Activation Agents**: Operators run local agents that start/stop services based on on-chain state
-- **Subjective Rule Enforcement**: Operators can be challenged for violating constitutional rules
-- **Kleros Dispute Resolution**: Human jurors decide disputes, enabling nuanced enforcement
+- **Hub-and-Spoke Architecture**: Single Hub manages multiple L2 chains atomically
+- **Atomic Multichain Rotation**: Updates ALL connected chains in a single transaction
+- **Dual-Registry PBS**: Separate Proposer Registry (liveness) and Builder Registry (policy)
+- **Federalist Policy System**: Each chain can require specific compliance (OFAC, KYC, etc.)
+- **Sovereignty Matrix**: Builders accumulate policy tags to qualify for specific chains
+- **Union Rule**: Cross-chain atomic bundles require ALL policy tags from touched chains
+- **Active Handoff Protocol**: Zero-downtime proposer transitions with grace period
+- **Superchain Aligned**: Designed to replace Superchain Council multisig with algorithmic governance
+- **Scalable**: Sharded rotation supports thousands of chains
 
 ## The Constitution
 
@@ -99,41 +99,105 @@ cast block-number --rpc-url http://localhost:9545
 
 ## Architecture
 
-### Green Adapter Architecture (Superchain Compliant)
+### KSSN Hub-and-Spoke Architecture
 
-The Constitutional L2 achieves **Superchain compliance** ("Green" status) through:
-
-1. **ProxyAdmin → Optimism Security Council**: Standard upgrade path maintained
-2. **SystemConfig.owner → KlerosSequencerManager**: Constitutional control of sequencer rotation
-3. **Hot-Swappable Adapters**: Survive OP Stack hardforks without changing the manager
+The KSSN uses a Hub-and-Spoke model with dual registries for Proposer-Builder Separation (PBS):
 
 ```
-                      GREEN ADAPTER ARCHITECTURE
+                        KSSN HUB-AND-SPOKE ARCHITECTURE
 
-  ┌─────────────────────────────────────────────────────────────────────────────┐
-  │                              L1 (Ethereum)                                   │
-  │                                                                             │
-  │  ┌─────────────────┐   ┌─────────────────┐                                  │
-  │  │ Operator        │   │ Adapter         │   (Kleros Curate Registries)     │
-  │  │ Registry        │   │ Registry        │                                  │
-  │  │ (PGTCR Hybrid)  │   │ (Curate)        │                                  │
-  │  └────────┬────────┘   └────────┬────────┘                                  │
-  │           │                     │                                           │
-  │           │   ┌─────────────────┴─────────────────┐                         │
-  │           │   │                                   │                         │
-  │           ▼   ▼                                   ▼                         │
-  │  ┌──────────────────────────────┐    ┌────────────────────┐                 │
-  │  │   KlerosSequencerManager     │───▶│  OpStackAdapterV1  │  (delegatecall) │
-  │  │                              │    └─────────┬──────────┘                 │
-  │  │  - syncAddOperator(itemID)   │              │                            │
-  │  │  - rotateOperator()          │              ▼                            │
-  │  │  - upgradeAdapter(newAddr)   │    ┌─────────────────┐                    │
-  │  │                              │    │  SystemConfig   │                    │
-  │  │  Ratchet: v2 > v1 required   │    │  (OP Stack)     │                    │
-  │  └──────────────────────────────┘    └─────────────────┘                    │
-  │                                                                             │
-  └─────────────────────────────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────────────────────────────────────────────────┐
+  │                                 L1 (Ethereum)                                    │
+  │                                                                                 │
+  │     ┌─────────────────────┐                   ┌─────────────────────┐           │
+  │     │  ProposerRegistry   │                   │   BuilderRegistry   │           │
+  │     │  "The Dumb Pipe"    │                   │  "The Value Engine" │           │
+  │     │                     │                   │                     │           │
+  │     │  - Top-N DPoS       │                   │  - Policy Tags      │           │
+  │     │  - Liveness Focus   │                   │  - High Bonds       │           │
+  │     │  - Safe Harbor      │                   │  - Content Liable   │           │
+  │     └──────────┬──────────┘                   └──────────┬──────────┘           │
+  │                │                                         │                      │
+  │                └──────────────────┬──────────────────────┘                      │
+  │                                   │                                             │
+  │                                   ▼                                             │
+  │                    ┌──────────────────────────────┐                             │
+  │                    │    SharedSequencerHub        │                             │
+  │                    │    (Central Authority)       │                             │
+  │                    │                              │                             │
+  │                    │  - rotateNetwork()           │  ◄── Atomic Multichain      │
+  │                    │  - connectChain()            │      Rotation               │
+  │                    │  - rotateShard()             │                             │
+  │                    └──────────────┬───────────────┘                             │
+  │                                   │                                             │
+  │              ┌────────────────────┼────────────────────┐                        │
+  │              │                    │                    │                        │
+  │              ▼                    ▼                    ▼                        │
+  │     ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐              │
+  │     │  SystemConfig   │  │  SystemConfig   │  │  SystemConfig   │  (Spokes)    │
+  │     │  Chain A        │  │  Chain B        │  │  Chain C        │              │
+  │     │  Policy: OFAC   │  │  Policy: KYC    │  │  Policy: NEUTRAL│              │
+  │     └─────────────────┘  └─────────────────┘  └─────────────────┘              │
+  │                                                                                 │
+  └─────────────────────────────────────────────────────────────────────────────────┘
+
+                              ATOMIC ROTATION
+  ┌─────────────────────────────────────────────────────────────────────────────────┐
+  │                                                                                 │
+  │   rotateNetwork() updates ALL chains in a single transaction:                   │
+  │                                                                                 │
+  │   for (chain in connectedChains) {                                              │
+  │       adapter.rotateSequencer(chain.systemConfig, nextProposer, nextProposer)   │
+  │   }                                                                             │
+  │                                                                                 │
+  │   Gas: ~60k per chain | Max: ~450 chains per block at 30M gas limit             │
+  │                                                                                 │
+  └─────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Dual-Registry PBS (Proposer-Builder Separation)
+
+| Registry | Role | Focus | Liability |
+|----------|------|-------|-----------|
+| **ProposerRegistry** | Node Operators | Liveness | Liveness + Registry Compliance |
+| **BuilderRegistry** | MEV Searchers | Policy | Content + Data Availability |
+
+**Proposer Registry ("The Dumb Pipe")**
+- Top-N Delegated Proof of Stake (default: top 100)
+- Public `rebalance()` swaps low-stake active with high-stake inactive
+- **Safe Harbor**: Immune to content-based slashing if signing registered Builder headers
+- Round-robin selection algorithm
+
+**Builder Registry ("The Value Engine")**
+- High bonds (default: 500 ETH) for "Bad Block" damages
+- Policy Tags: `OFAC`, `KYC`, `NO_MEV`, `NO_GAMBLING`, `NEUTRAL`
+- **Union Rule**: For atomic cross-chain bundles, builder needs ALL required policy tags
+
+### The Sovereignty Matrix
+
+Each connected chain specifies a `policyId` requirement:
+
+```
+              SOVEREIGNTY MATRIX
+
+  Builder     │ OFAC │ KYC │ NO_MEV │ NEUTRAL │
+  ────────────┼──────┼─────┼────────┼─────────┤
+  Builder A   │  ✓   │  ✓  │   ✗    │    ✓    │
+  Builder B   │  ✓   │  ✗  │   ✓    │    ✓    │
+  Builder C   │  ✗   │  ✗  │   ✗    │    ✓    │
+
+  Chain Eligibility:
+  - Chain with POLICY_OFAC: Builders A, B
+  - Chain with POLICY_KYC: Builder A only
+  - Chain with POLICY_NEUTRAL: All builders
+```
+
+**The Union Rule for Atomicity:**
+For a Builder to construct an atomic bundle touching Chain A (Policy X) and Chain B (Policy Y), the Builder must possess BOTH Tag X AND Tag Y.
+
+### Legacy Single-Chain Architecture
+
+For single-chain deployments, the legacy `KlerosSequencerManager` architecture is still available. See the [Legacy Architecture](#legacy-single-chain-architecture) section below.
 
 ### Cold Staker / Hot Operator Model
 
@@ -284,9 +348,135 @@ See the [Sequencer Policy](./policies/policy_sequencer_registry.md) for detailed
 
 ## Smart Contracts
 
-### KlerosSequencerManager
+### SharedSequencerHub (KSSN)
 
-The bridge between Kleros governance and OP Stack execution, with hot-swappable adapter support.
+The central nervous system of KSSN - manages atomic rotation across all connected chains.
+
+```solidity
+// Chain configuration for each connected Spoke
+struct ChainConfig {
+    address systemConfig;   // The OP Stack SystemConfig contract
+    bytes32 policyId;       // The Policy ID this chain requires
+    address adapter;        // Adapter for version compatibility
+    bool isActive;          // Whether this chain is active
+    uint256 chainId;        // The L2 chain ID
+}
+
+// Core state
+address public currentProposer;           // Current active proposer
+uint256 public currentEpoch;              // Current epoch number
+uint256 public epochDuration;             // Rotation interval (default: 1 hour)
+uint256 public gracePeriod;               // Active Handoff window (default: 10 min)
+address public proposerRegistry;          // ProposerRegistry contract
+address public builderRegistry;           // BuilderRegistry contract
+
+// Rotation functions
+function rotateNetwork() external;        // Atomic rotation of ALL chains
+function rotateShard(uint256 shardIndex); // For scaling beyond 400 chains
+
+// Chain management (governance only)
+function connectChain(uint256 chainId, address systemConfig, bytes32 policyId, address adapter);
+function disconnectChain(uint256 chainId);
+function updateChainConfig(uint256 chainId, bytes32 policyId, address adapter);
+
+// View functions
+function getChainCount() external view returns (uint256);
+function getChainConfig(uint256 chainId) external view returns (ChainConfig memory);
+function isCurrentProposer(address proposer) external view returns (bool);
+function timeUntilNextRotation() external view returns (uint256);
+function isRotationWindowOpen() external view returns (bool);
+
+// Guardian (emergency controls)
+function pause() external;
+function emergencyRotate(address newProposer) external;
+```
+
+### ProposerRegistry
+
+"The Dumb Pipe" - manages DPoS-based proposer selection with liveness focus.
+
+```solidity
+struct ProposerInfo {
+    uint256 stake;              // Own stake
+    uint256 delegatedStake;     // Stake delegated by others
+    bool isActive;              // In the active set
+    bool isRegistered;          // Registered in system
+    uint256 livenessScore;      // 0-10000 (100.00%)
+    address operationalKey;     // Key for block signing
+}
+
+// Configuration
+uint256 public minimumStake;        // Default: 32 ETH
+uint256 public maxActiveSetSize;    // Default: 100
+
+// Proposer functions
+function register(address operationalKey) external payable;
+function addStake() external payable;
+function withdrawStake(uint256 amount) external;
+function updateOperationalKey(address newKey) external;
+
+// Delegation
+function delegate(address proposer) external payable;
+function undelegate(address proposer, uint256 amount) external;
+
+// Public functions
+function rebalance() external;  // Swap low-stake active with high-stake inactive
+
+// Selection (called by Hub)
+function selectNextProposer(uint256 epoch) external view returns (address);
+
+// View functions
+function getActiveProposers() external view returns (address[] memory);
+function getTotalStake(address proposer) external view returns (uint256);
+function isActiveProposer(address proposer) external view returns (bool);
+```
+
+### BuilderRegistry
+
+"The Value Engine" - manages policy-based builder eligibility with sovereignty matrix.
+
+```solidity
+struct BuilderInfo {
+    uint256 bond;               // ETH bond for damages
+    bool isActive;              // Currently active
+    uint256 slashCount;         // Times slashed
+    uint256 lastSlashTime;      // For cooldown tracking
+}
+
+struct PolicyTagStatus {
+    bool isGranted;             // Has this tag
+    uint256 expiresAt;          // 0 = never expires
+    uint256 revokedAt;          // 0 = not revoked
+}
+
+// Policy constants
+bytes32 public constant POLICY_OFAC;
+bytes32 public constant POLICY_KYC;
+bytes32 public constant POLICY_NO_MEV;
+bytes32 public constant POLICY_NO_GAMBLING;
+bytes32 public constant POLICY_NEUTRAL;
+
+// Configuration
+uint256 public minimumBond;     // Default: 500 ETH
+
+// Builder functions
+function register() external payable;
+function addBond() external payable;
+function withdrawBond(uint256 amount) external;
+
+// Eligibility (called by Proposer clients)
+function isBuilderEligible(address builder, bytes32 policyId) external view returns (bool);
+function isBuilderEligibleForBundle(address builder, bytes32[] policyIds) external view returns (bool);
+
+// Policy management (governance/Kleros)
+function grantPolicyTag(address builder, bytes32 policyId, uint256 expiresAt) external;
+function revokePolicyTag(address builder, bytes32 policyId, string reason) external;
+function slash(address builder, uint256 amount, bytes32 policyId, string reason) external;
+```
+
+### Legacy: KlerosSequencerManager
+
+For single-chain deployments, the legacy manager is still available.
 
 ```solidity
 // Operator struct
@@ -295,40 +485,12 @@ struct Operator {
     address unsafeSigner;  // Signs P2P unsafe blocks
 }
 
-// Core state (immutable)
-IPermanentGTCRHybrid public immutable registry;     // Operator registry (Hybrid PGTCR)
-ISystemConfig public immutable systemConfig;        // OP Stack SystemConfig
-ICurate public immutable adapterRegistry;           // Adapter registry (Curate)
-uint256 public immutable epochDuration;             // Rotation interval
-
-// Constants
-uint256 public constant GRACE_PERIOD = 600;         // 10 min grace period for Active Handoff
-
-// Adapter state
-IOpStackAdapter public opAdapter;                   // Current adapter
-
-// Sync functions (anyone can call)
-function syncAddOperator(bytes32 itemID) external;  // Preferred: by registry item ID
-function syncUpdateOperator(bytes32 itemID) external; // Update keys after owner change
-function syncRemoveOperator(bytes32 itemID) external;
-
-// Rotation (anyone can call, once per epoch)
-function rotateOperator() external;  // Uses adapter via delegatecall
-function poke() external;            // Alias for keepers
-
-// Adapter upgrade (anyone can call, gated by registry)
-function upgradeAdapter(address _newAdapter) external; // Ratchet: newVersion > currentVersion
-function getAdapterInfo() external view returns (address, uint256, string memory, string memory);
-
-// View functions
+// Core functions
+function syncAddOperator(bytes32 itemID) external;
+function rotateOperator() external;
+function upgradeAdapter(address newAdapter) external;
 function currentOperator() external view returns (Operator memory);
-function getActiveOperators() external view returns (Operator[] memory);
 function isCurrentOperator(address batcher, address unsafeSigner) external view returns (bool);
-function isRegisteredInRegistry(address batcher, address unsafeSigner) external view returns (bool);
-
-// Guardian (emergency controls)
-function setPaused(bool paused) external;
-function setGuardian(address newGuardian) external;
 ```
 
 ### IOpStackAdapter
@@ -543,11 +705,17 @@ Web3Function.onRun(async (context) => {
 ```
 op/
 ├── src/
-│   ├── KlerosSequencerManager.sol    # Main governance contract (adapter pattern)
+│   ├── SharedSequencerHub.sol        # KSSN Hub - atomic multichain rotation
+│   ├── ProposerRegistry.sol          # KSSN DPoS proposer management
+│   ├── BuilderRegistry.sol           # KSSN policy-based builder management
+│   ├── KlerosSequencerManager.sol    # Legacy single-chain manager
 │   ├── PermanentGTCRHybrid.sol       # Hybrid PGTCR (based on Kleros PGTCR)
 │   ├── adapters/
 │   │   └── OpStackAdapterV1.sol      # OP Stack Bedrock/Ecotone adapter
 │   └── interfaces/
+│       ├── ISharedSequencerHub.sol   # KSSN Hub interface
+│       ├── IProposerRegistry.sol     # KSSN Proposer registry interface
+│       ├── IBuilderRegistry.sol      # KSSN Builder registry interface
 │       ├── IOpStackAdapter.sol       # Adapter interface
 │       ├── IPermanentGTCRHybrid.sol  # Hybrid PGTCR interface
 │       ├── ICurate.sol               # Kleros Curate interface
@@ -555,17 +723,23 @@ op/
 │       ├── IArbitrator.sol           # ERC-792 arbitration
 │       └── IArbitrable.sol           # ERC-792 arbitrable
 ├── test/
-│   ├── KlerosSequencerManager.t.sol  # Comprehensive tests
+│   ├── SharedSequencerHub.t.sol      # KSSN Hub tests
+│   ├── ProposerRegistry.t.sol        # KSSN Proposer registry tests
+│   ├── BuilderRegistry.t.sol         # KSSN Builder registry tests
+│   ├── KlerosSequencerManager.t.sol  # Legacy manager tests
 │   └── mocks/
+│       ├── MockProposerRegistry.sol  # KSSN proposer registry mock
+│       ├── MockBuilderRegistry.sol   # KSSN builder registry mock
 │       ├── MockCurate.sol            # Test Kleros Curate mock
 │       ├── MockPermanentGTCRHybrid.sol # Test Hybrid PGTCR mock
 │       ├── MockSystemConfig.sol      # Test SystemConfig mock
 │       └── MockAdapterV2.sol         # V2 adapter stub (for testing)
 ├── script/
-│   ├── DeployLocal.s.sol             # Local Anvil deployment (mocks, offline)
-│   ├── DeployRemote.s.sol            # Sepolia/Mainnet deployment (env-configured)
-│   ├── IntegrationTest.s.sol         # Solidity integration test (forge script)
-│   └── run_integration_test.sh       # Full system integration test (10 scenarios)
+│   ├── DeployKSSN.s.sol              # KSSN Hub-and-Spoke deployment
+│   ├── DeployLocal.s.sol             # Legacy single-chain deployment
+│   ├── DeployRemote.s.sol            # Sepolia/Mainnet deployment
+│   ├── IntegrationTest.s.sol         # Solidity integration test
+│   └── run_integration_test.sh       # Full system integration test
 ├── policies/
 │   ├── policy_sequencer_registry.md  # Sequencer constitutional rules
 │   └── policy_adapter_registry.md    # Adapter acceptance criteria
@@ -573,57 +747,85 @@ op/
 │   ├── genesis-l2.json               # L2 genesis configuration
 │   └── generate-configs.sh           # Config generation helper
 ├── docker/
-│   └── config/                       # Generated L2 configs (jwt, rollup.json)
+│   └── config/                       # Generated L2 configs
 ├── agent/
-│   ├── self_activation_agent.py      # Reference agent implementation
-│   ├── config.example.yaml           # Agent configuration template
+│   ├── kssn_proposer_agent.py        # KSSN proposer agent
+│   ├── kssn_config.example.yaml      # KSSN agent config template
+│   ├── self_activation_agent.py      # Legacy single-chain agent
+│   ├── config.example.yaml           # Legacy agent config template
 │   ├── requirements.txt              # Python dependencies
 │   └── README.md                     # Agent documentation
-├── docker-compose.yml                # Full OP Stack setup (L1 + L2)
+├── docker-compose.yml                # Full OP Stack setup
 ├── start.sh                          # One-command startup script
 ├── Makefile                          # Development commands
-├── .env.example                      # Environment template
-├── .env.sepolia.example              # Sepolia config template
-└── .env.mainnet.example              # Mainnet config template
+└── .env.*.example                    # Environment templates
 ```
 
 ## FAQ
 
-**Q: Why are operators tuples instead of single addresses?**
-A: OP Stack has two separate authorizations: batcherHash (for batch posting) and unsafeBlockSigner (for P2P block signing). Both must be rotated together to avoid half-rotated states.
+### KSSN Architecture
 
-**Q: What is the Cold Staker / Hot Operator model?**
-A: The staker (who deposits governance stake) can delegate operational keys (batcher, unsafeSigner) to different addresses. If the hot operational keys are compromised, the governance stake remains safe. Use `setOperationalKeys(itemID, batcher, signer)` after registration.
+**Q: What is KSSN?**
+A: The Kleros Shared Sequencer Network - a Hub-and-Spoke architecture that manages sequencing for multiple OP Stack chains from a single Hub contract. It enables atomic cross-chain composability while preserving chain sovereignty through the Federalist Policy system.
 
-**Q: What happens during an OP Stack hardfork?**
-A: The adapter pattern allows hot-swapping adapters without changing the manager. Submit a new adapter to the Adapter Registry, wait for the challenge period, then call `upgradeAdapter(newAdapterAddress)`. The ratchet ensures `newVersion > currentVersion`.
+**Q: How does atomic multichain rotation work?**
+A: When `rotateNetwork()` is called, the Hub iterates through ALL connected chains and updates each SystemConfig in a single transaction. This costs ~60k gas per chain, supporting ~450 chains per block at 30M gas limit. For larger networks, use `rotateShard()`.
 
-**Q: What is the "Hydra" defense?**
-A: If someone griefs adapter submissions by challenging them, multiple identical adapters can be submitted in parallel. First one to pass becomes usable, defeating the griefing attack.
+**Q: What is Proposer-Builder Separation (PBS)?**
+A: KSSN separates infrastructure providers (Proposers) from transaction content providers (Builders). Proposers focus on liveness and are immune to content-based slashing ("Safe Harbor") if they sign headers from registered Builders. Builders are liable for policy compliance.
 
-**Q: What if an operator doesn't run a self-activation agent?**
-A: They can be challenged in Kleros for producing blocks while unauthorized (if they continue running) or for failing to produce blocks during their epoch (if they never start).
+**Q: What is the Sovereignty Matrix?**
+A: A mapping of builders to their policy compliance status. Each chain specifies a required policy (OFAC, KYC, NEUTRAL, etc.), and only builders with the matching policy tag can build for that chain.
 
-**Q: Can I use the same key for batcher and unsafeSigner?**
-A: Technically yes, but it's not recommended for security. The Cold Staker model allows separating stake from operational keys.
+**Q: What is the Union Rule?**
+A: For atomic bundles spanning multiple chains, a builder must have ALL policy tags required by those chains. E.g., to build an atomic bundle for Chain A (OFAC) and Chain B (KYC), the builder needs both OFAC and KYC tags.
 
-**Q: How do I add a new operator?**
-A: 1) Register in Hybrid PGTCR with Constitutional Declaration, 2) Optionally set operational keys, 3) Wait for challenge period, 4) Call `syncAddOperator(itemID)`, 5) Deploy self-activation agent.
+**Q: How do I connect a new chain to KSSN?**
+A: 1) Deploy your OP Stack chain with SystemConfig, 2) Transfer SystemConfig ownership to the Hub, 3) Call `hub.connectChain(chainId, systemConfig, policyId, adapter)` as governance, 4) Your chain is now part of the shared sequencer network.
 
-**Q: What happens during rotation?**
-A: 1) Current operator's agent detects epoch end, 2) Agent stops sequencing and flushes batches to L1, 3) Agent calls `rotateOperator()`, 4) Manager validates and calls adapter via delegatecall, 5) Adapter sets batcherHash and unsafeBlockSigner in SystemConfig, 6) New operator's agent detects the change and starts sequencing.
+**Q: What happens if a chain's rotation fails?**
+A: The Hub continues with other chains and deactivates the failing chain. Individual chain failures don't block the network. The chain can be reactivated after fixing the issue.
+
+### Proposer & Builder
+
+**Q: How do I become a proposer?**
+A: 1) Call `proposerRegistry.register(operationalKey)` with minimum stake (32 ETH default), 2) Run the KSSN proposer agent, 3) If your stake is in the top-N (100 by default), you'll be in the active set.
+
+**Q: How do I become a builder?**
+A: 1) Call `builderRegistry.register()` with minimum bond (500 ETH default), 2) You automatically get the NEUTRAL policy tag, 3) Apply for additional policy tags through governance/Kleros.
+
+**Q: What is the "Safe Harbor" for proposers?**
+A: Proposers are immune to content-based slashing if they sign headers from registered Builders. Their liability is strictly limited to liveness and registry compliance.
+
+**Q: What happens if I'm slashed as a builder?**
+A: Your bond is reduced, you enter a cooldown period (7 days default), and you're ineligible during that period. After 3 slashes, you're automatically deactivated.
+
+### Active Handoff & Rotation
 
 **Q: What is the Active Handoff protocol?**
-A: Active Handoff is a 3-phase state machine that ensures zero-downtime operator transitions. During the "grace period" after epoch ends, only the current operator can trigger rotation. This prevents L2 re-orgs by allowing the outgoing operator to flush their batch queue before handing over control.
+A: A 3-phase state machine ensuring zero-downtime transitions. During the grace period (10 min default) after epoch ends, only the current proposer can trigger rotation. This allows flushing batches before handover.
 
-**Q: Why can't keepers immediately rotate after epoch ends?**
-A: To prevent L2 re-orgs. If a keeper forces rotation while the outgoing operator has unflushed "unsafe" blocks, those blocks would be orphaned. The grace period (10 minutes) gives the operator time to flush batches and trigger rotation themselves.
+**Q: What happens during KSSN rotation?**
+A: 1) Current proposer's agent detects epoch end, 2) Agent stops sequencing and flushes batches, 3) Agent calls `rotateNetwork()`, 4) Hub updates ALL connected chains atomically, 5) New proposer's agent detects change and starts.
 
-**Q: What if the current operator doesn't rotate during the grace period?**
-A: After the grace period expires (Phase 3 - Dead Man's Switch), anyone can force rotation. This ensures liveness even if an operator is unresponsive, though it may cause a re-org if they had unflushed batches.
+**Q: What if the proposer doesn't rotate during grace period?**
+A: After grace period expires (Phase 3), anyone can force rotation via `rotateNetwork()`. This ensures liveness but may cause re-orgs if the outgoing proposer had unflushed batches.
 
-**Q: What is a "Superchain Green" chain?**
-A: A chain that maintains Optimism Security Council oversight via ProxyAdmin while allowing custom governance (like Kleros) for operational aspects. This ensures coordinated upgrades remain possible.
+### Legacy Architecture
+
+**Q: What about the single-chain KlerosSequencerManager?**
+A: It's still available for single-chain deployments. Use `make deploy-local` for legacy deployment or `make deploy-kssn` for the new Hub-and-Spoke architecture.
+
+**Q: Can I migrate from single-chain to KSSN?**
+A: Yes. Deploy the KSSN contracts, transfer your SystemConfig ownership to the Hub, and connect your chain. Proposers need to register in the new ProposerRegistry.
+
+### Technical Details
+
+**Q: How many chains can KSSN support?**
+A: Single `rotateNetwork()` supports ~450 chains at 30M gas limit. For larger networks, use `rotateShard(shardIndex)` which splits rotation into chunks of 200 chains.
+
+**Q: What is a "Superchain Aligned" design?**
+A: KSSN is designed to eventually replace the Superchain Council multisig. Instead of a committee updating SystemConfigs, the SharedSequencerHub does it algorithmically based on Kleros governance decisions.
 
 ## Contributing
 

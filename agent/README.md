@@ -1,12 +1,61 @@
-# Self-Activation Agent
+# Proposer Agents
 
-A decentralized agent that monitors on-chain operator status and automatically manages OP Stack services, implementing the **Active Handoff Protocol** for zero-downtime operator transitions.
+Decentralized agents that monitor on-chain state and automatically manage OP Stack services, implementing the **Active Handoff Protocol** for zero-downtime proposer transitions.
+
+## Available Agents
+
+| Agent | Architecture | Contract | Use Case |
+|-------|--------------|----------|----------|
+| `kssn_proposer_agent.py` | **KSSN Hub-and-Spoke** | `SharedSequencerHub` | Multi-chain shared sequencing |
+| `self_activation_agent.py` | Legacy single-chain | `KlerosSequencerManager` | Single L2 chain |
+
+## KSSN Proposer Agent (Recommended)
+
+For the new **Kleros Shared Sequencer Network** architecture with atomic multichain rotation.
+
+### Features
+
+- Monitors `SharedSequencerHub` for proposer status
+- Manages OP Stack services for **all connected chains**
+- Implements Active Handoff with atomic `rotateNetwork()` call
+- Supports hub pause detection
+
+### Quick Start
+
+```bash
+cd agent
+pip install -r requirements.txt
+cp kssn_config.example.yaml kssn_config.yaml
+# Edit kssn_config.yaml with your proposer details
+python kssn_proposer_agent.py --config kssn_config.yaml
+```
+
+### Configuration
+
+```yaml
+# kssn_config.yaml
+l1_rpc: "https://mainnet.infura.io/v3/YOUR_KEY"
+hub_address: "0x..."                    # SharedSequencerHub address
+proposer_address: "0x..."               # Your registered proposer address
+private_key: "0x..."                    # Key for calling rotateNetwork()
+poll_interval: 12                       # Seconds between L1 checks
+op_node_admin_url: "http://localhost:7545"
+op_batcher_admin_url: "http://localhost:7546"
+handoff_lead_time: 60                   # Start handoff this early (seconds)
+flush_timeout: 300                      # Max flush wait time (seconds)
+```
+
+---
+
+## Legacy Self-Activation Agent
+
+For single-chain deployments using the legacy `KlerosSequencerManager`.
 
 ## Why This Is Required
 
 The Constitutional L2 uses a rotating sequencer model where operators take turns producing blocks. Each operator MUST:
 
-1. **Only produce blocks when authorized** - The on-chain `KlerosSequencerManager` determines who is currently authorized
+1. **Only produce blocks when authorized** - The on-chain contract determines who is currently authorized
 2. **Actively hand over control at epoch end** - Flush batches and trigger rotation (Active Handoff)
 3. **Start automatically when becoming authorized** - To ensure seamless handoffs between operators
 
