@@ -10,9 +10,13 @@ import {IArbitrable} from "../../src/interfaces/IArbitrable.sol";
  * @dev Simulates dispute creation, rulings, and appeals for testing.
  */
 contract MockArbitrator is IArbitrator {
-    uint256 public constant ARBITRATION_COST = 0.05 ether;
+    uint256 public immutable ARBITRATION_COST;
     uint256 public constant APPEAL_COST = 0.1 ether;
     uint256 public constant APPEAL_PERIOD = 1 days;
+
+    constructor(uint256 _arbitrationCost) {
+        ARBITRATION_COST = _arbitrationCost;
+    }
 
     struct Dispute {
         address arbitrable;
@@ -48,7 +52,7 @@ contract MockArbitrator is IArbitrator {
         return disputeID;
     }
 
-    function arbitrationCost(bytes calldata) external pure override returns (uint256) {
+    function arbitrationCost(bytes calldata) external view override returns (uint256) {
         return ARBITRATION_COST;
     }
 

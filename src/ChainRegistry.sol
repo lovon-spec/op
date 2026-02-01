@@ -313,7 +313,8 @@ contract ChainRegistry is IChainRegistry, IArbitrable, IEvidence {
         request.disputed = true;
         request.disputeID = disputeID;
         request.challenger = payable(msg.sender);
-        request.deposit += msg.value;
+        // Only add the challenger stake to deposit (arbitration cost was already sent to arbitrator)
+        request.deposit += (msg.value - arbitrationCost);
 
         // Store mapping for ruling callback
         disputeIDToItemId[disputeID] = _itemId;

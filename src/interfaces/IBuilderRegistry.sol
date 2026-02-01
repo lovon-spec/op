@@ -78,7 +78,7 @@ interface IBuilderRegistry {
     error PolicyTagExpired(address builder, bytes32 policyId);
 
     /// @notice Thrown when policy tag was revoked
-    error PolicyTagRevoked(address builder, bytes32 policyId);
+    error PolicyTagWasRevoked(address builder, bytes32 policyId);
 
     /// @notice Thrown when builder is in cooldown period after slash
     error BuilderInCooldown(address builder, uint256 cooldownEnds);

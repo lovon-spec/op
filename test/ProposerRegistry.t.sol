@@ -108,22 +108,20 @@ contract ProposerRegistryTest is Test {
         registry.register{value: MIN_STAKE}(proposer1);
 
         // First remove from active set (can't unregister while active)
-        // We need to add another proposer and make proposer1 inactive
-        vm.prank(proposer2);
-        registry.register{value: MIN_STAKE + 1 ether}(proposer2);
+        // Use slashing to reduce stake below minimum (100% slash)
+        vm.prank(hub);
+        registry.slashForLiveness(proposer1, 10000); // 100% = 10000 basis points
 
-        // Withdraw stake to go below minimum
-        vm.prank(proposer1);
-        registry.withdrawStake(1 ether);
+        // Now proposer1 should be inactive and able to unregister
+        assertFalse(registry.getProposerInfo(proposer1).isActive);
 
-        // Now proposer1 should be able to unregister
         uint256 balanceBefore = proposer1.balance;
 
         vm.prank(proposer1);
         registry.unregister();
 
-        // Check stake was returned
-        assertEq(proposer1.balance, balanceBefore + MIN_STAKE - 1 ether);
+        // Check remaining stake was returned (0 after 100% slash)
+        assertEq(proposer1.balance, balanceBefore);
         assertFalse(registry.isRegistered(proposer1));
     }
 

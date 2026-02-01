@@ -172,7 +172,7 @@ contract IntegrationTest is Script {
         console2.log("  Registered Proposer 3:", PROPOSER_3);
         console2.log("    Stake: 32 ETH");
 
-        console2.log("  Total active proposers:", 3);
+        console2.log("  Total active proposers:", uint256(3));
 
         vm.stopBroadcast();
         console2.log("");
@@ -318,11 +318,11 @@ contract IntegrationTest is Script {
 
         vm.startBroadcast(GUARDIAN_KEY);
 
-        console2.log("  Hub paused:", hub.paused());
+        console2.log("  Hub paused:", hub.isPaused());
 
         hub.pause();
         console2.log("  Guardian paused the Hub");
-        console2.log("  Hub paused:", hub.paused());
+        console2.log("  Hub paused:", hub.isPaused());
 
         vm.stopBroadcast();
 
@@ -342,7 +342,7 @@ contract IntegrationTest is Script {
         vm.startBroadcast(GUARDIAN_KEY);
         hub.unpause();
         console2.log("  Guardian unpaused the Hub");
-        console2.log("  Hub paused:", hub.paused());
+        console2.log("  Hub paused:", hub.isPaused());
         vm.stopBroadcast();
 
         console2.log("");

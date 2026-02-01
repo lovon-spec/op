@@ -200,16 +200,17 @@ contract SharedSequencerHubTest is Test {
         // Anyone can call rotation after epoch ends
         hub.rotateNetwork();
 
-        assertEq(hub.currentProposer(), proposer1);
+        // For epoch 1: selectNextProposer(1) returns proposers[1 % 3] = proposer2
+        assertEq(hub.currentProposer(), proposer2);
         assertEq(hub.currentEpoch(), 1);
 
-        // Verify all chains were updated
-        assertEq(systemConfig1.batcherHash(), bytes32(uint256(uint160(proposer1))));
-        assertEq(systemConfig1.unsafeBlockSigner(), proposer1);
-        assertEq(systemConfig2.batcherHash(), bytes32(uint256(uint160(proposer1))));
-        assertEq(systemConfig2.unsafeBlockSigner(), proposer1);
-        assertEq(systemConfig3.batcherHash(), bytes32(uint256(uint160(proposer1))));
-        assertEq(systemConfig3.unsafeBlockSigner(), proposer1);
+        // Verify all chains were updated to proposer2
+        assertEq(systemConfig1.batcherHash(), bytes32(uint256(uint160(proposer2))));
+        assertEq(systemConfig1.unsafeBlockSigner(), proposer2);
+        assertEq(systemConfig2.batcherHash(), bytes32(uint256(uint160(proposer2))));
+        assertEq(systemConfig2.unsafeBlockSigner(), proposer2);
+        assertEq(systemConfig3.batcherHash(), bytes32(uint256(uint160(proposer2))));
+        assertEq(systemConfig3.unsafeBlockSigner(), proposer2);
     }
 
     function test_RotateNetwork_RevertsBeforeEpochEnd() public {
@@ -228,22 +229,25 @@ contract SharedSequencerHubTest is Test {
     }
 
     function test_RotateNetwork_MultipleRotations() public {
-        // First rotation
-        vm.warp(block.timestamp + 1 hours + 1);
-        hub.rotateNetwork();
-        assertEq(hub.currentProposer(), proposer1);
-        assertEq(hub.currentEpoch(), 1);
+        uint256 epochDuration = 1 hours;
+        uint256 startTime = block.timestamp;
 
-        // Second rotation
-        vm.warp(block.timestamp + 1 hours + 1);
+        // First rotation - epoch 1: proposers[1 % 3] = proposer2
+        vm.warp(startTime + epochDuration + 1);
         hub.rotateNetwork();
         assertEq(hub.currentProposer(), proposer2);
-        assertEq(hub.currentEpoch(), 2);
+        assertEq(hub.currentEpoch(), 1);
 
-        // Third rotation
-        vm.warp(block.timestamp + 1 hours + 1);
+        // Second rotation - epoch 2: proposers[2 % 3] = proposer3
+        vm.warp(startTime + 2 * epochDuration + 1);
         hub.rotateNetwork();
         assertEq(hub.currentProposer(), proposer3);
+        assertEq(hub.currentEpoch(), 2);
+
+        // Third rotation - epoch 3: proposers[3 % 3] = proposer1
+        vm.warp(startTime + 3 * epochDuration + 1);
+        hub.rotateNetwork();
+        assertEq(hub.currentProposer(), proposer1);
         assertEq(hub.currentEpoch(), 3);
     }
 
@@ -255,10 +259,10 @@ contract SharedSequencerHubTest is Test {
         vm.warp(block.timestamp + 1 hours + 1);
         hub.rotateNetwork();
 
-        // Chain 1 and 3 should be updated, chain 2 should not
-        assertEq(systemConfig1.batcherHash(), bytes32(uint256(uint160(proposer1))));
+        // Chain 1 and 3 should be updated to proposer2 (epoch 1), chain 2 should not
+        assertEq(systemConfig1.batcherHash(), bytes32(uint256(uint160(proposer2))));
         assertEq(systemConfig2.batcherHash(), bytes32(0)); // Not updated
-        assertEq(systemConfig3.batcherHash(), bytes32(uint256(uint160(proposer1))));
+        assertEq(systemConfig3.batcherHash(), bytes32(uint256(uint160(proposer2))));
     }
 
     // ============ Sharded Rotation Tests ============
@@ -269,7 +273,8 @@ contract SharedSequencerHubTest is Test {
         // With only 3 chains, there's only 1 shard
         hub.rotateShard(0);
 
-        assertEq(hub.currentProposer(), proposer1);
+        // Epoch 1: proposer2 (index 1 % 3 = 1)
+        assertEq(hub.currentProposer(), proposer2);
         assertEq(hub.currentEpoch(), 1);
     }
 
@@ -322,8 +327,9 @@ contract SharedSequencerHubTest is Test {
         vm.warp(block.timestamp + 1 hours + 1);
         hub.rotateNetwork();
 
-        assertTrue(hub.isCurrentProposer(proposer1));
-        assertFalse(hub.isCurrentProposer(proposer2));
+        // For epoch 1: proposer2 is selected (index 1 % 3 = 1)
+        assertTrue(hub.isCurrentProposer(proposer2));
+        assertFalse(hub.isCurrentProposer(proposer1));
     }
 
     function test_GetEpochEndTime_ReturnsCorrectTime() public view {
@@ -468,8 +474,8 @@ contract SharedSequencerHubTest is Test {
         // Should not revert, but failing chain should be deactivated
         hub.rotateNetwork();
 
-        // Successful chains should be updated
-        assertEq(hub.currentProposer(), proposer1);
+        // Successful chains should be updated - epoch 1 selects proposer2
+        assertEq(hub.currentProposer(), proposer2);
 
         // Failing chain should be deactivated
         ISharedSequencerHub.ChainConfig memory config = hub.getChainConfig(10004);
@@ -706,7 +712,8 @@ contract SharedSequencerHubTest is Test {
         hub.rotateNetwork();
 
         // Verify all chains including the registry-connected one were updated
-        assertEq(newConfig.batcherHash(), bytes32(uint256(uint160(proposer1))));
-        assertEq(newConfig.unsafeBlockSigner(), proposer1);
+        // Epoch 1 selects proposer2 (index 1 % 3 = 1)
+        assertEq(newConfig.batcherHash(), bytes32(uint256(uint160(proposer2))));
+        assertEq(newConfig.unsafeBlockSigner(), proposer2);
     }
 }

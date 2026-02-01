@@ -61,6 +61,7 @@ contract ChainRegistryTest is Test {
         vm.deal(submitter1, 10 ether);
         vm.deal(submitter2, 10 ether);
         vm.deal(challenger, 10 ether);
+        vm.deal(randomUser, 10 ether);
     }
 
     // ============ Constructor Tests ============

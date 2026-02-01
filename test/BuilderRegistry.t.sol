@@ -25,10 +25,23 @@ contract BuilderRegistryTest is Test {
     // ============ Constants ============
     uint256 public constant MIN_BOND = 500 ether;
 
+    // ============ Cached Policy IDs ============
+    // Cached to avoid external calls consuming vm.prank
+    bytes32 public POLICY_OFAC;
+    bytes32 public POLICY_KYC;
+    bytes32 public POLICY_NEUTRAL;
+    bytes32 public POLICY_NO_MEV;
+
     // ============ Setup ============
 
     function setUp() public {
         registry = new BuilderRegistry(governance, hub, MIN_BOND);
+
+        // Cache policy IDs to avoid external calls consuming vm.prank
+        POLICY_OFAC = registry.POLICY_OFAC();
+        POLICY_KYC = registry.POLICY_KYC();
+        POLICY_NEUTRAL = registry.POLICY_NEUTRAL();
+        POLICY_NO_MEV = registry.POLICY_NO_MEV();
 
         // Fund test accounts
         vm.deal(builder1, 1000 ether);
@@ -46,11 +59,11 @@ contract BuilderRegistryTest is Test {
     }
 
     function test_Constructor_RegistersDefaultPolicies() public view {
-        assertTrue(registry.isPolicyRegistered(registry.POLICY_OFAC()));
-        assertTrue(registry.isPolicyRegistered(registry.POLICY_KYC()));
-        assertTrue(registry.isPolicyRegistered(registry.POLICY_NO_MEV()));
+        assertTrue(registry.isPolicyRegistered(POLICY_OFAC));
+        assertTrue(registry.isPolicyRegistered(POLICY_KYC));
+        assertTrue(registry.isPolicyRegistered(POLICY_NO_MEV));
         assertTrue(registry.isPolicyRegistered(registry.POLICY_NO_GAMBLING()));
-        assertTrue(registry.isPolicyRegistered(registry.POLICY_NEUTRAL()));
+        assertTrue(registry.isPolicyRegistered(POLICY_NEUTRAL));
     }
 
     function test_Constructor_UsesDefaults() public {
@@ -74,7 +87,7 @@ contract BuilderRegistryTest is Test {
         vm.prank(builder1);
         registry.register{value: MIN_BOND}();
 
-        assertTrue(registry.hasPolicyTag(builder1, registry.POLICY_NEUTRAL()));
+        assertTrue(registry.hasPolicyTag(builder1, POLICY_NEUTRAL));
     }
 
     function test_Register_RevertsIfInsufficientBond() public {
@@ -121,7 +134,7 @@ contract BuilderRegistryTest is Test {
 
         // Slash the builder to trigger cooldown
         vm.prank(hub);
-        registry.slash(builder1, 1 ether, registry.POLICY_NEUTRAL(), "test");
+        registry.slash(builder1, 1 ether, POLICY_NEUTRAL, "test");
 
         vm.prank(builder1);
         vm.expectRevert(
@@ -185,9 +198,9 @@ contract BuilderRegistryTest is Test {
         registry.register{value: MIN_BOND}();
 
         vm.prank(governance);
-        registry.grantPolicyTag(builder1, registry.POLICY_OFAC(), 0);
+        registry.grantPolicyTag(builder1, POLICY_OFAC, 0);
 
-        assertTrue(registry.hasPolicyTag(builder1, registry.POLICY_OFAC()));
+        assertTrue(registry.hasPolicyTag(builder1, POLICY_OFAC));
     }
 
     function test_GrantPolicyTag_WithExpiry() public {
@@ -197,20 +210,20 @@ contract BuilderRegistryTest is Test {
         uint256 expiryTime = block.timestamp + 1 days;
 
         vm.prank(governance);
-        registry.grantPolicyTag(builder1, registry.POLICY_OFAC(), expiryTime);
+        registry.grantPolicyTag(builder1, POLICY_OFAC, expiryTime);
 
-        assertTrue(registry.hasPolicyTag(builder1, registry.POLICY_OFAC()));
+        assertTrue(registry.hasPolicyTag(builder1, POLICY_OFAC));
 
         // Fast forward past expiry
         vm.warp(expiryTime + 1);
 
-        assertFalse(registry.hasPolicyTag(builder1, registry.POLICY_OFAC()));
+        assertFalse(registry.hasPolicyTag(builder1, POLICY_OFAC));
     }
 
     function test_GrantPolicyTag_RevertsIfNotRegistered() public {
         vm.prank(governance);
         vm.expectRevert(abi.encodeWithSelector(IBuilderRegistry.BuilderNotRegistered.selector, builder1));
-        registry.grantPolicyTag(builder1, registry.POLICY_OFAC(), 0);
+        registry.grantPolicyTag(builder1, POLICY_OFAC, 0);
     }
 
     function test_GrantPolicyTag_RevertsIfInvalidPolicy() public {
@@ -229,12 +242,12 @@ contract BuilderRegistryTest is Test {
         registry.register{value: MIN_BOND}();
 
         vm.prank(governance);
-        registry.grantPolicyTag(builder1, registry.POLICY_OFAC(), 0);
+        registry.grantPolicyTag(builder1, POLICY_OFAC, 0);
 
         vm.prank(governance);
-        registry.revokePolicyTag(builder1, registry.POLICY_OFAC(), "Compliance failure");
+        registry.revokePolicyTag(builder1, POLICY_OFAC, "Compliance failure");
 
-        assertFalse(registry.hasPolicyTag(builder1, registry.POLICY_OFAC()));
+        assertFalse(registry.hasPolicyTag(builder1, POLICY_OFAC));
     }
 
     function test_RevokePolicyTag_RevertsIfNotGranted() public {
@@ -243,9 +256,9 @@ contract BuilderRegistryTest is Test {
 
         vm.prank(governance);
         vm.expectRevert(
-            abi.encodeWithSelector(IBuilderRegistry.MissingPolicyTag.selector, builder1, registry.POLICY_OFAC())
+            abi.encodeWithSelector(IBuilderRegistry.MissingPolicyTag.selector, builder1, POLICY_OFAC)
         );
-        registry.revokePolicyTag(builder1, registry.POLICY_OFAC(), "test");
+        registry.revokePolicyTag(builder1, POLICY_OFAC, "test");
     }
 
     // ============ Eligibility Tests ============
@@ -254,7 +267,7 @@ contract BuilderRegistryTest is Test {
         vm.prank(builder1);
         registry.register{value: MIN_BOND}();
 
-        assertTrue(registry.isBuilderEligible(builder1, registry.POLICY_NEUTRAL()));
+        assertTrue(registry.isBuilderEligible(builder1, POLICY_NEUTRAL));
     }
 
     function test_IsBuilderEligible_ReturnsFalseIfNotActive() public {
@@ -264,14 +277,14 @@ contract BuilderRegistryTest is Test {
         vm.prank(governance);
         registry.deactivate(builder1, "test");
 
-        assertFalse(registry.isBuilderEligible(builder1, registry.POLICY_NEUTRAL()));
+        assertFalse(registry.isBuilderEligible(builder1, POLICY_NEUTRAL));
     }
 
     function test_IsBuilderEligible_ReturnsFalseIfMissingTag() public {
         vm.prank(builder1);
         registry.register{value: MIN_BOND}();
 
-        assertFalse(registry.isBuilderEligible(builder1, registry.POLICY_OFAC()));
+        assertFalse(registry.isBuilderEligible(builder1, POLICY_OFAC));
     }
 
     function test_IsBuilderEligible_ReturnsFalseIfInCooldown() public {
@@ -279,9 +292,9 @@ contract BuilderRegistryTest is Test {
         registry.register{value: MIN_BOND}();
 
         vm.prank(hub);
-        registry.slash(builder1, 1 ether, registry.POLICY_NEUTRAL(), "test");
+        registry.slash(builder1, 1 ether, POLICY_NEUTRAL, "test");
 
-        assertFalse(registry.isBuilderEligible(builder1, registry.POLICY_NEUTRAL()));
+        assertFalse(registry.isBuilderEligible(builder1, POLICY_NEUTRAL));
     }
 
     function test_IsBuilderEligibleForBundle_UnionRule() public {
@@ -290,14 +303,14 @@ contract BuilderRegistryTest is Test {
 
         // Grant OFAC and KYC tags
         vm.startPrank(governance);
-        registry.grantPolicyTag(builder1, registry.POLICY_OFAC(), 0);
-        registry.grantPolicyTag(builder1, registry.POLICY_KYC(), 0);
+        registry.grantPolicyTag(builder1, POLICY_OFAC, 0);
+        registry.grantPolicyTag(builder1, POLICY_KYC, 0);
         vm.stopPrank();
 
         // Should be eligible for bundle requiring both OFAC and KYC
         bytes32[] memory policies = new bytes32[](2);
-        policies[0] = registry.POLICY_OFAC();
-        policies[1] = registry.POLICY_KYC();
+        policies[0] = POLICY_OFAC;
+        policies[1] = POLICY_KYC;
 
         assertTrue(registry.isBuilderEligibleForBundle(builder1, policies));
     }
@@ -308,12 +321,12 @@ contract BuilderRegistryTest is Test {
 
         // Only grant OFAC tag
         vm.prank(governance);
-        registry.grantPolicyTag(builder1, registry.POLICY_OFAC(), 0);
+        registry.grantPolicyTag(builder1, POLICY_OFAC, 0);
 
         // Should NOT be eligible for bundle requiring OFAC and KYC
         bytes32[] memory policies = new bytes32[](2);
-        policies[0] = registry.POLICY_OFAC();
-        policies[1] = registry.POLICY_KYC();
+        policies[0] = POLICY_OFAC;
+        policies[1] = POLICY_KYC;
 
         assertFalse(registry.isBuilderEligibleForBundle(builder1, policies));
     }
@@ -324,12 +337,12 @@ contract BuilderRegistryTest is Test {
 
         // Only has NEUTRAL (default) and we add OFAC
         vm.prank(governance);
-        registry.grantPolicyTag(builder1, registry.POLICY_OFAC(), 0);
+        registry.grantPolicyTag(builder1, POLICY_OFAC, 0);
 
         // Bundle with NEUTRAL should work
         bytes32[] memory policies = new bytes32[](2);
-        policies[0] = registry.POLICY_NEUTRAL();
-        policies[1] = registry.POLICY_OFAC();
+        policies[0] = POLICY_NEUTRAL;
+        policies[1] = POLICY_OFAC;
 
         assertTrue(registry.isBuilderEligibleForBundle(builder1, policies));
     }
@@ -341,7 +354,7 @@ contract BuilderRegistryTest is Test {
         registry.register{value: MIN_BOND}();
 
         vm.prank(hub);
-        registry.slash(builder1, 100 ether, registry.POLICY_OFAC(), "OFAC violation");
+        registry.slash(builder1, 100 ether, POLICY_OFAC, "OFAC violation");
 
         IBuilderRegistry.BuilderInfo memory info = registry.getBuilderInfo(builder1);
         assertEq(info.bond, MIN_BOND - 100 ether);
@@ -356,7 +369,7 @@ contract BuilderRegistryTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IBuilderRegistry.SlashExceedsBond.selector, MIN_BOND + 1 ether, MIN_BOND)
         );
-        registry.slash(builder1, MIN_BOND + 1 ether, registry.POLICY_OFAC(), "test");
+        registry.slash(builder1, MIN_BOND + 1 ether, POLICY_OFAC, "test");
     }
 
     function test_Slash_AutoDeactivatesAfterMaxSlashes() public {
@@ -365,14 +378,14 @@ contract BuilderRegistryTest is Test {
 
         // Slash 3 times (MAX_SLASH_COUNT)
         vm.startPrank(hub);
-        registry.slash(builder1, 1 ether, registry.POLICY_OFAC(), "slash 1");
+        registry.slash(builder1, 1 ether, POLICY_OFAC, "slash 1");
 
         // Need to wait for cooldown between slashes for this test to work
         vm.warp(block.timestamp + 7 days + 1);
-        registry.slash(builder1, 1 ether, registry.POLICY_OFAC(), "slash 2");
+        registry.slash(builder1, 1 ether, POLICY_OFAC, "slash 2");
 
         vm.warp(block.timestamp + 7 days + 1);
-        registry.slash(builder1, 1 ether, registry.POLICY_OFAC(), "slash 3");
+        registry.slash(builder1, 1 ether, POLICY_OFAC, "slash 3");
         vm.stopPrank();
 
         IBuilderRegistry.BuilderInfo memory info = registry.getBuilderInfo(builder1);
@@ -482,9 +495,9 @@ contract BuilderRegistryTest is Test {
 
         // Grant OFAC only to builder1
         vm.prank(governance);
-        registry.grantPolicyTag(builder1, registry.POLICY_OFAC(), 0);
+        registry.grantPolicyTag(builder1, POLICY_OFAC, 0);
 
-        address[] memory builders = registry.getBuildersForPolicy(registry.POLICY_OFAC());
+        address[] memory builders = registry.getBuildersForPolicy(POLICY_OFAC);
         assertEq(builders.length, 1);
         assertEq(builders[0], builder1);
     }
@@ -511,7 +524,7 @@ contract BuilderRegistryTest is Test {
         assertFalse(registry.isInCooldown(builder1));
 
         vm.prank(hub);
-        registry.slash(builder1, 1 ether, registry.POLICY_NEUTRAL(), "test");
+        registry.slash(builder1, 1 ether, POLICY_NEUTRAL, "test");
 
         assertTrue(registry.isInCooldown(builder1));
 
@@ -528,7 +541,7 @@ contract BuilderRegistryTest is Test {
 
         uint256 slashTime = block.timestamp;
         vm.prank(hub);
-        registry.slash(builder1, 1 ether, registry.POLICY_NEUTRAL(), "test");
+        registry.slash(builder1, 1 ether, POLICY_NEUTRAL, "test");
 
         assertEq(registry.getCooldownEnd(builder1), slashTime + 7 days);
     }

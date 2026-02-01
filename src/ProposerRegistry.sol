@@ -511,9 +511,9 @@ contract ProposerRegistry is IProposerRegistry {
     function _rebalanceInternal() internal {
         // First, fill empty slots if active set not full
         while (_activeProposers.length < maxActiveSetSize) {
-            (address highest, uint256 stake) = getHighestInactiveProposer();
-            if (highest == address(0) || stake < minimumStake) break;
-            _addToActiveSet(highest);
+            (address candidate, uint256 candidateStake) = getHighestInactiveProposer();
+            if (candidate == address(0) || candidateStake < minimumStake) break;
+            _addToActiveSet(candidate);
         }
 
         // Then, swap lowest active with highest inactive if beneficial
