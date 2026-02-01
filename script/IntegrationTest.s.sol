@@ -8,6 +8,7 @@ import {MockChainRegistry} from "../test/mocks/MockChainRegistry.sol";
 import {MockProposerRegistry} from "../test/mocks/MockProposerRegistry.sol";
 import {MockBuilderRegistry} from "../test/mocks/MockBuilderRegistry.sol";
 import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
+import {TestConstants} from "./TestConstants.sol";
 
 /**
  * @title IntegrationTest
@@ -27,23 +28,9 @@ import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
  *   forge script script/IntegrationTest.s.sol:IntegrationTest --rpc-url http://127.0.0.1:8545 --broadcast -vvvv
  */
 contract IntegrationTest is Script {
-    // Test accounts from Anvil's default mnemonic
-    uint256 constant DEPLOYER_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
-    uint256 constant GUARDIAN_KEY = 0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a;
-
-    address constant DEPLOYER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-    address constant GUARDIAN = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65;
-
-    // Proposers (using Anvil accounts)
-    address constant PROPOSER_1 = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
-    uint256 constant PROPOSER_1_KEY = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
-    address constant PROPOSER_2 = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
-    uint256 constant PROPOSER_2_KEY = 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a;
-    address constant PROPOSER_3 = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
-    uint256 constant PROPOSER_3_KEY = 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6;
-
-    uint256 constant EPOCH_DURATION = 10; // 10 seconds for testing
-    uint256 constant GRACE_PERIOD = 600;  // 10 minutes grace period
+    // Configuration specific to integration test
+    uint256 constant EPOCH_DURATION = 10 seconds;
+    uint256 constant GRACE_PERIOD = 10 minutes;
 
     // KSSN Components
     SharedSequencerHub public hub;
@@ -55,6 +42,7 @@ contract IntegrationTest is Script {
     MockSystemConfig public systemConfig2;
     MockSystemConfig public systemConfig3;
 
+    // Integration test uses different chain IDs to avoid conflicts
     uint256 constant CHAIN_ID_1 = 42001;
     uint256 constant CHAIN_ID_2 = 42002;
     uint256 constant CHAIN_ID_3 = 42003;
@@ -107,7 +95,7 @@ contract IntegrationTest is Script {
         console2.log("STEP 1: Deploying KSSN Hub and registries...");
         console2.log("-------------------------------------------");
 
-        vm.startBroadcast(DEPLOYER_KEY);
+        vm.startBroadcast(TestConstants.DEPLOYER_KEY);
 
         // Deploy registries
         proposerRegistry = new MockProposerRegistry();
@@ -125,12 +113,12 @@ contract IntegrationTest is Script {
 
         // Deploy Hub
         hub = new SharedSequencerHub(
-            DEPLOYER,           // governance
-            GUARDIAN,           // guardian
+            TestConstants.DEPLOYER,  // governance
+            TestConstants.GUARDIAN,  // guardian
             address(proposerRegistry),
             address(builderRegistry),
-            EPOCH_DURATION,     // epoch duration
-            GRACE_PERIOD        // grace period
+            EPOCH_DURATION,          // epoch duration
+            GRACE_PERIOD             // grace period
         );
         console2.log("  SharedSequencerHub deployed at:", address(hub));
 
@@ -158,18 +146,18 @@ contract IntegrationTest is Script {
         console2.log("STEP 2: Registering proposers in ProposerRegistry...");
         console2.log("-------------------------------------------");
 
-        vm.startBroadcast(DEPLOYER_KEY);
+        vm.startBroadcast(TestConstants.DEPLOYER_KEY);
 
-        proposerRegistry.addProposer(PROPOSER_1, 32 ether);
-        console2.log("  Registered Proposer 1:", PROPOSER_1);
+        proposerRegistry.addProposer(TestConstants.PROPOSER_1, 32 ether);
+        console2.log("  Registered Proposer 1:", TestConstants.PROPOSER_1);
         console2.log("    Stake: 32 ETH");
 
-        proposerRegistry.addProposer(PROPOSER_2, 32 ether);
-        console2.log("  Registered Proposer 2:", PROPOSER_2);
+        proposerRegistry.addProposer(TestConstants.PROPOSER_2, 32 ether);
+        console2.log("  Registered Proposer 2:", TestConstants.PROPOSER_2);
         console2.log("    Stake: 32 ETH");
 
-        proposerRegistry.addProposer(PROPOSER_3, 32 ether);
-        console2.log("  Registered Proposer 3:", PROPOSER_3);
+        proposerRegistry.addProposer(TestConstants.PROPOSER_3, 32 ether);
+        console2.log("  Registered Proposer 3:", TestConstants.PROPOSER_3);
         console2.log("    Stake: 32 ETH");
 
         console2.log("  Total active proposers:", uint256(3));
@@ -184,7 +172,7 @@ contract IntegrationTest is Script {
         console2.log("  Using GeneralizedTCR pattern (standard TCR, not permanent stake)");
         console2.log("");
 
-        vm.startBroadcast(DEPLOYER_KEY);
+        vm.startBroadcast(TestConstants.DEPLOYER_KEY);
 
         // Register chains directly (bypassing challenge period for testing)
         chainRegistry.registerChainDirectly(
@@ -234,7 +222,7 @@ contract IntegrationTest is Script {
         console2.log("STEP 4: Connecting chains from registry to Hub...");
         console2.log("-------------------------------------------");
 
-        vm.startBroadcast(DEPLOYER_KEY);
+        vm.startBroadcast(TestConstants.DEPLOYER_KEY);
 
         // Connect chains from registry
         hub.connectChainFromRegistry(CHAIN_ID_1);
@@ -260,7 +248,7 @@ contract IntegrationTest is Script {
         // Wait for epoch to end
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
 
-        vm.startBroadcast(DEPLOYER_KEY);
+        vm.startBroadcast(TestConstants.DEPLOYER_KEY);
 
         console2.log("  Before rotation:");
         console2.log("    Current proposer:", hub.currentProposer());
@@ -301,7 +289,7 @@ contract IntegrationTest is Script {
         console2.log("  Rotating again (Active Handoff by current proposer)...");
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
 
-        vm.startBroadcast(PROPOSER_1_KEY);
+        vm.startBroadcast(TestConstants.PROPOSER_1_KEY);
         hub.rotateNetwork();
         vm.stopBroadcast();
 
@@ -316,7 +304,7 @@ contract IntegrationTest is Script {
         console2.log("STEP 6: Guardian pause test...");
         console2.log("-------------------------------------------");
 
-        vm.startBroadcast(GUARDIAN_KEY);
+        vm.startBroadcast(TestConstants.GUARDIAN_KEY);
 
         console2.log("  Hub paused:", hub.isPaused());
 
@@ -328,7 +316,7 @@ contract IntegrationTest is Script {
 
         // Try to rotate while paused (should fail)
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
-        vm.startBroadcast(DEPLOYER_KEY);
+        vm.startBroadcast(TestConstants.DEPLOYER_KEY);
 
         try hub.rotateNetwork() {
             console2.log("  ERROR: Rotation should have failed while paused!");
@@ -339,7 +327,7 @@ contract IntegrationTest is Script {
         vm.stopBroadcast();
 
         // Unpause
-        vm.startBroadcast(GUARDIAN_KEY);
+        vm.startBroadcast(TestConstants.GUARDIAN_KEY);
         hub.unpause();
         console2.log("  Guardian unpaused the Hub");
         console2.log("  Hub paused:", hub.isPaused());

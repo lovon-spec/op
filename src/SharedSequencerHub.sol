@@ -35,7 +35,7 @@ contract SharedSequencerHub is ISharedSequencerHub {
     uint256 public constant DEFAULT_EPOCH_DURATION = 1 hours;
 
     /// @notice Default grace period for Active Handoff (10 minutes)
-    uint256 public constant DEFAULT_GRACE_PERIOD = 600;
+    uint256 public constant DEFAULT_GRACE_PERIOD = 10 minutes;
 
     /// @notice Maximum chains per shard for rotation
     uint256 public constant MAX_CHAINS_PER_SHARD = 200;

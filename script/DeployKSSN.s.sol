@@ -7,6 +7,7 @@ import {ProposerRegistry} from "../src/ProposerRegistry.sol";
 import {BuilderRegistry} from "../src/BuilderRegistry.sol";
 import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
+import {TestConstants} from "./TestConstants.sol";
 
 /**
  * @title DeployKSSN
@@ -30,31 +31,12 @@ import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
  *   forge script script/DeployKSSN.s.sol:DeployKSSN --rpc-url http://127.0.0.1:8545 --broadcast
  */
 contract DeployKSSN is Script {
-    // Test accounts from Anvil's default mnemonic
-    address constant DEPLOYER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-    address constant GOVERNANCE = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-    address constant GUARDIAN = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65;
-
-    // Proposers (will stake to become active)
-    address constant PROPOSER_1 = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
-    address constant PROPOSER_2 = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
-    address constant PROPOSER_3 = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
-
-    // Builders
-    address constant BUILDER_1 = 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc;
-    address constant BUILDER_2 = 0x976EA74026E726554dB657fA54763abd0C3a0aa9;
-
     // Configuration
-    uint256 constant EPOCH_DURATION = 60; // 60 seconds for demo
-    uint256 constant GRACE_PERIOD = 30; // 30 seconds grace period
-    uint256 constant MIN_PROPOSER_STAKE = 1 ether; // Low for testing
-    uint256 constant MIN_BUILDER_BOND = 1 ether; // Low for testing
+    uint256 constant EPOCH_DURATION = 1 minutes;
+    uint256 constant GRACE_PERIOD = 30 seconds;
+    uint256 constant MIN_PROPOSER_STAKE = 1 ether;
+    uint256 constant MIN_BUILDER_BOND = 1 ether;
     uint256 constant MAX_ACTIVE_PROPOSERS = 100;
-
-    // Chain IDs for test chains
-    uint256 constant CHAIN_ID_1 = 10001;
-    uint256 constant CHAIN_ID_2 = 10002;
-    uint256 constant CHAIN_ID_3 = 10003;
 
     // Deployed contracts
     ProposerRegistry public proposerRegistry;
@@ -68,7 +50,7 @@ contract DeployKSSN is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envOr(
             "PRIVATE_KEY",
-            uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80)
+            TestConstants.DEPLOYER_KEY
         );
 
         vm.startBroadcast(deployerPrivateKey);
@@ -77,7 +59,7 @@ contract DeployKSSN is Script {
 
         // 1. Deploy ProposerRegistry
         proposerRegistry = new ProposerRegistry(
-            GOVERNANCE,
+            TestConstants.DEPLOYER, // governance
             address(0), // Hub will be set after deployment
             MIN_PROPOSER_STAKE,
             MAX_ACTIVE_PROPOSERS
@@ -86,7 +68,7 @@ contract DeployKSSN is Script {
 
         // 2. Deploy BuilderRegistry
         builderRegistry = new BuilderRegistry(
-            GOVERNANCE,
+            TestConstants.DEPLOYER, // governance
             address(0), // Hub will be set after deployment
             MIN_BUILDER_BOND
         );
@@ -94,8 +76,8 @@ contract DeployKSSN is Script {
 
         // 3. Deploy SharedSequencerHub
         hub = new SharedSequencerHub(
-            GOVERNANCE,
-            GUARDIAN,
+            TestConstants.DEPLOYER, // governance
+            TestConstants.GUARDIAN,
             address(proposerRegistry),
             address(builderRegistry),
             EPOCH_DURATION,
@@ -117,9 +99,9 @@ contract DeployKSSN is Script {
         systemConfig2 = new MockSystemConfig();
         systemConfig3 = new MockSystemConfig();
         console2.log("\nMock SystemConfigs deployed:");
-        console2.log("  Chain", CHAIN_ID_1, ":", address(systemConfig1));
-        console2.log("  Chain", CHAIN_ID_2, ":", address(systemConfig2));
-        console2.log("  Chain", CHAIN_ID_3, ":", address(systemConfig3));
+        console2.log("  Chain", TestConstants.CHAIN_ID_1, ":", address(systemConfig1));
+        console2.log("  Chain", TestConstants.CHAIN_ID_2, ":", address(systemConfig2));
+        console2.log("  Chain", TestConstants.CHAIN_ID_3, ":", address(systemConfig3));
 
         // 7. Transfer SystemConfig ownership to hub
         systemConfig1.transferOwnership(address(hub));
@@ -131,14 +113,14 @@ contract DeployKSSN is Script {
         bytes32 policyNeutral = builderRegistry.POLICY_NEUTRAL();
         bytes32 policyOfac = builderRegistry.POLICY_OFAC();
 
-        hub.connectChain(CHAIN_ID_1, address(systemConfig1), policyNeutral, address(adapter));
-        hub.connectChain(CHAIN_ID_2, address(systemConfig2), policyNeutral, address(adapter));
-        hub.connectChain(CHAIN_ID_3, address(systemConfig3), policyOfac, address(adapter)); // OFAC-compliant chain
+        hub.connectChain(TestConstants.CHAIN_ID_1, address(systemConfig1), policyNeutral, address(adapter));
+        hub.connectChain(TestConstants.CHAIN_ID_2, address(systemConfig2), policyNeutral, address(adapter));
+        hub.connectChain(TestConstants.CHAIN_ID_3, address(systemConfig3), policyOfac, address(adapter)); // OFAC-compliant chain
 
         console2.log("\nChains connected to hub:");
-        console2.log("  Chain", CHAIN_ID_1, "- Policy: NEUTRAL");
-        console2.log("  Chain", CHAIN_ID_2, "- Policy: NEUTRAL");
-        console2.log("  Chain", CHAIN_ID_3, "- Policy: OFAC");
+        console2.log("  Chain", TestConstants.CHAIN_ID_1, "- Policy: NEUTRAL");
+        console2.log("  Chain", TestConstants.CHAIN_ID_2, "- Policy: NEUTRAL");
+        console2.log("  Chain", TestConstants.CHAIN_ID_3, "- Policy: OFAC");
 
         vm.stopBroadcast();
 
@@ -146,46 +128,41 @@ contract DeployKSSN is Script {
         console2.log("\n=== Registering Proposers ===");
 
         // Proposer 1
-        uint256 proposer1Key = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
-        vm.startBroadcast(proposer1Key);
-        proposerRegistry.register{value: MIN_PROPOSER_STAKE}(PROPOSER_1);
+        vm.startBroadcast(TestConstants.PROPOSER_1_KEY);
+        proposerRegistry.register{value: MIN_PROPOSER_STAKE}(TestConstants.PROPOSER_1);
         vm.stopBroadcast();
-        console2.log("Proposer 1 registered:", PROPOSER_1);
+        console2.log("Proposer 1 registered:", TestConstants.PROPOSER_1);
 
         // Proposer 2
-        uint256 proposer2Key = 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a;
-        vm.startBroadcast(proposer2Key);
-        proposerRegistry.register{value: MIN_PROPOSER_STAKE}(PROPOSER_2);
+        vm.startBroadcast(TestConstants.PROPOSER_2_KEY);
+        proposerRegistry.register{value: MIN_PROPOSER_STAKE}(TestConstants.PROPOSER_2);
         vm.stopBroadcast();
-        console2.log("Proposer 2 registered:", PROPOSER_2);
+        console2.log("Proposer 2 registered:", TestConstants.PROPOSER_2);
 
         // Proposer 3
-        uint256 proposer3Key = 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6;
-        vm.startBroadcast(proposer3Key);
-        proposerRegistry.register{value: MIN_PROPOSER_STAKE}(PROPOSER_3);
+        vm.startBroadcast(TestConstants.PROPOSER_3_KEY);
+        proposerRegistry.register{value: MIN_PROPOSER_STAKE}(TestConstants.PROPOSER_3);
         vm.stopBroadcast();
-        console2.log("Proposer 3 registered:", PROPOSER_3);
+        console2.log("Proposer 3 registered:", TestConstants.PROPOSER_3);
 
         // Register builders
         console2.log("\n=== Registering Builders ===");
 
         // Builder 1
-        uint256 builder1Key = 0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba;
-        vm.startBroadcast(builder1Key);
+        vm.startBroadcast(TestConstants.BUILDER_1_KEY);
         builderRegistry.register{value: MIN_BUILDER_BOND}();
         vm.stopBroadcast();
-        console2.log("Builder 1 registered:", BUILDER_1);
+        console2.log("Builder 1 registered:", TestConstants.BUILDER_1);
 
         // Builder 2
-        uint256 builder2Key = 0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e;
-        vm.startBroadcast(builder2Key);
+        vm.startBroadcast(TestConstants.BUILDER_2_KEY);
         builderRegistry.register{value: MIN_BUILDER_BOND}();
         vm.stopBroadcast();
-        console2.log("Builder 2 registered:", BUILDER_2);
+        console2.log("Builder 2 registered:", TestConstants.BUILDER_2);
 
         // Grant OFAC policy to Builder 1 (so they can build for chain 3)
         vm.startBroadcast(deployerPrivateKey);
-        builderRegistry.grantPolicyTag(BUILDER_1, policyOfac, 0);
+        builderRegistry.grantPolicyTag(TestConstants.BUILDER_1, policyOfac, 0);
         console2.log("OFAC policy granted to Builder 1");
 
         // Perform first rotation
@@ -206,9 +183,9 @@ contract DeployKSSN is Script {
         console2.log("BuilderRegistry:", address(builderRegistry));
         console2.log("OpStackAdapterV1:", address(adapter));
         console2.log("\nConnected Chains:");
-        console2.log("  Chain", CHAIN_ID_1, ":", address(systemConfig1));
-        console2.log("  Chain", CHAIN_ID_2, ":", address(systemConfig2));
-        console2.log("  Chain", CHAIN_ID_3, ":", address(systemConfig3));
+        console2.log("  Chain", TestConstants.CHAIN_ID_1, ":", address(systemConfig1));
+        console2.log("  Chain", TestConstants.CHAIN_ID_2, ":", address(systemConfig2));
+        console2.log("  Chain", TestConstants.CHAIN_ID_3, ":", address(systemConfig3));
 
         console2.log("\n=== Usage Commands ===");
         console2.log("Wait for epoch to end, then rotate:");
@@ -218,6 +195,6 @@ contract DeployKSSN is Script {
         console2.log("\nCheck proposer selection:");
         console2.log("  cast call", address(proposerRegistry), "'selectNextProposer(uint256)' 1");
         console2.log("\nCheck builder eligibility:");
-        console2.log("  cast call", address(builderRegistry), "'isBuilderEligible(address,bytes32)'", BUILDER_1);
+        console2.log("  cast call", address(builderRegistry), "'isBuilderEligible(address,bytes32)'", TestConstants.BUILDER_1);
     }
 }

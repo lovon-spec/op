@@ -56,7 +56,7 @@ contract OpStackAdapterV1 is IOpStackAdapter {
      * @inheritdoc IOpStackAdapter
      * @dev Rotates the sequencer by updating both batcher hash and unsafe block signer.
      *      IMPORTANT: This function is designed to be called via delegatecall.
-     *      The caller (KlerosSequencerManager) must be the owner of SystemConfig.
+     *      The caller (SharedSequencerHub) must be the owner of SystemConfig.
      *
      *      Rotation is atomic - both values are updated in a single transaction.
      *      If either call fails, the entire transaction reverts.

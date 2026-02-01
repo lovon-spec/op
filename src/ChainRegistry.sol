@@ -72,12 +72,15 @@ contract ChainRegistry is IChainRegistry, IArbitrable, IEvidence {
     uint256 public override challengePeriod;
 
     /// @notice Stake multiplier for challengers (in basis points)
+    /// @dev Used to calculate required challenger deposit
     uint256 public challengerStakeMultiplier;
 
     /// @notice Stake multiplier for winners (in basis points)
+    /// @dev Reserved for future reward distribution. Currently unused but part of standard TCR pattern.
     uint256 public winnerStakeMultiplier;
 
     /// @notice Stake multiplier for losers (in basis points)
+    /// @dev Reserved for future reward distribution. Currently unused but part of standard TCR pattern.
     uint256 public loserStakeMultiplier;
 
     /// @notice Mapping from item ID to Item

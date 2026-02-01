@@ -10,6 +10,7 @@ import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
 import {MockArbitrator} from "../test/mocks/MockArbitrator.sol";
 import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 import {IArbitrator} from "../src/interfaces/IArbitrator.sol";
+import {TestConstants} from "./TestConstants.sol";
 
 /**
  * @title DeployRemote
@@ -61,18 +62,6 @@ contract DeployRemote is Script {
     uint256 constant MIN_PROPOSER_STAKE_PROD = 32 ether;
     uint256 constant MIN_BUILDER_BOND_PROD = 500 ether;
 
-    // ============ Test Accounts (Anvil defaults, only used in test mode) ============
-
-    address constant DEPLOYER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-    address constant GUARDIAN = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65;
-
-    address constant PROPOSER_1 = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
-    address constant PROPOSER_2 = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
-    address constant PROPOSER_3 = 0x90F79bf6EB2c4f870365E785982E1f101E93b906;
-
-    address constant BUILDER_1 = 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc;
-    address constant BUILDER_2 = 0x976EA74026E726554dB657fA54763abd0C3a0aa9;
-
     // ============ State ============
 
     ProposerRegistry public proposerRegistry;
@@ -90,10 +79,10 @@ contract DeployRemote is Script {
 
         uint256 deployerPrivateKey = vm.envOr(
             "PRIVATE_KEY",
-            uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80)
+            TestConstants.DEPLOYER_KEY
         );
 
-        address guardian = vm.envOr("GUARDIAN", isProduction ? address(0) : GUARDIAN);
+        address guardian = vm.envOr("GUARDIAN", isProduction ? address(0) : TestConstants.GUARDIAN);
 
         // Select parameters based on mode
         uint256 epochDuration = vm.envOr(

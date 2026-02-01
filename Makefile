@@ -2,7 +2,7 @@
 #
 # Common commands for development, testing, and deployment
 
-.PHONY: all build test clean install deploy-local demo help
+.PHONY: all build test clean install deploy-local integration-test help
 
 # Default target
 all: build test
@@ -55,10 +55,11 @@ deploy-kssn:
 		--rpc-url http://127.0.0.1:8545 \
 		--broadcast
 
-# Run the interactive demo
-demo:
-	forge script script/Demo.s.sol:Demo \
+# Run the integration test script
+integration-test:
+	forge script script/IntegrationTest.s.sol:IntegrationTest \
 		--rpc-url http://127.0.0.1:8545 \
+		--broadcast \
 		-vvvv
 
 # =============================================================
@@ -150,9 +151,9 @@ help:
 	@echo "  make coverage     - Generate coverage report"
 	@echo ""
 	@echo "Local Development:"
-	@echo "  make anvil        - Start local Anvil node"
-	@echo "  make deploy-kssn  - Deploy KSSN Hub-and-Spoke to local Anvil"
-	@echo "  make demo         - Run interactive demo"
+	@echo "  make anvil            - Start local Anvil node"
+	@echo "  make deploy-kssn      - Deploy KSSN Hub-and-Spoke to local Anvil"
+	@echo "  make integration-test - Run KSSN integration test"
 	@echo ""
 	@echo "Docker (Full OP Stack):"
 	@echo "  make docker-up    - Start all services"
