@@ -261,7 +261,7 @@ Separating stake ownership from operational keys improves security:
 
 **Recommendation**: Use different addresses for Staker vs Operational Keys. If hot keys are compromised, the governance stake remains safe.
 
-### Operator Tuple Model
+### Proposer Key Model
 
 **CRITICAL**: OP Stack sequencer authority requires TWO keys rotated together:
 
@@ -270,35 +270,43 @@ Separating stake ownership from operational keys improves security:
 | **Batcher** | Posts batches to L1 | `setBatcherHash()` |
 | **Unsafe Signer** | Signs P2P unsafe blocks | `setUnsafeBlockSigner()` |
 
-Both keys are registered in the Hybrid PGTCR registry and rotated atomically by the manager via the adapter.
+Both keys are registered with each proposer and rotated atomically across ALL chains by the Hub via adapters.
 
 ```
-                        OPERATOR ROTATION FLOW
+                        PROPOSER ROTATION FLOW (KSSN)
 
   ┌───────────────────────────────────────────────────────────────────────────┐
   │                              L1 (Ethereum)                                 │
   │                                                                           │
-  │     Operator Registry                    KlerosSequencerManager           │
+  │     ProposerRegistry                      SharedSequencerHub              │
   │  ┌─────────────────────┐              ┌─────────────────────┐             │
-  │  │  PGTCR Hybrid       │              │  Snapshot + Reverse │             │
-  │  │                     │   sync       │  Mapping            │             │
-  │  │  itemKeys[itemID]   │ ──────────▶  │                     │             │
-  │  │  ├─ batcher         │              │  opIdToItemId[opId] │             │
-  │  │  └─ unsafeSigner    │              │  itemIdToOpId[item] │             │
+  │  │  DPoS Selection     │              │  Central Authority  │             │
   │  │                     │              │                     │             │
-  │  │  setOperationalKeys │              │  O(1) validation    │             │
-  │  └─────────────────────┘              └─────────────────────┘             │
+  │  │  Top-N Active Set   │ ◀──────────▶ │  currentProposer    │             │
+  │  │  ├─ stake           │              │  currentEpoch       │             │
+  │  │  └─ operationalKey  │              │  connectedChains[]  │             │
+  │  │                     │              │                     │             │
+  │  │  selectNextProposer │              │  rotateNetwork()    │             │
+  │  └─────────────────────┘              └──────────┬──────────┘             │
   │                                                  │                        │
-  └──────────────────────────────────────────────────│────────────────────────┘
+  │              ┌───────────────────────────────────┼─────────────────────┐  │
+  │              │                                   │                     │  │
+  │              ▼                                   ▼                     ▼  │
+  │     ┌─────────────────┐              ┌─────────────────┐   ┌─────────────────┐
+  │     │  SystemConfig   │              │  SystemConfig   │   │  SystemConfig   │
+  │     │  Chain A        │              │  Chain B        │   │  Chain C        │
+  │     └─────────────────┘              └─────────────────┘   └─────────────────┘
+  │                                                                           │
+  └───────────────────────────────────────────────────────────────────────────┘
                                                      │
            ┌─────────────────────────────────────────┼─────────────────────────┐
            │                                         │                         │
            ▼                                         ▼                         ▼
    ┌───────────────────┐                    ┌───────────────────┐    ┌───────────────────┐
-   │   Operator A      │                    │   Operator B      │    │   Operator C      │
+   │   Proposer A      │                    │   Proposer B      │    │   Proposer C      │
    │                   │                    │                   │    │                   │
    │ ┌───────────────┐ │                    │ ┌───────────────┐ │    │ ┌───────────────┐ │
-   │ │Self-Activation│ │                    │ │Self-Activation│ │    │ │Self-Activation│ │
+   │ │   Proposer    │ │                    │ │   Proposer    │ │    │ │   Proposer    │ │
    │ │    Agent      │ │                    │ │    Agent      │ │    │ │    Agent      │ │
    │ └───────┬───────┘ │                    │ └───────┬───────┘ │    │ └───────┬───────┘ │
    │         │         │                    │         │         │    │         │         │
@@ -310,14 +318,15 @@ Both keys are registered in the Hybrid PGTCR registry and rotated atomically by 
    └───────────────────┘                    └───────────────────┘    └───────────────────┘
 ```
 
-### Self-Activation Agents
+### Proposer Agents
 
-Each operator MUST run a self-activation agent that:
-1. Monitors `isCurrentOperator(batcher, unsafeSigner)` on-chain
+Each proposer MUST run a proposer agent that:
+1. Monitors `isCurrentProposer(address)` on SharedSequencerHub
 2. Starts local op-node sequencer + op-batcher when becoming active
 3. Stops them when no longer active
+4. Calls `rotateNetwork()` during grace period
 
-This is a **constitutional requirement** - operators that produce blocks while unauthorized can be challenged and removed.
+This is a **constitutional requirement** - proposers that produce blocks while unauthorized can be challenged and removed.
 
 See [`agent/`](./agent/) for a reference implementation.
 
@@ -371,15 +380,15 @@ The grace period ensures the outgoing operator can flush all pending batches to 
 
 ### How It Works
 
-1. **Operators Register**: Submit operational keys to Hybrid PGTCR with deposit + Constitutional Declaration
-2. **Community Curation**: Challenge period allows disputing unfit operators (Sybil, unqualified)
-3. **Sync to Manager**: Call `syncAddOperator(itemID)` to snapshot keys and create reverse mapping
-4. **Epoch Operation**: Operator produces blocks for `epochDuration`
-5. **Active Handoff**: At epoch end, operator flushes batches and calls `rotateOperator()` (grace period protects this)
-6. **Adapter Execution**: Manager delegates to adapter via delegatecall for OP Stack compatibility
-7. **Atomic Update**: Adapter sets BOTH `batcherHash` AND `unsafeBlockSigner` in SystemConfig
-8. **Self-Activation**: New operator's agent detects the change and immediately starts sequencing
-9. **Constitutional Enforcement**: Misbehaving operators challenged via Kleros
+1. **Proposers Register**: Submit stake to ProposerRegistry with operational keys
+2. **DPoS Selection**: Top-N stakers (by own + delegated stake) are in the active set
+3. **Chains Register**: Chains apply to ChainRegistry via ChainDeploymentKit
+4. **Hub Connects Chains**: After challenge period, governance connects chains to Hub
+5. **Epoch Operation**: Current proposer produces blocks for `epochDuration` on ALL chains
+6. **Active Handoff**: At epoch end, proposer flushes batches and calls `rotateNetwork()` (grace period protects this)
+7. **Atomic Update**: Hub updates BOTH `batcherHash` AND `unsafeBlockSigner` on ALL connected chains
+8. **Proposer Agent Activation**: New proposer's agent detects the change and immediately starts sequencing
+9. **Constitutional Enforcement**: Misbehaving proposers/builders challenged via Kleros
 
 ### Constitutional Rules (Summary)
 
@@ -391,7 +400,7 @@ The full constitution is defined in [`policies/policy_sequencer_registry.md`](./
 |------|-----------|-------------------|
 | **Censorship Resistance** | Excluding valid tx for >5 minutes | Provider logs + simulation trace |
 | **No Malicious MEV** | Sandwiching, front-running | Simulation proof of user harm |
-| **Self-Activation** | Producing blocks when unauthorized | L1 timestamp vs epoch |
+| **Unauthorized Production** | Producing blocks when unauthorized | L1 timestamp vs epoch |
 | **Liveness** | >5 minute downtime during epoch | Block production gaps |
 
 See the [Sequencer Policy](./policies/policy_sequencer_registry.md) for detailed evidence standards.
@@ -610,25 +619,6 @@ function getChallengeTimeRemaining(uint256 chainId) external view returns (uint2
 function getRequiredDeposit() external view returns (uint256);
 ```
 
-### Standalone Mode: KlerosSequencerManager
-
-For single-chain deployments or chains preparing for KSSN integration, `KlerosSequencerManager` provides a complete standalone sequencer rotation system. Chains can start in standalone mode and later integrate into KSSN via the ChainRegistry.
-
-```solidity
-// Operator struct
-struct Operator {
-    address batcher;       // Posts batches to L1
-    address unsafeSigner;  // Signs P2P unsafe blocks
-}
-
-// Core functions
-function syncAddOperator(bytes32 itemID) external;
-function rotateOperator() external;
-function upgradeAdapter(address newAdapter) external;
-function currentOperator() external view returns (Operator memory);
-function isCurrentOperator(address batcher, address unsafeSigner) external view returns (bool);
-```
-
 ### IOpStackAdapter
 
 Hot-swappable adapter interface for OP Stack compatibility:
@@ -715,15 +705,15 @@ cast send $MANAGER_ADDRESS "syncAddOperator(address,address)" $BATCHER $UNSAFE_S
   --private-key $DEPLOYER_PRIVATE_KEY
 ```
 
-6. **Deploy Self-Activation Agent**
+6. **Deploy KSSN Proposer Agent**
 
-Each operator must run their own agent:
+Each proposer must run their own agent:
 ```bash
 cd agent
 pip install -r requirements.txt
-cp config.example.yaml config.yaml
-# Edit config.yaml with operator's keys
-python self_activation_agent.py --config config.yaml
+cp kssn_config.example.yaml kssn_config.yaml
+# Edit kssn_config.yaml with proposer's details
+python kssn_proposer_agent.py --config kssn_config.yaml
 ```
 
 ### Mainnet Deployment
@@ -737,9 +727,9 @@ python self_activation_agent.py --config config.yaml
 
 See `script/DeployRemote.s.sol` for detailed deployment steps.
 
-## Self-Activation Agent
+## KSSN Proposer Agent
 
-Each operator MUST run a self-activation agent. See [`agent/README.md`](./agent/README.md) for:
+Each proposer MUST run a proposer agent. See [`agent/README.md`](./agent/README.md) for:
 - Installation instructions
 - Configuration options
 - Systemd service setup
@@ -749,9 +739,9 @@ Quick start:
 ```bash
 cd agent
 pip install -r requirements.txt
-cp config.example.yaml config.yaml
-# Edit config.yaml
-python self_activation_agent.py --config config.yaml
+cp kssn_config.example.yaml kssn_config.yaml
+# Edit kssn_config.yaml with your proposer details
+python kssn_proposer_agent.py --config kssn_config.yaml
 ```
 
 ## Keeper Integration
@@ -823,9 +813,9 @@ Web3Function.onRun(async (context) => {
 - Prevents DoS during rotation with many operators
 - Snapshots decouple from registry reads during rotation
 
-### Self-Activation Compliance
+### Constitutional Compliance
 - Constitutional requirement enforced via Kleros
-- Operators can be challenged for producing blocks while unauthorized
+- Proposers can be challenged for producing blocks while unauthorized
 
 ### Bounded Operations
 - All loops are bounded to prevent DoS
@@ -846,8 +836,6 @@ op/
 │   ├── BuilderRegistry.sol           # KSSN policy-based builder management
 │   ├── ChainRegistry.sol             # GeneralizedTCR for chain onboarding
 │   ├── ChainDeploymentKit.sol        # Helper for chain integration
-│   ├── KlerosSequencerManager.sol    # Standalone/integration framework
-│   ├── PermanentGTCRHybrid.sol       # Hybrid PGTCR (based on Kleros PGTCR)
 │   ├── adapters/
 │   │   └── OpStackAdapterV1.sol      # OP Stack Bedrock/Ecotone adapter
 │   └── interfaces/
@@ -856,7 +844,6 @@ op/
 │       ├── IBuilderRegistry.sol      # KSSN Builder registry interface
 │       ├── IChainRegistry.sol        # Chain registry interface
 │       ├── IOpStackAdapter.sol       # Adapter interface
-│       ├── IPermanentGTCRHybrid.sol  # Hybrid PGTCR interface
 │       ├── ICurate.sol               # Kleros Curate interface
 │       ├── ISystemConfig.sol         # OP Stack interface (batcher + signer)
 │       ├── IArbitrator.sol           # ERC-792 arbitration
@@ -866,24 +853,21 @@ op/
 │   ├── ProposerRegistry.t.sol        # KSSN Proposer registry tests
 │   ├── BuilderRegistry.t.sol         # KSSN Builder registry tests
 │   ├── ChainRegistry.t.sol           # Chain registry tests
-│   ├── KlerosSequencerManager.t.sol  # Standalone manager tests
 │   └── mocks/
 │       ├── MockProposerRegistry.sol  # KSSN proposer registry mock
 │       ├── MockBuilderRegistry.sol   # KSSN builder registry mock
 │       ├── MockChainRegistry.sol     # Chain registry mock
-│       ├── MockCurate.sol            # Test Kleros Curate mock
-│       ├── MockPermanentGTCRHybrid.sol # Test Hybrid PGTCR mock
 │       ├── MockSystemConfig.sol      # Test SystemConfig mock
 │       └── MockAdapterV2.sol         # V2 adapter stub (for testing)
 ├── script/
 │   ├── DeployKSSN.s.sol              # KSSN Hub-and-Spoke deployment
-│   ├── DeployLocal.s.sol             # Standalone single-chain deployment
 │   ├── DeployRemote.s.sol            # Sepolia/Mainnet deployment
 │   ├── IntegrationTest.s.sol         # Solidity integration test
 │   └── run_integration_test.sh       # Full system integration test
 ├── policies/
 │   ├── policy_sequencer_registry.md  # Sequencer constitutional rules
-│   └── policy_adapter_registry.md    # Adapter acceptance criteria
+│   ├── policy_adapter_registry.md    # Adapter acceptance criteria
+│   └── policy_chain_registry.md      # Chain registry criteria
 ├── devnet/
 │   ├── genesis-l2.json               # L2 genesis configuration
 │   └── generate-configs.sh           # Config generation helper
@@ -892,8 +876,6 @@ op/
 ├── agent/
 │   ├── kssn_proposer_agent.py        # KSSN proposer agent
 │   ├── kssn_config.example.yaml      # KSSN agent config template
-│   ├── self_activation_agent.py      # Standalone single-chain agent
-│   ├── config.example.yaml           # Standalone agent config template
 │   ├── requirements.txt              # Python dependencies
 │   └── README.md                     # Agent documentation
 ├── docker-compose.yml                # Full OP Stack setup
@@ -964,14 +946,6 @@ A: 1) Current proposer's agent detects epoch end, 2) Agent stops sequencing and 
 
 **Q: What if the proposer doesn't rotate during grace period?**
 A: After grace period expires (Phase 3), anyone can force rotation via `rotateNetwork()`. This ensures liveness but may cause re-orgs if the outgoing proposer had unflushed batches.
-
-### Standalone Mode & Integration
-
-**Q: What is standalone mode?**
-A: Chains can run `KlerosSequencerManager` independently before joining KSSN. This provides decentralized sequencer rotation for a single chain with the same constitutional enforcement.
-
-**Q: How do I migrate from standalone to KSSN?**
-A: 1) Register your chain in ChainRegistry via ChainDeploymentKit, 2) Wait for challenge period, 3) Hub governance calls `connectChainFromRegistry()`, 4) Your chain is now part of KSSN with atomic multichain rotation.
 
 ### Technical Details
 
