@@ -49,7 +49,7 @@ coverage:
 anvil:
 	anvil --port 8545 --block-time 2
 
-# Deploy contracts to local Anvil (legacy single-chain)
+# Deploy contracts to local Anvil (standalone single-chain)
 deploy-local:
 	forge script script/DeployLocal.s.sol:DeployLocal \
 		--rpc-url http://127.0.0.1:8545 \
@@ -157,7 +157,7 @@ help:
 	@echo ""
 	@echo "Local Development:"
 	@echo "  make anvil        - Start local Anvil node"
-	@echo "  make deploy-local - Deploy legacy single-chain to local Anvil"
+	@echo "  make deploy-local - Deploy standalone single-chain to local Anvil"
 	@echo "  make deploy-kssn  - Deploy KSSN Hub-and-Spoke to local Anvil"
 	@echo "  make demo         - Run interactive demo"
 	@echo ""

@@ -249,10 +249,6 @@ Each connected chain specifies a `policyId` requirement:
 **The Union Rule for Atomicity:**
 For a Builder to construct an atomic bundle touching Chain A (Policy X) and Chain B (Policy Y), the Builder must possess BOTH Tag X AND Tag Y.
 
-### Legacy Single-Chain Architecture
-
-For single-chain deployments, the legacy `KlerosSequencerManager` architecture is still available. See the [Legacy Architecture](#legacy-single-chain-architecture) section below.
-
 ### Cold Staker / Hot Operator Model
 
 Separating stake ownership from operational keys improves security:
@@ -614,9 +610,9 @@ function getChallengeTimeRemaining(uint256 chainId) external view returns (uint2
 function getRequiredDeposit() external view returns (uint256);
 ```
 
-### Legacy: KlerosSequencerManager
+### Standalone Mode: KlerosSequencerManager
 
-For single-chain deployments or chains not yet integrated into KSSN, the legacy manager provides a complete standalone solution.
+For single-chain deployments or chains preparing for KSSN integration, `KlerosSequencerManager` provides a complete standalone sequencer rotation system. Chains can start in standalone mode and later integrate into KSSN via the ChainRegistry.
 
 ```solidity
 // Operator struct
@@ -881,7 +877,7 @@ op/
 │       └── MockAdapterV2.sol         # V2 adapter stub (for testing)
 ├── script/
 │   ├── DeployKSSN.s.sol              # KSSN Hub-and-Spoke deployment
-│   ├── DeployLocal.s.sol             # Legacy single-chain deployment
+│   ├── DeployLocal.s.sol             # Standalone single-chain deployment
 │   ├── DeployRemote.s.sol            # Sepolia/Mainnet deployment
 │   ├── IntegrationTest.s.sol         # Solidity integration test
 │   └── run_integration_test.sh       # Full system integration test
@@ -896,8 +892,8 @@ op/
 ├── agent/
 │   ├── kssn_proposer_agent.py        # KSSN proposer agent
 │   ├── kssn_config.example.yaml      # KSSN agent config template
-│   ├── self_activation_agent.py      # Legacy single-chain agent
-│   ├── config.example.yaml           # Legacy agent config template
+│   ├── self_activation_agent.py      # Standalone single-chain agent
+│   ├── config.example.yaml           # Standalone agent config template
 │   ├── requirements.txt              # Python dependencies
 │   └── README.md                     # Agent documentation
 ├── docker-compose.yml                # Full OP Stack setup
@@ -969,13 +965,13 @@ A: 1) Current proposer's agent detects epoch end, 2) Agent stops sequencing and 
 **Q: What if the proposer doesn't rotate during grace period?**
 A: After grace period expires (Phase 3), anyone can force rotation via `rotateNetwork()`. This ensures liveness but may cause re-orgs if the outgoing proposer had unflushed batches.
 
-### Legacy Architecture
+### Standalone Mode & Integration
 
-**Q: What about the single-chain KlerosSequencerManager?**
-A: It's still available for single-chain deployments. Use `make deploy-local` for legacy deployment or `make deploy-kssn` for the new Hub-and-Spoke architecture.
+**Q: What is standalone mode?**
+A: Chains can run `KlerosSequencerManager` independently before joining KSSN. This provides decentralized sequencer rotation for a single chain with the same constitutional enforcement.
 
-**Q: Can I migrate from single-chain to KSSN?**
-A: Yes. Deploy the KSSN contracts, transfer your SystemConfig ownership to the Hub, and connect your chain. Proposers need to register in the new ProposerRegistry.
+**Q: How do I migrate from standalone to KSSN?**
+A: 1) Register your chain in ChainRegistry via ChainDeploymentKit, 2) Wait for challenge period, 3) Hub governance calls `connectChainFromRegistry()`, 4) Your chain is now part of KSSN with atomic multichain rotation.
 
 ### Technical Details
 

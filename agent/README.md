@@ -101,9 +101,9 @@ flush_timeout: 300                      # Max flush wait time (seconds)
 
 ---
 
-## Legacy Self-Activation Agent
+## Standalone Self-Activation Agent
 
-For single-chain deployments using the legacy `KlerosSequencerManager`.
+For single-chain deployments or chains preparing for KSSN integration using `KlerosSequencerManager`.
 
 ## Why This Is Required
 
