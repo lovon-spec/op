@@ -7,7 +7,61 @@ Decentralized agents that monitor on-chain state and automatically manage OP Sta
 | Agent | Architecture | Contract | Use Case |
 |-------|--------------|----------|----------|
 | `kssn_proposer_agent.py` | **KSSN Hub-and-Spoke** | `SharedSequencerHub` | Multi-chain shared sequencing |
-| `self_activation_agent.py` | Legacy single-chain | `KlerosSequencerManager` | Single L2 chain |
+| `self_activation_agent.py` | Standalone/Integration | `KlerosSequencerManager` | Single L2 chain or KSSN integration |
+
+## Architecture Overview
+
+The agents support two deployment modes:
+
+### 1. KSSN Mode (SharedSequencerHub)
+
+For chains integrated into the **Kleros Shared Sequencer Network**:
+
+```
+  ChainRegistry         SharedSequencerHub           ProposerAgent
+  ─────────────         ──────────────────           ─────────────
+       │                        │                         │
+       │  Chain Registered      │                         │
+       │───────────────────────▶│                         │
+       │                        │                         │
+       │                        │  rotateNetwork()        │
+       │                        │◀────────────────────────│
+       │                        │                         │
+       │                        │  Updates ALL chains     │
+       │                        │  atomically             │
+       │                        │                         │
+```
+
+Use `kssn_proposer_agent.py` for this mode.
+
+### 2. Standalone Mode (KlerosSequencerManager)
+
+For single-chain deployments or chains not yet integrated into KSSN:
+
+```
+  PermanentGTCRHybrid     KlerosSequencerManager      SelfActivationAgent
+  ───────────────────     ──────────────────────      ───────────────────
+       │                         │                          │
+       │  Operator Registered    │                          │
+       │────────────────────────▶│                          │
+       │                         │                          │
+       │                         │  rotateOperator()        │
+       │                         │◀─────────────────────────│
+       │                         │                          │
+       │                         │  Updates single chain    │
+       │                         │                          │
+```
+
+Use `self_activation_agent.py` for this mode.
+
+### Integration Path
+
+Chains can start in standalone mode and later integrate into KSSN:
+
+1. **Deploy standalone**: Use `KlerosSequencerManager` for initial operation
+2. **Register in ChainRegistry**: Apply for KSSN integration via `ChainDeploymentKit`
+3. **Connect to Hub**: After approval, Hub governance connects the chain
+4. **Switch agents**: Operators transition from `self_activation_agent.py` to participating in KSSN via `kssn_proposer_agent.py`
 
 ## KSSN Proposer Agent (Recommended)
 

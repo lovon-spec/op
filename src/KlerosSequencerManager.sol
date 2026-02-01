@@ -11,6 +11,24 @@ import {IOpStackAdapter} from "./interfaces/IOpStackAdapter.sol";
  * @notice Hybrid PermanentGTCR -> OP Stack SystemConfig bridge with hot-swappable adapter.
  * @dev Manages a rotating set of sequencer operators curated via a Kleros PGTCR Hybrid registry.
  *
+ *      This contract serves two purposes in the KSSN architecture:
+ *
+ *      1. STANDALONE MODE: For chains not yet integrated into KSSN, this contract
+ *         provides a complete decentralized sequencer rotation system. Chains can
+ *         use this as their sole sequencer management solution.
+ *
+ *      2. KSSN INTEGRATION FRAMEWORK: For chains joining KSSN, this contract provides
+ *         the foundational operator registry and adapter pattern. When integrated:
+ *         - The SharedSequencerHub becomes the central coordinator
+ *         - This manager handles local operator validation and SystemConfig updates
+ *         - The ChainRegistry (GeneralizedTCR) manages chain membership
+ *
+ *      Integration Path to KSSN:
+ *      1. Deploy this manager for standalone operation
+ *      2. Register chain in ChainRegistry via ChainDeploymentKit
+ *      3. After approval, Hub governance calls connectChainFromRegistry()
+ *      4. Hub coordinates atomic rotation across all connected chains
+ *
  * Architecture (Snapshot + Reverse Mapping + Hot-Swappable Adapter):
  * - Registry stores items with on-chain operational keys (via Hybrid extension)
  * - Manager SNAPSHOTS keys when syncing (decouples from registry reads during rotation)
@@ -55,7 +73,7 @@ import {IOpStackAdapter} from "./interfaces/IOpStackAdapter.sol";
  * - Atomic rotation of both keys via adapter
  * - Adapter upgrades gated by Kleros arbitration
  *
- * @custom:security-contact security@example.com
+ * @custom:security-contact security@kleros.io
  */
 contract KlerosSequencerManager {
     // ============ Errors ============

@@ -5,6 +5,7 @@ import {ISharedSequencerHub} from "./interfaces/ISharedSequencerHub.sol";
 import {IProposerRegistry} from "./interfaces/IProposerRegistry.sol";
 import {IBuilderRegistry} from "./interfaces/IBuilderRegistry.sol";
 import {IOpStackAdapter} from "./interfaces/IOpStackAdapter.sol";
+import {IChainRegistry} from "./interfaces/IChainRegistry.sol";
 
 /**
  * @title SharedSequencerHub
@@ -82,6 +83,22 @@ contract SharedSequencerHub is ISharedSequencerHub {
 
     /// @notice The proposer for the current rotation (for sharded rotation)
     address internal _pendingProposer;
+
+    /// @notice The chain registry contract (GeneralizedTCR for chain applications)
+    address public chainRegistry;
+
+    // ============ Events ============
+
+    /// @notice Emitted when a chain is connected from the registry
+    event ChainConnectedFromRegistry(
+        uint256 indexed chainId,
+        address indexed systemConfig,
+        bytes32 policyId,
+        address adapter
+    );
+
+    /// @notice Emitted when the chain registry is updated
+    event ChainRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
 
     // ============ Modifiers ============
 
@@ -491,6 +508,125 @@ contract SharedSequencerHub is ISharedSequencerHub {
      */
     function setGracePeriod(uint256 _newGracePeriod) external onlyGovernance {
         gracePeriod = _newGracePeriod;
+    }
+
+    // ============ Chain Registry Functions ============
+
+    /**
+     * @notice Sets the chain registry contract.
+     * @param _chainRegistry The chain registry address
+     */
+    function setChainRegistry(address _chainRegistry) external onlyGovernance {
+        address oldRegistry = chainRegistry;
+        chainRegistry = _chainRegistry;
+        emit ChainRegistryUpdated(oldRegistry, _chainRegistry);
+    }
+
+    /**
+     * @notice Connects a chain from the registry to the hub.
+     * @dev The chain must be registered in the ChainRegistry. This function reads
+     *      the chain's configuration from the registry and adds it to the Hub.
+     *      This provides a decentralized onboarding path for new chains.
+     * @param _chainId The chain ID to connect (must be registered in ChainRegistry)
+     */
+    function connectChainFromRegistry(uint256 _chainId) external onlyGovernance {
+        if (chainRegistry == address(0)) revert InvalidSystemConfig();
+        if (_chainIdToIndex[_chainId] != 0) revert ChainAlreadyExists(_chainId);
+
+        // Get chain data from registry
+        IChainRegistry registry = IChainRegistry(chainRegistry);
+        if (!registry.isRegistered(_chainId)) revert ChainNotFound(_chainId);
+
+        IChainRegistry.Item memory item = registry.getItemByChainId(_chainId);
+        IChainRegistry.ChainData memory data = item.data;
+
+        // Validate the data
+        if (data.systemConfig == address(0)) revert InvalidSystemConfig();
+        if (data.adapter == address(0)) revert InvalidAdapter();
+
+        // Add chain configuration
+        _connectedChains.push(ChainConfig({
+            systemConfig: data.systemConfig,
+            policyId: data.policyId,
+            adapter: data.adapter,
+            isActive: true,
+            chainId: _chainId
+        }));
+
+        // Store index (1-indexed)
+        _chainIdToIndex[_chainId] = _connectedChains.length;
+
+        emit ChainConnectedFromRegistry(_chainId, data.systemConfig, data.policyId, data.adapter);
+        emit ChainConnected(_chainId, data.systemConfig, data.policyId, data.adapter);
+    }
+
+    /**
+     * @notice Batch connects multiple chains from the registry.
+     * @dev Allows governance to connect multiple registered chains in a single transaction.
+     * @param _chainIds Array of chain IDs to connect
+     */
+    function batchConnectChainsFromRegistry(uint256[] calldata _chainIds) external onlyGovernance {
+        if (chainRegistry == address(0)) revert InvalidSystemConfig();
+
+        IChainRegistry registry = IChainRegistry(chainRegistry);
+
+        for (uint256 i = 0; i < _chainIds.length; i++) {
+            uint256 chainId = _chainIds[i];
+
+            // Skip if already connected
+            if (_chainIdToIndex[chainId] != 0) continue;
+
+            // Skip if not registered
+            if (!registry.isRegistered(chainId)) continue;
+
+            IChainRegistry.Item memory item = registry.getItemByChainId(chainId);
+            IChainRegistry.ChainData memory data = item.data;
+
+            // Skip if invalid data
+            if (data.systemConfig == address(0) || data.adapter == address(0)) continue;
+
+            // Add chain configuration
+            _connectedChains.push(ChainConfig({
+                systemConfig: data.systemConfig,
+                policyId: data.policyId,
+                adapter: data.adapter,
+                isActive: true,
+                chainId: chainId
+            }));
+
+            _chainIdToIndex[chainId] = _connectedChains.length;
+
+            emit ChainConnectedFromRegistry(chainId, data.systemConfig, data.policyId, data.adapter);
+            emit ChainConnected(chainId, data.systemConfig, data.policyId, data.adapter);
+        }
+    }
+
+    /**
+     * @notice Syncs a connected chain's configuration from the registry.
+     * @dev Updates adapter and policy if they've changed in the registry.
+     * @param _chainId The chain ID to sync
+     */
+    function syncChainFromRegistry(uint256 _chainId) external onlyGovernance {
+        if (chainRegistry == address(0)) revert InvalidSystemConfig();
+
+        uint256 index = _chainIdToIndex[_chainId];
+        if (index == 0) revert ChainNotFound(_chainId);
+
+        IChainRegistry registry = IChainRegistry(chainRegistry);
+        if (!registry.isRegistered(_chainId)) revert ChainNotFound(_chainId);
+
+        IChainRegistry.Item memory item = registry.getItemByChainId(_chainId);
+        IChainRegistry.ChainData memory data = item.data;
+
+        ChainConfig storage chain = _connectedChains[index - 1];
+
+        // Update adapter and policy from registry
+        if (data.adapter != address(0)) {
+            chain.adapter = data.adapter;
+        }
+        chain.policyId = data.policyId;
+
+        emit ChainConfigUpdated(_chainId, chain.policyId, chain.adapter);
     }
 
     // ============ Helper Functions ============

@@ -25,6 +25,7 @@ The Constitutional L2 is governed by formal policies enforced through Kleros arb
 |--------|-------------|
 | [Sequencer Policy](./policies/policy_sequencer_registry.md) | Rules for sequencer operators (censorship, MEV, liveness) |
 | [Adapter Policy](./policies/policy_adapter_registry.md) | Acceptance criteria for OP Stack adapters |
+| [Chain Registry Policy](./policies/policy_chain_registry.md) | Acceptance/removal criteria for KSSN chain integration |
 
 These policies define:
 - **Acceptance Criteria**: Requirements for registration (Sybil resistance, operational readiness)
@@ -172,6 +173,59 @@ The KSSN uses a Hub-and-Spoke model with dual registries for Proposer-Builder Se
 - High bonds (default: 500 ETH) for "Bad Block" damages
 - Policy Tags: `OFAC`, `KYC`, `NO_MEV`, `NO_GAMBLING`, `NEUTRAL`
 - **Union Rule**: For atomic cross-chain bundles, builder needs ALL required policy tags
+
+### Chain Integration Framework
+
+KSSN provides a decentralized onboarding path for new chains via the **ChainRegistry** (GeneralizedTCR):
+
+```
+                    CHAIN INTEGRATION FLOW
+
+  Chain Team                    ChainRegistry              SharedSequencerHub
+  ───────────                   ─────────────              ──────────────────
+       │                              │                            │
+       │  1. Deploy OP Stack chain    │                            │
+       │     with SystemConfig        │                            │
+       │                              │                            │
+       │  2. Register via             │                            │
+       │     ChainDeploymentKit       │                            │
+       │─────────────────────────────▶│                            │
+       │     + deposit + metadata     │                            │
+       │                              │                            │
+       │                              │  3. Challenge Period       │
+       │                              │     (Community curation)   │
+       │                              │                            │
+       │                              │  4. Status: Registered     │
+       │                              │────────────────────────────▶│
+       │                              │                            │
+       │                              │  5. Hub connects chain     │
+       │                              │     connectChainFromRegistry│
+       │                              │                            │
+       │  6. Chain is now part of KSSN!                            │
+       │     Atomic rotation enabled                               │
+       │                              │                            │
+```
+
+**Key Components:**
+
+| Component | Type | Purpose |
+|-----------|------|---------|
+| **ChainRegistry** | GeneralizedTCR | Decentralized chain application registry |
+| **ChainDeploymentKit** | Helper | Simplified interface for chain teams |
+
+**ChainRegistry vs PermanentGTCR:**
+
+Unlike the operator registries (which use PermanentGTCR with permanent stakes), the ChainRegistry uses a **standard GeneralizedTCR** where:
+- Deposits are **returned** after successful registration
+- No perpetual stake requirement
+- Focus on chain metadata validation, not ongoing operational compliance
+- Community can challenge invalid applications during challenge period
+
+**Registration Requirements:**
+- Valid OP Stack deployment with accessible SystemConfig
+- Chain team has operational capability
+- No duplicate chain IDs
+- Compliance with KSSN constitutional requirements
 
 ### The Sovereignty Matrix
 
@@ -474,9 +528,95 @@ function revokePolicyTag(address builder, bytes32 policyId, string reason) exter
 function slash(address builder, uint256 amount, bytes32 policyId, string reason) external;
 ```
 
+### ChainRegistry
+
+GeneralizedTCR for decentralized chain onboarding to KSSN:
+
+```solidity
+// Chain registration data
+struct ChainData {
+    uint256 chainId;         // L2 chain ID
+    address systemConfig;    // SystemConfig contract on L1
+    address adapter;         // OP Stack adapter
+    bytes32 policyId;        // Required policy (OFAC, KYC, NEUTRAL)
+    string name;             // Human-readable name
+    string metadataURI;      // IPFS URI with additional info
+}
+
+// Item status
+enum Status {
+    Absent,                  // Not in registry
+    RegistrationRequested,   // Pending, in challenge period
+    Registered,              // Registered and eligible
+    ClearingRequested        // Removal pending
+}
+
+// Registration functions
+function addChain(
+    uint256 chainId,
+    address systemConfig,
+    address adapter,
+    bytes32 policyId,
+    string name,
+    string metadataURI
+) external payable returns (bytes32 itemId);
+
+function removeChain(uint256 chainId) external payable;
+function challengeRequest(bytes32 itemId, string evidence) external payable;
+function executeRequest(bytes32 itemId) external;
+
+// View functions
+function isRegistered(uint256 chainId) external view returns (bool);
+function getRegisteredChains() external view returns (uint256[] memory);
+function getItemByChainId(uint256 chainId) external view returns (Item memory);
+```
+
+### ChainDeploymentKit
+
+Helper contract for easy chain integration into KSSN:
+
+```solidity
+// Registration status tracking
+enum RegistrationStatus {
+    NotStarted,     // Chain hasn't been registered
+    Pending,        // In challenge period
+    Registered,     // Successfully registered
+    Connected,      // Connected to KSSN Hub
+    Failed          // Registration failed (challenged)
+}
+
+// Simple registration
+function registerChain(
+    uint256 chainId,
+    address systemConfig,
+    bytes32 policyId,
+    string name,
+    string metadataURI
+) external payable returns (bytes32 itemId);
+
+// With custom adapter
+function registerChainWithAdapter(
+    uint256 chainId,
+    address systemConfig,
+    address adapter,
+    bytes32 policyId,
+    string name,
+    string metadataURI
+) external payable returns (bytes32 itemId);
+
+// Finalize after challenge period
+function finalizeRegistration(uint256 chainId) external;
+
+// View functions
+function getStatus(uint256 chainId) external view returns (RegistrationStatus);
+function isReadyForConnection(uint256 chainId) external view returns (bool);
+function getChallengeTimeRemaining(uint256 chainId) external view returns (uint256);
+function getRequiredDeposit() external view returns (uint256);
+```
+
 ### Legacy: KlerosSequencerManager
 
-For single-chain deployments, the legacy manager is still available.
+For single-chain deployments or chains not yet integrated into KSSN, the legacy manager provides a complete standalone solution.
 
 ```solidity
 // Operator struct
@@ -708,7 +848,9 @@ op/
 │   ├── SharedSequencerHub.sol        # KSSN Hub - atomic multichain rotation
 │   ├── ProposerRegistry.sol          # KSSN DPoS proposer management
 │   ├── BuilderRegistry.sol           # KSSN policy-based builder management
-│   ├── KlerosSequencerManager.sol    # Legacy single-chain manager
+│   ├── ChainRegistry.sol             # GeneralizedTCR for chain onboarding
+│   ├── ChainDeploymentKit.sol        # Helper for chain integration
+│   ├── KlerosSequencerManager.sol    # Standalone/integration framework
 │   ├── PermanentGTCRHybrid.sol       # Hybrid PGTCR (based on Kleros PGTCR)
 │   ├── adapters/
 │   │   └── OpStackAdapterV1.sol      # OP Stack Bedrock/Ecotone adapter
@@ -716,6 +858,7 @@ op/
 │       ├── ISharedSequencerHub.sol   # KSSN Hub interface
 │       ├── IProposerRegistry.sol     # KSSN Proposer registry interface
 │       ├── IBuilderRegistry.sol      # KSSN Builder registry interface
+│       ├── IChainRegistry.sol        # Chain registry interface
 │       ├── IOpStackAdapter.sol       # Adapter interface
 │       ├── IPermanentGTCRHybrid.sol  # Hybrid PGTCR interface
 │       ├── ICurate.sol               # Kleros Curate interface
@@ -723,13 +866,15 @@ op/
 │       ├── IArbitrator.sol           # ERC-792 arbitration
 │       └── IArbitrable.sol           # ERC-792 arbitrable
 ├── test/
-│   ├── SharedSequencerHub.t.sol      # KSSN Hub tests
+│   ├── SharedSequencerHub.t.sol      # KSSN Hub tests (with registry integration)
 │   ├── ProposerRegistry.t.sol        # KSSN Proposer registry tests
 │   ├── BuilderRegistry.t.sol         # KSSN Builder registry tests
-│   ├── KlerosSequencerManager.t.sol  # Legacy manager tests
+│   ├── ChainRegistry.t.sol           # Chain registry tests
+│   ├── KlerosSequencerManager.t.sol  # Standalone manager tests
 │   └── mocks/
 │       ├── MockProposerRegistry.sol  # KSSN proposer registry mock
 │       ├── MockBuilderRegistry.sol   # KSSN builder registry mock
+│       ├── MockChainRegistry.sol     # Chain registry mock
 │       ├── MockCurate.sol            # Test Kleros Curate mock
 │       ├── MockPermanentGTCRHybrid.sol # Test Hybrid PGTCR mock
 │       ├── MockSystemConfig.sol      # Test SystemConfig mock
@@ -781,7 +926,20 @@ A: A mapping of builders to their policy compliance status. Each chain specifies
 A: For atomic bundles spanning multiple chains, a builder must have ALL policy tags required by those chains. E.g., to build an atomic bundle for Chain A (OFAC) and Chain B (KYC), the builder needs both OFAC and KYC tags.
 
 **Q: How do I connect a new chain to KSSN?**
-A: 1) Deploy your OP Stack chain with SystemConfig, 2) Transfer SystemConfig ownership to the Hub, 3) Call `hub.connectChain(chainId, systemConfig, policyId, adapter)` as governance, 4) Your chain is now part of the shared sequencer network.
+A: There are two paths:
+
+**Decentralized Path (ChainRegistry):**
+1) Deploy your OP Stack chain with SystemConfig
+2) Use ChainDeploymentKit to register in ChainRegistry (GeneralizedTCR)
+3) Wait for challenge period (community can dispute invalid chains)
+4) After approval, Hub governance calls `connectChainFromRegistry(chainId)`
+5) Your chain is now part of the shared sequencer network
+
+**Direct Path (Governance Only):**
+1) Deploy your OP Stack chain with SystemConfig
+2) Transfer SystemConfig ownership to the Hub
+3) Call `hub.connectChain(chainId, systemConfig, policyId, adapter)` as governance
+4) Your chain is now part of the shared sequencer network
 
 **Q: What happens if a chain's rotation fails?**
 A: The Hub continues with other chains and deactivates the failing chain. Individual chain failures don't block the network. The chain can be reactivated after fixing the issue.

@@ -3,22 +3,34 @@ pragma solidity ^0.8.20;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {KlerosSequencerManager} from "../src/KlerosSequencerManager.sol";
+import {SharedSequencerHub} from "../src/SharedSequencerHub.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
 import {MockCurate} from "../test/mocks/MockCurate.sol";
 import {MockPermanentGTCRHybrid} from "../test/mocks/MockPermanentGTCRHybrid.sol";
+import {MockChainRegistry} from "../test/mocks/MockChainRegistry.sol";
+import {MockProposerRegistry} from "../test/mocks/MockProposerRegistry.sol";
+import {MockBuilderRegistry} from "../test/mocks/MockBuilderRegistry.sol";
 import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 
 /**
  * @title IntegrationTest
- * @notice Integration test for the full operator rotation lifecycle.
+ * @notice Integration test for the full KSSN lifecycle including chain registration.
  *
- * This script tests:
+ * This script tests two modes:
+ *
+ * STANDALONE MODE (KlerosSequencerManager):
  * 1. Deployment of all contracts
  * 2. Registration of operators (batcher, unsafeSigner tuples) in Curate registry
  * 3. Syncing operators to the manager
  * 4. Rotating through operators (sets BOTH batcherHash AND unsafeBlockSigner)
  * 5. Challenging and removing a misbehaving operator
  * 6. Emergency pause by guardian
+ *
+ * KSSN INTEGRATION MODE (SharedSequencerHub + ChainRegistry):
+ * 7. Deploy KSSN Hub with ChainRegistry
+ * 8. Register chains in ChainRegistry
+ * 9. Connect chains from registry to Hub
+ * 10. Atomic multichain rotation
  *
  * Usage:
  *   anvil &
@@ -58,12 +70,28 @@ contract IntegrationTest is Script {
     OpStackAdapterV1 public adapter;
     KlerosSequencerManager public manager;
 
+    // KSSN Components
+    SharedSequencerHub public hub;
+    MockChainRegistry public chainRegistry;
+    MockProposerRegistry public proposerRegistry;
+    MockBuilderRegistry public builderRegistry;
+    MockSystemConfig public systemConfig2;
+    MockSystemConfig public systemConfig3;
+
+    uint256 constant CHAIN_ID_1 = 42001;
+    uint256 constant CHAIN_ID_2 = 42002;
+    uint256 constant CHAIN_ID_3 = 42003;
+
     function run() external {
         console2.log("");
         console2.log("===========================================");
-        console2.log("  KLEROS SEQUENCER MANAGER INTEGRATION TEST");
-        console2.log("  (Operator Tuple Model)");
+        console2.log("  KSSN INTEGRATION TEST");
+        console2.log("  (Standalone + KSSN Chain Integration)");
         console2.log("===========================================");
+        console2.log("");
+
+        // ========= PART 1: STANDALONE MODE =========
+        console2.log("=========== PART 1: STANDALONE MODE ===========");
         console2.log("");
 
         // Step 1: Deploy contracts
@@ -91,16 +119,38 @@ contract IntegrationTest is Script {
         _step8_guardianPause();
 
         console2.log("");
+        console2.log("=========== PART 2: KSSN INTEGRATION ===========");
+        console2.log("");
+
+        // Step 9: Deploy KSSN Hub and ChainRegistry
+        _step9_deployKSSN();
+
+        // Step 10: Register chains in ChainRegistry
+        _step10_registerChainsInRegistry();
+
+        // Step 11: Connect chains from registry to Hub
+        _step11_connectChainsFromRegistry();
+
+        // Step 12: Atomic multichain rotation
+        _step12_atomicMultichainRotation();
+
+        console2.log("");
         console2.log("===========================================");
         console2.log("  INTEGRATION TEST COMPLETE!");
         console2.log("===========================================");
         console2.log("");
-        console2.log("Contract Addresses:");
+        console2.log("Standalone Mode Contracts:");
         console2.log("  Operator Registry:", address(registry));
         console2.log("  Adapter Registry:", address(adapterRegistry));
         console2.log("  Adapter:", address(adapter));
         console2.log("  MockSystemConfig:", address(systemConfig));
         console2.log("  KlerosSequencerManager:", address(manager));
+        console2.log("");
+        console2.log("KSSN Mode Contracts:");
+        console2.log("  SharedSequencerHub:", address(hub));
+        console2.log("  ChainRegistry:", address(chainRegistry));
+        console2.log("  ProposerRegistry:", address(proposerRegistry));
+        console2.log("  BuilderRegistry:", address(builderRegistry));
     }
 
     function _step1_deploy() internal {
@@ -335,6 +385,158 @@ contract IntegrationTest is Script {
         console2.log("  Contract paused:", manager.paused());
         vm.stopBroadcast();
 
+        console2.log("");
+    }
+
+    // ========= KSSN INTEGRATION STEPS =========
+
+    function _step9_deployKSSN() internal {
+        console2.log("STEP 9: Deploying KSSN Hub and ChainRegistry...");
+        console2.log("-------------------------------------------");
+
+        vm.startBroadcast(DEPLOYER_KEY);
+
+        // Deploy registries
+        proposerRegistry = new MockProposerRegistry();
+        console2.log("  MockProposerRegistry deployed at:", address(proposerRegistry));
+
+        builderRegistry = new MockBuilderRegistry();
+        console2.log("  MockBuilderRegistry deployed at:", address(builderRegistry));
+
+        chainRegistry = new MockChainRegistry();
+        console2.log("  MockChainRegistry deployed at:", address(chainRegistry));
+
+        // Deploy Hub
+        hub = new SharedSequencerHub(
+            DEPLOYER,           // governance
+            GUARDIAN,           // guardian
+            address(proposerRegistry),
+            address(builderRegistry),
+            EPOCH_DURATION,     // epoch duration
+            GRACE_PERIOD        // grace period
+        );
+        console2.log("  SharedSequencerHub deployed at:", address(hub));
+
+        // Set chain registry on hub
+        hub.setChainRegistry(address(chainRegistry));
+        console2.log("  ChainRegistry set on Hub");
+
+        // Deploy additional SystemConfigs for new chains
+        systemConfig2 = new MockSystemConfig();
+        systemConfig3 = new MockSystemConfig();
+        console2.log("  Additional SystemConfigs deployed");
+
+        // Transfer ownership to Hub
+        systemConfig2.transferOwnership(address(hub));
+        systemConfig3.transferOwnership(address(hub));
+        console2.log("  SystemConfig ownership transferred to Hub");
+
+        // Add proposers
+        proposerRegistry.addProposer(BATCHER_1, 32 ether);
+        proposerRegistry.addProposer(BATCHER_2, 32 ether);
+        proposerRegistry.addProposer(BATCHER_3, 32 ether);
+        console2.log("  Proposers added to ProposerRegistry");
+
+        vm.stopBroadcast();
+        console2.log("");
+    }
+
+    function _step10_registerChainsInRegistry() internal {
+        console2.log("STEP 10: Registering chains in ChainRegistry...");
+        console2.log("-------------------------------------------");
+        console2.log("  Using GeneralizedTCR pattern (standard TCR, not permanent stake)");
+        console2.log("");
+
+        vm.startBroadcast(DEPLOYER_KEY);
+
+        // Register chains directly (bypassing challenge period for testing)
+        chainRegistry.registerChainDirectly(
+            CHAIN_ID_1,
+            address(systemConfig2),
+            address(adapter),
+            keccak256("POLICY_NEUTRAL"),
+            "Optimism Fork 1"
+        );
+        console2.log("  Registered Chain 1:");
+        console2.log("    Chain ID:", CHAIN_ID_1);
+        console2.log("    SystemConfig:", address(systemConfig2));
+        console2.log("    Policy: POLICY_NEUTRAL");
+
+        chainRegistry.registerChainDirectly(
+            CHAIN_ID_2,
+            address(systemConfig3),
+            address(adapter),
+            keccak256("POLICY_NEUTRAL"),
+            "Optimism Fork 2"
+        );
+        console2.log("  Registered Chain 2:");
+        console2.log("    Chain ID:", CHAIN_ID_2);
+        console2.log("    SystemConfig:", address(systemConfig3));
+
+        uint256[] memory registeredChains = chainRegistry.getRegisteredChains();
+        console2.log("  Total registered chains:", registeredChains.length);
+
+        vm.stopBroadcast();
+        console2.log("");
+    }
+
+    function _step11_connectChainsFromRegistry() internal {
+        console2.log("STEP 11: Connecting chains from registry to Hub...");
+        console2.log("-------------------------------------------");
+
+        vm.startBroadcast(DEPLOYER_KEY);
+
+        // Connect chains from registry
+        hub.connectChainFromRegistry(CHAIN_ID_1);
+        console2.log("  Connected Chain 1 to Hub");
+
+        hub.connectChainFromRegistry(CHAIN_ID_2);
+        console2.log("  Connected Chain 2 to Hub");
+
+        console2.log("  Total connected chains:", hub.getChainCount());
+        console2.log("  Active chains:", hub.getActiveChainCount());
+
+        vm.stopBroadcast();
+        console2.log("");
+    }
+
+    function _step12_atomicMultichainRotation() internal {
+        console2.log("STEP 12: Atomic multichain rotation...");
+        console2.log("-------------------------------------------");
+
+        // Wait for epoch to end
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+
+        vm.startBroadcast(DEPLOYER_KEY);
+
+        console2.log("  Before rotation:");
+        console2.log("    Current proposer:", hub.currentProposer());
+        console2.log("    Current epoch:", hub.currentEpoch());
+
+        hub.rotateNetwork();
+
+        console2.log("");
+        console2.log("  >>> Atomic rotation executed!");
+        console2.log("");
+        console2.log("  After rotation:");
+        console2.log("    Current proposer:", hub.currentProposer());
+        console2.log("    Current epoch:", hub.currentEpoch());
+
+        // Verify all chains were updated
+        console2.log("");
+        console2.log("  Chain 1 (", CHAIN_ID_1, "):");
+        console2.log("    batcherHash:", uint256(systemConfig2.batcherHash()));
+        console2.log("    unsafeBlockSigner:", systemConfig2.unsafeBlockSigner());
+
+        console2.log("");
+        console2.log("  Chain 2 (", CHAIN_ID_2, "):");
+        console2.log("    batcherHash:", uint256(systemConfig3.batcherHash()));
+        console2.log("    unsafeBlockSigner:", systemConfig3.unsafeBlockSigner());
+
+        console2.log("");
+        console2.log("  All chains updated atomically!");
+
+        vm.stopBroadcast();
         console2.log("");
     }
 }

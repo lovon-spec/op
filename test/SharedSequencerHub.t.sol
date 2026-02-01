@@ -4,10 +4,12 @@ pragma solidity ^0.8.20;
 import {Test, console2} from "forge-std/Test.sol";
 import {SharedSequencerHub} from "../src/SharedSequencerHub.sol";
 import {ISharedSequencerHub} from "../src/interfaces/ISharedSequencerHub.sol";
+import {IChainRegistry} from "../src/interfaces/IChainRegistry.sol";
 import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 import {MockProposerRegistry} from "./mocks/MockProposerRegistry.sol";
 import {MockBuilderRegistry} from "./mocks/MockBuilderRegistry.sol";
 import {MockSystemConfig} from "./mocks/MockSystemConfig.sol";
+import {MockChainRegistry} from "./mocks/MockChainRegistry.sol";
 
 /**
  * @title SharedSequencerHubTest
@@ -482,5 +484,229 @@ contract SharedSequencerHubTest is Test {
     function test_GetChainConfigByIndex_RevertsIfOutOfBounds() public {
         vm.expectRevert(abi.encodeWithSelector(ISharedSequencerHub.ChainNotFound.selector, 99));
         hub.getChainConfigByIndex(99);
+    }
+
+    // ============ Chain Registry Integration Tests ============
+
+    function test_SetChainRegistry_Success() public {
+        MockChainRegistry registry = new MockChainRegistry();
+
+        vm.prank(governance);
+        hub.setChainRegistry(address(registry));
+
+        assertEq(hub.chainRegistry(), address(registry));
+    }
+
+    function test_SetChainRegistry_RevertsIfNotGovernance() public {
+        MockChainRegistry registry = new MockChainRegistry();
+
+        vm.prank(randomUser);
+        vm.expectRevert(ISharedSequencerHub.NotGovernance.selector);
+        hub.setChainRegistry(address(registry));
+    }
+
+    function test_ConnectChainFromRegistry_Success() public {
+        // Setup chain registry
+        MockChainRegistry registry = new MockChainRegistry();
+        MockSystemConfig newConfig = new MockSystemConfig();
+        newConfig.transferOwnership(address(hub));
+
+        uint256 newChainId = 20001;
+
+        // Register chain directly in mock registry
+        registry.registerChainDirectly(
+            newChainId,
+            address(newConfig),
+            address(adapter),
+            keccak256("POLICY_NEUTRAL"),
+            "Test Chain"
+        );
+
+        // Set registry and connect
+        vm.startPrank(governance);
+        hub.setChainRegistry(address(registry));
+        hub.connectChainFromRegistry(newChainId);
+        vm.stopPrank();
+
+        // Verify chain was connected
+        assertEq(hub.getChainCount(), 4); // 3 original + 1 new
+
+        ISharedSequencerHub.ChainConfig memory config = hub.getChainConfig(newChainId);
+        assertEq(config.systemConfig, address(newConfig));
+        assertEq(config.adapter, address(adapter));
+        assertTrue(config.isActive);
+    }
+
+    function test_ConnectChainFromRegistry_RevertsIfNotRegistered() public {
+        MockChainRegistry registry = new MockChainRegistry();
+
+        vm.startPrank(governance);
+        hub.setChainRegistry(address(registry));
+
+        vm.expectRevert(abi.encodeWithSelector(ISharedSequencerHub.ChainNotFound.selector, 99999));
+        hub.connectChainFromRegistry(99999);
+        vm.stopPrank();
+    }
+
+    function test_ConnectChainFromRegistry_RevertsIfNoRegistry() public {
+        vm.prank(governance);
+        vm.expectRevert(ISharedSequencerHub.InvalidSystemConfig.selector);
+        hub.connectChainFromRegistry(20001);
+    }
+
+    function test_ConnectChainFromRegistry_RevertsIfAlreadyConnected() public {
+        MockChainRegistry registry = new MockChainRegistry();
+        MockSystemConfig newConfig = new MockSystemConfig();
+
+        registry.registerChainDirectly(
+            CHAIN_ID_1, // Already connected
+            address(newConfig),
+            address(adapter),
+            bytes32(0),
+            "Test Chain"
+        );
+
+        vm.startPrank(governance);
+        hub.setChainRegistry(address(registry));
+
+        vm.expectRevert(abi.encodeWithSelector(ISharedSequencerHub.ChainAlreadyExists.selector, CHAIN_ID_1));
+        hub.connectChainFromRegistry(CHAIN_ID_1);
+        vm.stopPrank();
+    }
+
+    function test_BatchConnectChainsFromRegistry_Success() public {
+        MockChainRegistry registry = new MockChainRegistry();
+
+        // Create and register multiple new chains
+        MockSystemConfig config1 = new MockSystemConfig();
+        MockSystemConfig config2 = new MockSystemConfig();
+        MockSystemConfig config3 = new MockSystemConfig();
+
+        config1.transferOwnership(address(hub));
+        config2.transferOwnership(address(hub));
+        config3.transferOwnership(address(hub));
+
+        uint256 chainId1 = 30001;
+        uint256 chainId2 = 30002;
+        uint256 chainId3 = 30003;
+
+        registry.registerChainDirectly(chainId1, address(config1), address(adapter), bytes32(0), "Chain 1");
+        registry.registerChainDirectly(chainId2, address(config2), address(adapter), bytes32(0), "Chain 2");
+        registry.registerChainDirectly(chainId3, address(config3), address(adapter), bytes32(0), "Chain 3");
+
+        uint256[] memory chainIds = new uint256[](3);
+        chainIds[0] = chainId1;
+        chainIds[1] = chainId2;
+        chainIds[2] = chainId3;
+
+        vm.startPrank(governance);
+        hub.setChainRegistry(address(registry));
+        hub.batchConnectChainsFromRegistry(chainIds);
+        vm.stopPrank();
+
+        assertEq(hub.getChainCount(), 6); // 3 original + 3 new
+    }
+
+    function test_BatchConnectChainsFromRegistry_SkipsAlreadyConnected() public {
+        MockChainRegistry registry = new MockChainRegistry();
+
+        MockSystemConfig newConfig = new MockSystemConfig();
+        newConfig.transferOwnership(address(hub));
+
+        uint256 newChainId = 40001;
+
+        // Register both an existing chain and a new one
+        registry.registerChainDirectly(CHAIN_ID_1, address(systemConfig1), address(adapter), bytes32(0), "Existing");
+        registry.registerChainDirectly(newChainId, address(newConfig), address(adapter), bytes32(0), "New");
+
+        uint256[] memory chainIds = new uint256[](2);
+        chainIds[0] = CHAIN_ID_1; // Already connected - should skip
+        chainIds[1] = newChainId;  // New - should connect
+
+        vm.startPrank(governance);
+        hub.setChainRegistry(address(registry));
+        hub.batchConnectChainsFromRegistry(chainIds);
+        vm.stopPrank();
+
+        assertEq(hub.getChainCount(), 4); // 3 original + 1 new (skipped duplicate)
+    }
+
+    function test_SyncChainFromRegistry_Success() public {
+        MockChainRegistry registry = new MockChainRegistry();
+
+        // First connect a chain
+        MockSystemConfig newConfig = new MockSystemConfig();
+        newConfig.transferOwnership(address(hub));
+
+        uint256 newChainId = 50001;
+
+        registry.registerChainDirectly(
+            newChainId,
+            address(newConfig),
+            address(adapter),
+            keccak256("OLD_POLICY"),
+            "Test Chain"
+        );
+
+        vm.startPrank(governance);
+        hub.setChainRegistry(address(registry));
+        hub.connectChainFromRegistry(newChainId);
+        vm.stopPrank();
+
+        // Now update the registry with new policy
+        OpStackAdapterV1 newAdapter = new OpStackAdapterV1();
+        bytes32 newItemId = registry.getItemId(newChainId);
+        IChainRegistry.Item memory item = registry.getItem(newItemId);
+
+        // For testing, we'll just verify the sync function works
+        // In reality, the registry would need to update the item data
+
+        vm.prank(governance);
+        hub.syncChainFromRegistry(newChainId);
+
+        // Verify the chain config exists (sync completed without revert)
+        ISharedSequencerHub.ChainConfig memory config = hub.getChainConfig(newChainId);
+        assertEq(config.chainId, newChainId);
+    }
+
+    function test_SyncChainFromRegistry_RevertsIfNotConnected() public {
+        MockChainRegistry registry = new MockChainRegistry();
+
+        vm.startPrank(governance);
+        hub.setChainRegistry(address(registry));
+
+        vm.expectRevert(abi.encodeWithSelector(ISharedSequencerHub.ChainNotFound.selector, 99999));
+        hub.syncChainFromRegistry(99999);
+        vm.stopPrank();
+    }
+
+    function test_RotateNetwork_WithRegistryConnectedChains() public {
+        // Setup chain registry and connect a new chain
+        MockChainRegistry registry = new MockChainRegistry();
+        MockSystemConfig newConfig = new MockSystemConfig();
+        newConfig.transferOwnership(address(hub));
+
+        uint256 newChainId = 60001;
+
+        registry.registerChainDirectly(
+            newChainId,
+            address(newConfig),
+            address(adapter),
+            bytes32(0),
+            "Registry Chain"
+        );
+
+        vm.startPrank(governance);
+        hub.setChainRegistry(address(registry));
+        hub.connectChainFromRegistry(newChainId);
+        vm.stopPrank();
+
+        // Fast forward and rotate
+        vm.warp(block.timestamp + 1 hours + 1);
+        hub.rotateNetwork();
+
+        // Verify all chains including the registry-connected one were updated
+        assertEq(newConfig.batcherHash(), bytes32(uint256(uint160(proposer1))));
+        assertEq(newConfig.unsafeBlockSigner(), proposer1);
     }
 }
