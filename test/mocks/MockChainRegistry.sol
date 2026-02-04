@@ -63,7 +63,6 @@ contract MockChainRegistry is IChainRegistry {
         uint256 _chainId,
         address _systemConfig,
         address _adapter,
-        bytes32 _policyId,
         string calldata _name,
         string calldata _metadataURI
     ) external payable override returns (bytes32 itemId) {
@@ -81,7 +80,6 @@ contract MockChainRegistry is IChainRegistry {
             chainId: _chainId,
             systemConfig: _systemConfig,
             adapter: _adapter,
-            policyId: _policyId,
             name: _name,
             metadataURI: _metadataURI
         });
@@ -99,7 +97,6 @@ contract MockChainRegistry is IChainRegistry {
             msg.sender,
             _systemConfig,
             _adapter,
-            _policyId,
             _name
         );
 
@@ -173,7 +170,6 @@ contract MockChainRegistry is IChainRegistry {
         uint256 _chainId,
         address _systemConfig,
         address _adapter,
-        bytes32 _policyId,
         string calldata _name
     ) external returns (bytes32 itemId) {
         itemId = getItemId(_chainId);
@@ -184,7 +180,6 @@ contract MockChainRegistry is IChainRegistry {
             chainId: _chainId,
             systemConfig: _systemConfig,
             adapter: _adapter,
-            policyId: _policyId,
             name: _name,
             metadataURI: ""
         });

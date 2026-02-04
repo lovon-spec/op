@@ -125,7 +125,6 @@ contract ChainDeploymentKit {
      *
      * @param _chainId The L2 chain ID
      * @param _systemConfig The SystemConfig contract address on L1
-     * @param _policyId The policy tag this chain requires (e.g., POLICY_NEUTRAL)
      * @param _name Human-readable chain name
      * @param _metadataURI IPFS URI with additional chain info
      * @return itemId The registry item ID
@@ -133,7 +132,6 @@ contract ChainDeploymentKit {
     function registerChain(
         uint256 _chainId,
         address _systemConfig,
-        bytes32 _policyId,
         string calldata _name,
         string calldata _metadataURI
     ) external payable returns (bytes32 itemId) {
@@ -141,7 +139,6 @@ contract ChainDeploymentKit {
             _chainId,
             _systemConfig,
             defaultAdapter,
-            _policyId,
             _name,
             _metadataURI
         );
@@ -152,7 +149,6 @@ contract ChainDeploymentKit {
      * @param _chainId The L2 chain ID
      * @param _systemConfig The SystemConfig contract address on L1
      * @param _adapter The OP Stack adapter address
-     * @param _policyId The policy tag this chain requires
      * @param _name Human-readable chain name
      * @param _metadataURI IPFS URI with additional chain info
      * @return itemId The registry item ID
@@ -161,7 +157,6 @@ contract ChainDeploymentKit {
         uint256 _chainId,
         address _systemConfig,
         address _adapter,
-        bytes32 _policyId,
         string calldata _name,
         string calldata _metadataURI
     ) public payable returns (bytes32 itemId) {
@@ -178,7 +173,6 @@ contract ChainDeploymentKit {
             _chainId,
             _systemConfig,
             _adapter,
-            _policyId,
             _name,
             _metadataURI
         );

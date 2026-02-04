@@ -31,7 +31,6 @@ contract ChainRegistryTest is Test {
     uint256 public constant CHAIN_ID_2 = 42002;
     address public systemConfig1 = address(0x100);
     address public systemConfig2 = address(0x101);
-    bytes32 public policyNeutral = keccak256("POLICY_NEUTRAL");
 
     uint256 public constant REQUIRED_DEPOSIT = 0.1 ether;
     uint256 public constant CHALLENGE_PERIOD = 5 minutes;
@@ -83,7 +82,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Test Chain",
             "ipfs://metadata"
         );
@@ -94,7 +92,6 @@ contract ChainRegistryTest is Test {
         assertEq(item.data.chainId, CHAIN_ID_1);
         assertEq(item.data.systemConfig, systemConfig1);
         assertEq(item.data.adapter, address(adapter));
-        assertEq(item.data.policyId, policyNeutral);
         assertEq(item.submitter, submitter1);
     }
 
@@ -105,7 +102,6 @@ contract ChainRegistryTest is Test {
             0, // Invalid
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Test Chain",
             ""
         );
@@ -118,7 +114,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             address(0), // Invalid
             address(adapter),
-            policyNeutral,
             "Test Chain",
             ""
         );
@@ -131,7 +126,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(0), // Invalid
-            policyNeutral,
             "Test Chain",
             ""
         );
@@ -145,7 +139,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Test Chain",
             ""
         );
@@ -156,7 +149,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1, // Same chain ID
             systemConfig2,
             address(adapter),
-            policyNeutral,
             "Another Chain",
             ""
         );
@@ -169,7 +161,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Test Chain",
             ""
         );
@@ -185,7 +176,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Test Chain",
             ""
         );
@@ -211,7 +201,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Test Chain",
             ""
         );
@@ -231,7 +220,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Test Chain",
             ""
         );
@@ -263,7 +251,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Test Chain",
             ""
         );
@@ -289,7 +276,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Test Chain",
             ""
         );
@@ -318,7 +304,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Test Chain",
             ""
         );
@@ -359,7 +344,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Test Chain",
             ""
         );
@@ -408,7 +392,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Chain 1",
             ""
         );
@@ -416,7 +399,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_2,
             systemConfig2,
             address(adapter),
-            policyNeutral,
             "Chain 2",
             ""
         );
@@ -440,7 +422,6 @@ contract ChainRegistryTest is Test {
             CHAIN_ID_1,
             systemConfig1,
             address(adapter),
-            policyNeutral,
             "Test Chain",
             ""
         );

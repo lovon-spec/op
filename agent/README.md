@@ -38,14 +38,14 @@ The KSSN uses a rotating proposer model where proposers take turns producing blo
 
 This agent watches the on-chain state, controls the local OP Stack services, and **initiates the rotation** when the proposer's epoch ends.
 
-## Constitutional Requirement
+## SLA Requirement
 
-The KSSN constitution includes:
+The KSSN sequencer SLA includes:
 
 > Proposers MUST run a proposer agent (or equivalent mechanism).
 > Proposers MUST NOT produce unsafe blocks or attempt batching while unauthorized.
 > Proposers MUST execute Active Handoff at epoch end (flush batches, trigger rotation).
-> Violations are slashable/removable via Kleros enforcement.
+> Violations are removable via Kleros enforcement.
 
 ## Active Handoff Protocol
 
@@ -135,7 +135,7 @@ The grace period ensures the outgoing proposer can flush all pending batches to 
 │  │              SharedSequencerHub                                  │     │
 │  │  isCurrentProposer(address) → bool                               │     │
 │  │  epochDuration() → uint256                                       │     │
-│  │  lastRotationTimestamp() → uint256                               │     │
+│  │  epochStartTime() → uint256                                      │     │
 │  │  rotateNetwork() → (callable during grace period)                │     │
 │  └─────────────────────────────────────────────────────────────────┘     │
 └───────────────────────────────────────────────────────────────────────────┘
@@ -233,7 +233,7 @@ sudo systemctl start kssn-proposer
 1. **Keep your keys secure** - The agent needs access to a key that can call `rotateNetwork()`
 2. **Restrict admin API access** - Only expose op-node/op-batcher admin APIs to localhost
 3. **Monitor agent health** - Set up alerts if the agent fails to start/stop services or execute handoff
-4. **Constitutional compliance** - Failure to run this agent or execute Active Handoff is a constitutional violation
+4. **SLA compliance** - Failure to run this agent or execute Active Handoff is an SLA violation
 5. **Handoff timing** - Ensure reliable L1 connectivity during epoch transitions to avoid missing the grace period
 
 ## Troubleshooting

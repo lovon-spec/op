@@ -1,6 +1,6 @@
-# Constitutional L2 - Docker Compose
+# KSSN - Docker Compose
 #
-# This provides a complete local development environment for the Constitutional L2.
+# This provides a complete local development environment for KSSN.
 #
 # Quick Start:
 #   ./start.sh              # Start L1 + deploy contracts

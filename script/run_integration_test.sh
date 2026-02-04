@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================
-#  Constitutional L2 — Full System Integration Test
+#  KSSN — Full System Integration Test
 # =============================================================
 #
 # A self-contained integration test that deploys every contract
@@ -161,7 +161,7 @@ print('')
 section "CONSTITUTIONAL L2 — FULL SYSTEM INTEGRATION TEST"
 
 echo "This integration test deploys all contracts and exercises every major"
-echo "subsystem of the Constitutional L2 governance stack."
+echo "subsystem of the KSSN governance stack."
 
 # ─── Step 0 ──────────────────────────────────────────────────
 echo ""
@@ -309,8 +309,8 @@ done
 section "STEP 6 · Challenge & Remove Operator 2"
 
 echo "Operator 2 (batcher $BATCHER_2)"
-echo "has been caught violating the constitution (e.g. censoring"
-echo "transactions).  A Kleros jury ruled against them."
+echo "has been caught violating the sequencer SLA (e.g. missed handoff"
+echo "or sustained downtime).  A Kleros jury ruled against them."
 echo ""
 
 echo "Step 6a: Mark operator as removed in registry…"

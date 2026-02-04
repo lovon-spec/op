@@ -4,7 +4,6 @@ pragma solidity ^0.8.20;
 import {Script, console2} from "forge-std/Script.sol";
 import {SharedSequencerHub} from "../src/SharedSequencerHub.sol";
 import {ProposerRegistry} from "../src/ProposerRegistry.sol";
-import {BuilderRegistry} from "../src/BuilderRegistry.sol";
 import {ChainRegistry} from "../src/ChainRegistry.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
 import {MockArbitrator} from "../test/mocks/MockArbitrator.sol";
@@ -18,7 +17,6 @@ import {TestConstants} from "./TestConstants.sol";
  *
  * This deploys the complete KSSN Hub-and-Spoke architecture:
  * - ProposerRegistry (DPoS proposer management)
- * - BuilderRegistry (Policy-based builder management)
  * - ChainRegistry (GeneralizedTCR for chain onboarding with Kleros)
  * - SharedSequencerHub (Central hub for atomic multichain rotation)
  * - OpStackAdapterV1 (OP Stack rotation adapter)
@@ -51,7 +49,6 @@ contract DeployRemote is Script {
     uint256 constant EPOCH_DURATION_TEST = 1 hours;
     uint256 constant GRACE_PERIOD_TEST = 5 minutes;
     uint256 constant MIN_PROPOSER_STAKE_TEST = 1 ether;
-    uint256 constant MIN_BUILDER_BOND_TEST = 1 ether;
     uint256 constant ARBITRATION_COST_TEST = 0.05 ether;
 
     // Defaults for production mode
@@ -60,12 +57,10 @@ contract DeployRemote is Script {
     uint256 constant EPOCH_DURATION_PROD = 24 hours;
     uint256 constant GRACE_PERIOD_PROD = 1 hours;
     uint256 constant MIN_PROPOSER_STAKE_PROD = 32 ether;
-    uint256 constant MIN_BUILDER_BOND_PROD = 500 ether;
 
     // ============ State ============
 
     ProposerRegistry public proposerRegistry;
-    BuilderRegistry public builderRegistry;
     ChainRegistry public chainRegistry;
     SharedSequencerHub public hub;
     OpStackAdapterV1 public adapter;
@@ -105,10 +100,6 @@ contract DeployRemote is Script {
             "MIN_PROPOSER_STAKE",
             isProduction ? MIN_PROPOSER_STAKE_PROD : MIN_PROPOSER_STAKE_TEST
         );
-        uint256 minBuilderBond = vm.envOr(
-            "MIN_BUILDER_BOND",
-            isProduction ? MIN_BUILDER_BOND_PROD : MIN_BUILDER_BOND_TEST
-        );
 
         // ============ Log configuration ============
         console2.log("=== KSSN Remote Deployment ===");
@@ -145,15 +136,6 @@ contract DeployRemote is Script {
         );
         console2.log("ProposerRegistry deployed at:", address(proposerRegistry));
 
-        // ============ Deploy BuilderRegistry ============
-        console2.log("Deploying BuilderRegistry...");
-        builderRegistry = new BuilderRegistry(
-            deployer,           // governance
-            address(0),         // hub (set later)
-            minBuilderBond
-        );
-        console2.log("BuilderRegistry deployed at:", address(builderRegistry));
-
         // ============ Deploy ChainRegistry ============
         console2.log("Deploying ChainRegistry...");
         uint256[3] memory multipliers = [uint256(10000), uint256(10000), uint256(10000)];
@@ -173,7 +155,6 @@ contract DeployRemote is Script {
             deployer,           // governance
             guardian,
             address(proposerRegistry),
-            address(builderRegistry),
             epochDuration,
             gracePeriod
         );
@@ -181,7 +162,6 @@ contract DeployRemote is Script {
 
         // ============ Set hub in registries ============
         proposerRegistry.setHub(address(hub));
-        builderRegistry.setHub(address(hub));
         console2.log("Hub address set in registries");
 
         // ============ Deploy OpStackAdapterV1 ============
@@ -219,12 +199,11 @@ contract DeployRemote is Script {
         console2.log("       KSSN DEPLOYMENT SUMMARY");
         console2.log("===========================================");
         console2.log("");
-        console2.log("Architecture: Hub-and-Spoke with PBS");
+        console2.log("Architecture: Hub-and-Spoke shared sequencer");
         console2.log("");
         console2.log("Deployed Contracts:");
         console2.log("  SharedSequencerHub:  ", address(hub));
         console2.log("  ProposerRegistry:    ", address(proposerRegistry));
-        console2.log("  BuilderRegistry:     ", address(builderRegistry));
         console2.log("  ChainRegistry:       ", address(chainRegistry));
         console2.log("  OpStackAdapterV1:    ", address(adapter));
         console2.log("  Arbitrator:          ", arbitrator);
@@ -240,7 +219,6 @@ contract DeployRemote is Script {
         console2.log("Key Features:");
         console2.log("  - Hub-and-Spoke atomic multichain rotation");
         console2.log("  - Top-N DPoS proposer selection");
-        console2.log("  - Policy-based builder eligibility (Sovereignty Matrix)");
         console2.log("  - GeneralizedTCR chain onboarding with Kleros");
         console2.log("  - Hot-swappable adapters for different chain types");
         console2.log("");
@@ -254,8 +232,6 @@ contract DeployRemote is Script {
         console2.log("  # Register as proposer");
         console2.log("  cast send", address(proposerRegistry), "'register(address)' <operationalKey> --value 32ether");
         console2.log("");
-        console2.log("  # Register as builder");
-        console2.log("  cast send", address(builderRegistry), "'register()' --value 500ether");
         console2.log("===========================================");
     }
 }

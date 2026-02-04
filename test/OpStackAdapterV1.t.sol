@@ -184,7 +184,7 @@ contract OpStackAdapterV1Test is Test {
     // ============ Delegatecall Context Tests ============
 
     function test_RotateSequencer_WorksViaDelegatecall() public {
-        // Simulate how KlerosSequencerManager calls the adapter via delegatecall
+        // Simulate how SharedSequencerHub calls the adapter via delegatecall
         // The manager must be the owner of SystemConfig
 
         // Create a fresh SystemConfig for this test

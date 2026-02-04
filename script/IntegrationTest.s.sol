@@ -6,7 +6,6 @@ import {SharedSequencerHub} from "../src/SharedSequencerHub.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
 import {MockChainRegistry} from "../test/mocks/MockChainRegistry.sol";
 import {MockProposerRegistry} from "../test/mocks/MockProposerRegistry.sol";
-import {MockBuilderRegistry} from "../test/mocks/MockBuilderRegistry.sol";
 import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 import {TestConstants} from "./TestConstants.sol";
 
@@ -36,7 +35,6 @@ contract IntegrationTest is Script {
     SharedSequencerHub public hub;
     MockChainRegistry public chainRegistry;
     MockProposerRegistry public proposerRegistry;
-    MockBuilderRegistry public builderRegistry;
     OpStackAdapterV1 public adapter;
     MockSystemConfig public systemConfig1;
     MockSystemConfig public systemConfig2;
@@ -82,7 +80,6 @@ contract IntegrationTest is Script {
         console2.log("  SharedSequencerHub:", address(hub));
         console2.log("  ChainRegistry:", address(chainRegistry));
         console2.log("  ProposerRegistry:", address(proposerRegistry));
-        console2.log("  BuilderRegistry:", address(builderRegistry));
         console2.log("  OpStackAdapterV1:", address(adapter));
         console2.log("");
         console2.log("Connected Chains:");
@@ -101,9 +98,6 @@ contract IntegrationTest is Script {
         proposerRegistry = new MockProposerRegistry();
         console2.log("  MockProposerRegistry deployed at:", address(proposerRegistry));
 
-        builderRegistry = new MockBuilderRegistry();
-        console2.log("  MockBuilderRegistry deployed at:", address(builderRegistry));
-
         chainRegistry = new MockChainRegistry();
         console2.log("  MockChainRegistry deployed at:", address(chainRegistry));
 
@@ -116,7 +110,6 @@ contract IntegrationTest is Script {
             TestConstants.DEPLOYER,  // governance
             TestConstants.GUARDIAN,  // guardian
             address(proposerRegistry),
-            address(builderRegistry),
             EPOCH_DURATION,          // epoch duration
             GRACE_PERIOD             // grace period
         );
@@ -179,38 +172,29 @@ contract IntegrationTest is Script {
             CHAIN_ID_1,
             address(systemConfig1),
             address(adapter),
-            keccak256("POLICY_NEUTRAL"),
             "Optimism Fork 1"
         );
         console2.log("  Registered Chain 1:");
         console2.log("    Chain ID:", CHAIN_ID_1);
         console2.log("    SystemConfig:", address(systemConfig1));
-        console2.log("    Policy: POLICY_NEUTRAL");
-
         chainRegistry.registerChainDirectly(
             CHAIN_ID_2,
             address(systemConfig2),
             address(adapter),
-            keccak256("POLICY_OFAC"),
             "Optimism Fork 2"
         );
         console2.log("  Registered Chain 2:");
         console2.log("    Chain ID:", CHAIN_ID_2);
         console2.log("    SystemConfig:", address(systemConfig2));
-        console2.log("    Policy: POLICY_OFAC");
-
         chainRegistry.registerChainDirectly(
             CHAIN_ID_3,
             address(systemConfig3),
             address(adapter),
-            keccak256("POLICY_KYC"),
             "Optimism Fork 3"
         );
         console2.log("  Registered Chain 3:");
         console2.log("    Chain ID:", CHAIN_ID_3);
         console2.log("    SystemConfig:", address(systemConfig3));
-        console2.log("    Policy: POLICY_KYC");
-
         uint256[] memory registeredChains = chainRegistry.getRegisteredChains();
         console2.log("  Total registered chains:", registeredChains.length);
 

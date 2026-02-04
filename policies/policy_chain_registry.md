@@ -35,12 +35,11 @@ The chain team MUST demonstrate operational capability:
 - **Incident Response**: Documented process for handling operational issues
 - **Uptime History**: If the chain has been running, evidence of >= 99% uptime
 
-### 3. Constitutional Compliance Intent
+### 3. Sequencer SLA Alignment
 
 The chain team MUST acknowledge and commit to:
 
 - **Sequencer Policy**: Agreement to enforce the [Sequencer Registry Policy](./policy_sequencer_registry.md) for operators
-- **Censorship Resistance**: Commitment to not exclude valid transactions based on content
 - **KSSN Governance**: Acceptance of KSSN governance decisions regarding the chain
 
 ### 4. Valid Metadata
@@ -49,7 +48,6 @@ The registration metadata MUST be accurate:
 
 - **Chain Name**: Unique, non-misleading name that doesn't infringe trademarks
 - **Metadata URI**: Valid IPFS URI containing accurate chain information
-- **Policy ID**: Appropriate policy requirement for the chain's jurisdiction/use case
 - **Adapter**: Valid OP Stack adapter that is registered in the Adapter Registry
 
 ## Rejection Criteria
@@ -86,11 +84,10 @@ A chain registration SHOULD be rejected if ANY of the following are true:
 
 A registered chain MAY be removed (challenged) if:
 
-### 1. Constitutional Violations
+### 1. SLA or Governance Violations
 
-- Documented evidence of censorship by chain operators
-- Malicious MEV extraction that harms users
 - Consistent failure to maintain liveness requirements
+- Failure to execute rotation handoffs as required by the sequencer SLA
 - Refusal to comply with KSSN governance decisions
 
 ### 2. Operational Abandonment
@@ -136,10 +133,10 @@ Challengers MUST provide:
 4. **Pattern Evidence**: For operational issues, evidence of repeated problems
 
 Examples of valid evidence:
-- Transaction traces showing censorship
 - Block production logs showing liveness failures
+- Proof of forced rotations after missed handoffs
 - Communication records showing team abandonment
-- On-chain evidence of constitutional violations
+- On-chain evidence of repeated SLA violations
 
 ## Dispute Resolution Process
 
@@ -203,7 +200,6 @@ The following parameters can be adjusted by governance:
 **Submission:**
 - Chain ID: 42001
 - SystemConfig: 0x1234... (verified OP Stack contract)
-- Policy: POLICY_NEUTRAL
 - Name: "Optimism Fork Alpha"
 - Metadata: Valid IPFS URI with team info, infrastructure docs
 
@@ -214,23 +210,21 @@ The following parameters can be adjusted by governance:
 **Submission:**
 - Chain ID: 42002
 - SystemConfig: 0x5678... (regular EOA, not a contract)
-- Policy: POLICY_NEUTRAL
 - Name: "My L2 Chain"
 
 **Challenge Evidence**: Etherscan shows address is EOA, not contract
 
 **Assessment**: REJECT - Technical requirement not met
 
-### Example 3: Removal for Censorship
+### Example 3: Removal for Sustained Liveness Failure
 
 **Registered Chain**: Chain ID 42003
 
 **Challenge Evidence**:
-- Transaction traces showing specific addresses consistently excluded
-- Provider logs confirming transactions were received but not included
-- > 5 minute exclusion window for multiple transactions
+- Block production logs showing repeated 5+ minute outages
+- Forced rotations after missed handoffs
 
-**Assessment**: REMOVE - Clear violation of censorship resistance policy
+**Assessment**: REMOVE - Clear violation of sequencer SLA
 
 ## Version History
 
