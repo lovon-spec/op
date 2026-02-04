@@ -12,7 +12,6 @@ pragma solidity ^0.8.20;
  *      - Track proposer stakes and manage the active proposer set
  *      - Execute atomic network rotation via rotateNetwork()
  *      - Coordinate with ProposerRegistry for DPoS selection
- *      - Coordinate with BuilderRegistry for policy verification
  */
 interface ISharedSequencerHub {
     // ============ Structs ============
@@ -20,14 +19,12 @@ interface ISharedSequencerHub {
     /**
      * @notice Configuration for a connected Spoke chain.
      * @param systemConfig The OP Stack SystemConfig contract address
-     * @param policyId The Policy ID this chain requires (e.g., POLICY_OFAC)
      * @param adapter The adapter contract for version compatibility
      * @param isActive Whether this chain is currently active in the network
      * @param chainId The L2 chain ID for identification
      */
     struct ChainConfig {
         address systemConfig;
-        bytes32 policyId;
         address adapter;
         bool isActive;
         uint256 chainId;
@@ -52,9 +49,6 @@ interface ISharedSequencerHub {
 
     /// @notice Thrown when SystemConfig address is invalid
     error InvalidSystemConfig();
-
-    /// @notice Thrown when policy ID is invalid
-    error InvalidPolicyId();
 
     /// @notice Thrown when no active chains exist
     error NoActiveChains();
@@ -82,7 +76,6 @@ interface ISharedSequencerHub {
     event ChainConnected(
         uint256 indexed chainId,
         address indexed systemConfig,
-        bytes32 policyId,
         address adapter
     );
 
@@ -92,7 +85,6 @@ interface ISharedSequencerHub {
     /// @notice Emitted when a chain's configuration is updated
     event ChainConfigUpdated(
         uint256 indexed chainId,
-        bytes32 newPolicyId,
         address newAdapter
     );
 
@@ -101,9 +93,6 @@ interface ISharedSequencerHub {
 
     /// @notice Emitted when the proposer registry is updated
     event ProposerRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
-
-    /// @notice Emitted when the builder registry is updated
-    event BuilderRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
 
     /// @notice Emitted when epoch duration is updated
     event EpochDurationUpdated(uint256 oldDuration, uint256 newDuration);
@@ -187,12 +176,6 @@ interface ISharedSequencerHub {
     function proposerRegistry() external view returns (address);
 
     /**
-     * @notice Returns the builder registry address.
-     * @return The registry address
-     */
-    function builderRegistry() external view returns (address);
-
-    /**
      * @notice Checks if the contract is paused.
      * @return True if paused
      */
@@ -221,13 +204,11 @@ interface ISharedSequencerHub {
      * @notice Connects a new Spoke chain to the hub.
      * @param _chainId The L2 chain ID
      * @param _systemConfig The SystemConfig contract address
-     * @param _policyId The required policy ID for this chain
      * @param _adapter The adapter contract address
      */
     function connectChain(
         uint256 _chainId,
         address _systemConfig,
-        bytes32 _policyId,
         address _adapter
     ) external;
 
@@ -240,12 +221,10 @@ interface ISharedSequencerHub {
     /**
      * @notice Updates the configuration for a connected chain.
      * @param _chainId The L2 chain ID
-     * @param _policyId The new policy ID (or bytes32(0) to keep current)
      * @param _adapter The new adapter address (or address(0) to keep current)
      */
     function updateChainConfig(
         uint256 _chainId,
-        bytes32 _policyId,
         address _adapter
     ) external;
 
@@ -261,12 +240,6 @@ interface ISharedSequencerHub {
      * @param _newRegistry The new registry address
      */
     function setProposerRegistry(address _newRegistry) external;
-
-    /**
-     * @notice Updates the builder registry address.
-     * @param _newRegistry The new registry address
-     */
-    function setBuilderRegistry(address _newRegistry) external;
 
     /**
      * @notice Updates the epoch duration.

@@ -3,10 +3,9 @@ pragma solidity ^0.8.20;
 
 /**
  * @title IProposerRegistry
- * @notice Interface for the Proposer Registry - "The Dumb Pipe" in KSSN PBS architecture.
- * @dev Proposers are infrastructure providers focused solely on Liveness.
- *      They are immune to content-based slashing ("Safe Harbor") if they sign
- *      headers from registered Builders.
+ * @notice Interface for the Proposer Registry - "The Dumb Pipe" in KSSN.
+ * @dev Proposers are infrastructure providers focused solely on Liveness and
+ *      rotation readiness. The registry tracks stake, liveness, and operator keys.
  *
  *      Selection mechanism: Top-N Delegated Proof of Stake (DPoS)
  *      - Gatekeeping: Top 100 staked addresses are eligible

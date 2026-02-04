@@ -4,7 +4,6 @@ pragma solidity ^0.8.20;
 import {Script, console2} from "forge-std/Script.sol";
 import {SharedSequencerHub} from "../src/SharedSequencerHub.sol";
 import {ProposerRegistry} from "../src/ProposerRegistry.sol";
-import {BuilderRegistry} from "../src/BuilderRegistry.sol";
 import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
 import {TestConstants} from "./TestConstants.sol";
@@ -15,7 +14,6 @@ import {TestConstants} from "./TestConstants.sol";
  *
  * This deploys the complete KSSN architecture:
  * - ProposerRegistry (DPoS proposer management)
- * - BuilderRegistry (Policy-based builder management)
  * - SharedSequencerHub (Central hub for atomic multichain rotation)
  * - OpStackAdapterV1 (OP Stack rotation adapter)
  * - MockSystemConfig (for testing - represents connected chains)
@@ -24,7 +22,7 @@ import {TestConstants} from "./TestConstants.sol";
  *   Hub-and-Spoke model with:
  *   - Hub: SharedSequencerHub (L1) - central authority
  *   - Spokes: SystemConfig contracts for each L2 chain
- *   - Registries: ProposerRegistry + BuilderRegistry for PBS
+ *   - Registry: ProposerRegistry for shared sequencer rotation
  *
  * Usage:
  *   anvil &
@@ -35,12 +33,10 @@ contract DeployKSSN is Script {
     uint256 constant EPOCH_DURATION = 1 minutes;
     uint256 constant GRACE_PERIOD = 30 seconds;
     uint256 constant MIN_PROPOSER_STAKE = 1 ether;
-    uint256 constant MIN_BUILDER_BOND = 1 ether;
     uint256 constant MAX_ACTIVE_PROPOSERS = 100;
 
     // Deployed contracts
     ProposerRegistry public proposerRegistry;
-    BuilderRegistry public builderRegistry;
     SharedSequencerHub public hub;
     OpStackAdapterV1 public adapter;
     MockSystemConfig public systemConfig1;
@@ -66,35 +62,25 @@ contract DeployKSSN is Script {
         );
         console2.log("ProposerRegistry deployed at:", address(proposerRegistry));
 
-        // 2. Deploy BuilderRegistry
-        builderRegistry = new BuilderRegistry(
-            TestConstants.DEPLOYER, // governance
-            address(0), // Hub will be set after deployment
-            MIN_BUILDER_BOND
-        );
-        console2.log("BuilderRegistry deployed at:", address(builderRegistry));
-
-        // 3. Deploy SharedSequencerHub
+        // 2. Deploy SharedSequencerHub
         hub = new SharedSequencerHub(
             TestConstants.DEPLOYER, // governance
             TestConstants.GUARDIAN,
             address(proposerRegistry),
-            address(builderRegistry),
             EPOCH_DURATION,
             GRACE_PERIOD
         );
         console2.log("SharedSequencerHub deployed at:", address(hub));
 
-        // 4. Set hub address in registries
+        // 3. Set hub address in registries
         proposerRegistry.setHub(address(hub));
-        builderRegistry.setHub(address(hub));
         console2.log("Hub address set in registries");
 
-        // 5. Deploy adapter
+        // 4. Deploy adapter
         adapter = new OpStackAdapterV1();
         console2.log("OpStackAdapterV1 deployed at:", address(adapter));
 
-        // 6. Deploy mock SystemConfigs for test chains
+        // 5. Deploy mock SystemConfigs for test chains
         systemConfig1 = new MockSystemConfig();
         systemConfig2 = new MockSystemConfig();
         systemConfig3 = new MockSystemConfig();
@@ -103,24 +89,21 @@ contract DeployKSSN is Script {
         console2.log("  Chain", TestConstants.CHAIN_ID_2, ":", address(systemConfig2));
         console2.log("  Chain", TestConstants.CHAIN_ID_3, ":", address(systemConfig3));
 
-        // 7. Transfer SystemConfig ownership to hub
+        // 6. Transfer SystemConfig ownership to hub
         systemConfig1.transferOwnership(address(hub));
         systemConfig2.transferOwnership(address(hub));
         systemConfig3.transferOwnership(address(hub));
         console2.log("SystemConfig ownership transferred to hub");
 
-        // 8. Connect chains to hub
-        bytes32 policyNeutral = builderRegistry.POLICY_NEUTRAL();
-        bytes32 policyOfac = builderRegistry.POLICY_OFAC();
-
-        hub.connectChain(TestConstants.CHAIN_ID_1, address(systemConfig1), policyNeutral, address(adapter));
-        hub.connectChain(TestConstants.CHAIN_ID_2, address(systemConfig2), policyNeutral, address(adapter));
-        hub.connectChain(TestConstants.CHAIN_ID_3, address(systemConfig3), policyOfac, address(adapter)); // OFAC-compliant chain
+        // 7. Connect chains to hub
+        hub.connectChain(TestConstants.CHAIN_ID_1, address(systemConfig1), address(adapter));
+        hub.connectChain(TestConstants.CHAIN_ID_2, address(systemConfig2), address(adapter));
+        hub.connectChain(TestConstants.CHAIN_ID_3, address(systemConfig3), address(adapter));
 
         console2.log("\nChains connected to hub:");
-        console2.log("  Chain", TestConstants.CHAIN_ID_1, "- Policy: NEUTRAL");
-        console2.log("  Chain", TestConstants.CHAIN_ID_2, "- Policy: NEUTRAL");
-        console2.log("  Chain", TestConstants.CHAIN_ID_3, "- Policy: OFAC");
+        console2.log("  Chain", TestConstants.CHAIN_ID_1);
+        console2.log("  Chain", TestConstants.CHAIN_ID_2);
+        console2.log("  Chain", TestConstants.CHAIN_ID_3);
 
         vm.stopBroadcast();
 
@@ -145,26 +128,6 @@ contract DeployKSSN is Script {
         vm.stopBroadcast();
         console2.log("Proposer 3 registered:", TestConstants.PROPOSER_3);
 
-        // Register builders
-        console2.log("\n=== Registering Builders ===");
-
-        // Builder 1
-        vm.startBroadcast(TestConstants.BUILDER_1_KEY);
-        builderRegistry.register{value: MIN_BUILDER_BOND}();
-        vm.stopBroadcast();
-        console2.log("Builder 1 registered:", TestConstants.BUILDER_1);
-
-        // Builder 2
-        vm.startBroadcast(TestConstants.BUILDER_2_KEY);
-        builderRegistry.register{value: MIN_BUILDER_BOND}();
-        vm.stopBroadcast();
-        console2.log("Builder 2 registered:", TestConstants.BUILDER_2);
-
-        // Grant OFAC policy to Builder 1 (so they can build for chain 3)
-        vm.startBroadcast(deployerPrivateKey);
-        builderRegistry.grantPolicyTag(TestConstants.BUILDER_1, policyOfac, 0);
-        console2.log("OFAC policy granted to Builder 1");
-
         // Perform first rotation
         // Need to wait until epoch ends
         console2.log("\n=== Initial State ===");
@@ -172,15 +135,12 @@ contract DeployKSSN is Script {
         console2.log("Current epoch:", hub.currentEpoch());
         console2.log("Chain count:", hub.getChainCount());
         console2.log("Active proposers:", proposerRegistry.getActiveProposerCount());
-        console2.log("Active builders:", builderRegistry.getActiveBuilderCount());
-
         vm.stopBroadcast();
 
         // Output deployment summary
         console2.log("\n=== KSSN Deployment Summary ===");
         console2.log("SharedSequencerHub:", address(hub));
         console2.log("ProposerRegistry:", address(proposerRegistry));
-        console2.log("BuilderRegistry:", address(builderRegistry));
         console2.log("OpStackAdapterV1:", address(adapter));
         console2.log("\nConnected Chains:");
         console2.log("  Chain", TestConstants.CHAIN_ID_1, ":", address(systemConfig1));
@@ -194,7 +154,5 @@ contract DeployKSSN is Script {
         console2.log("  cast call", address(hub), "'currentProposer()'");
         console2.log("\nCheck proposer selection:");
         console2.log("  cast call", address(proposerRegistry), "'selectNextProposer(uint256)' 1");
-        console2.log("\nCheck builder eligibility:");
-        console2.log("  cast call", address(builderRegistry), "'isBuilderEligible(address,bytes32)'", TestConstants.BUILDER_1);
     }
 }

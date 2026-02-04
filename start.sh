@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Constitutional L2 - Quick Start Script
+# KSSN - Quick Start Script
 #
 # Usage:
 #   ./start.sh              # Start local devnet (L1 only, mocks, no internet needed)
@@ -33,7 +33,7 @@ NC='\033[0m'
 print_header() {
     echo ""
     echo -e "${CYAN}================================================================${NC}"
-    echo -e "${CYAN}  Constitutional L2 - OP Stack with Kleros Governance${NC}"
+    echo -e "${CYAN}  KSSN - OP Stack with Kleros Governance${NC}"
     echo -e "${CYAN}================================================================${NC}"
     echo ""
 }
@@ -152,7 +152,7 @@ get_address() {
 
 start_local() {
     print_header
-    echo -e "${GREEN}Starting Constitutional L2 local devnet (L1 only)...${NC}"
+    echo -e "${GREEN}Starting KSSN local devnet (L1 only)...${NC}"
     echo ""
 
     # Start L1 and deployer
@@ -172,7 +172,7 @@ start_local() {
 
     echo ""
     echo -e "${GREEN}================================================================${NC}"
-    echo -e "${GREEN}  Constitutional L2 - L1 is running!${NC}"
+    echo -e "${GREEN}  KSSN - L1 is running!${NC}"
     echo -e "${GREEN}================================================================${NC}"
     echo ""
     echo "Endpoints:"
@@ -200,7 +200,7 @@ start_local() {
 
 start_l2() {
     print_header
-    echo -e "${GREEN}Starting Constitutional L2 full stack...${NC}"
+    echo -e "${GREEN}Starting KSSN full stack...${NC}"
     echo ""
 
     # First make sure L1 is running and contracts are deployed
@@ -235,7 +235,7 @@ start_l2() {
 
     echo ""
     echo -e "${GREEN}================================================================${NC}"
-    echo -e "${GREEN}  Constitutional L2 - Full Stack is running!${NC}"
+    echo -e "${GREEN}  KSSN - Full Stack is running!${NC}"
     echo -e "${GREEN}================================================================${NC}"
     echo ""
     echo "Endpoints:"
@@ -397,7 +397,7 @@ deploy_remote() {
         exit 1
     fi
 
-    echo -e "${GREEN}Deploying Constitutional L2 to ${MODE}...${NC}"
+    echo -e "${GREEN}Deploying KSSN to ${MODE}...${NC}"
     echo ""
     echo "Configuration:"
     echo "  RPC URL:      $RPC_URL"

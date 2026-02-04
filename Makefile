@@ -1,4 +1,4 @@
-# Constitutional L2 - Makefile
+# KSSN - Makefile
 #
 # Common commands for development, testing, and deployment
 
@@ -135,7 +135,7 @@ sizes:
 # =============================================================
 
 help:
-	@echo "Constitutional L2 - Development Commands"
+	@echo "KSSN - Development Commands"
 	@echo ""
 	@echo "Setup:"
 	@echo "  make install      - Install dependencies"

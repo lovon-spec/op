@@ -5,15 +5,13 @@ import {IProposerRegistry} from "./interfaces/IProposerRegistry.sol";
 
 /**
  * @title ProposerRegistry
- * @notice "The Dumb Pipe" - Registry for proposers in the KSSN PBS architecture.
- * @dev Proposers are infrastructure providers focused solely on Liveness.
+ * @notice "The Dumb Pipe" - Registry for proposers in KSSN.
+ * @dev Proposers are infrastructure providers focused on Liveness and rotation readiness.
  *      They operate a Top-N Delegated Proof of Stake (DPoS) system.
  *
  *      Key features:
  *      - Top-N Selection: Only the top 100 staked addresses are eligible
  *      - Rebalancing: Public function to swap low-stake active with high-stake inactive
- *      - Safe Harbor: Proposers are immune to content-based slashing if they sign
- *        headers from registered Builders
  *      - Operational Key Separation: Staking key can differ from signing key
  *
  *      Selection Algorithm:

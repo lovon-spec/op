@@ -18,7 +18,7 @@ Active Handoff Protocol:
 
 IMPORTANT: Each proposer MUST run their own agent. This ensures:
 1. Decentralized control - no central entity can start/stop proposers
-2. Constitutional compliance - proposers only sequence when authorized
+2. SLA compliance - proposers only sequence when authorized
 3. Clean handoffs - services start/stop based on on-chain state
 4. Zero re-orgs - batches are flushed before rotation
 
@@ -415,7 +415,7 @@ class KSSNProposerAgent:
     Key KSSN Differences from Single-Chain:
     - rotateNetwork() updates ALL connected chains atomically
     - Proposer is the same for all chains in the network
-    - Builder verification is separate (PBS architecture)
+    - Sequencer operation targets SLA expectations for rotation and availability
     """
 
     def __init__(self, config: Config):

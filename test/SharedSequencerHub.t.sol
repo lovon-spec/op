@@ -4,10 +4,8 @@ pragma solidity ^0.8.20;
 import {Test, console2} from "forge-std/Test.sol";
 import {SharedSequencerHub} from "../src/SharedSequencerHub.sol";
 import {ISharedSequencerHub} from "../src/interfaces/ISharedSequencerHub.sol";
-import {IChainRegistry} from "../src/interfaces/IChainRegistry.sol";
 import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
 import {MockProposerRegistry} from "./mocks/MockProposerRegistry.sol";
-import {MockBuilderRegistry} from "./mocks/MockBuilderRegistry.sol";
 import {MockSystemConfig} from "./mocks/MockSystemConfig.sol";
 import {MockChainRegistry} from "./mocks/MockChainRegistry.sol";
 
@@ -28,7 +26,6 @@ contract SharedSequencerHubTest is Test {
     // ============ Contracts ============
     SharedSequencerHub public hub;
     MockProposerRegistry public proposerRegistry;
-    MockBuilderRegistry public builderRegistry;
     OpStackAdapterV1 public adapter;
 
     // Multiple chain configs for testing
@@ -45,7 +42,6 @@ contract SharedSequencerHubTest is Test {
     function setUp() public {
         // Deploy registries
         proposerRegistry = new MockProposerRegistry();
-        builderRegistry = new MockBuilderRegistry();
 
         // Deploy adapter
         adapter = new OpStackAdapterV1();
@@ -55,7 +51,6 @@ contract SharedSequencerHubTest is Test {
             governance,
             guardian,
             address(proposerRegistry),
-            address(builderRegistry),
             1 hours, // epoch duration
             600 // grace period
         );
@@ -77,9 +72,9 @@ contract SharedSequencerHubTest is Test {
 
         // Connect chains as governance
         vm.startPrank(governance);
-        hub.connectChain(CHAIN_ID_1, address(systemConfig1), bytes32(0), address(adapter));
-        hub.connectChain(CHAIN_ID_2, address(systemConfig2), bytes32(0), address(adapter));
-        hub.connectChain(CHAIN_ID_3, address(systemConfig3), bytes32(0), address(adapter));
+        hub.connectChain(CHAIN_ID_1, address(systemConfig1), address(adapter));
+        hub.connectChain(CHAIN_ID_2, address(systemConfig2), address(adapter));
+        hub.connectChain(CHAIN_ID_3, address(systemConfig3), address(adapter));
         vm.stopPrank();
     }
 
@@ -89,7 +84,6 @@ contract SharedSequencerHubTest is Test {
         assertEq(hub.governance(), governance);
         assertEq(hub.guardian(), guardian);
         assertEq(hub.proposerRegistry(), address(proposerRegistry));
-        assertEq(hub.builderRegistry(), address(builderRegistry));
         assertEq(hub.epochDuration(), 1 hours);
         assertEq(hub.gracePeriod(), 600);
         assertEq(hub.currentEpoch(), 0);
@@ -102,7 +96,6 @@ contract SharedSequencerHubTest is Test {
             governance,
             guardian,
             address(proposerRegistry),
-            address(builderRegistry),
             0, // should use default
             0  // should use default
         );
@@ -119,13 +112,12 @@ contract SharedSequencerHubTest is Test {
         newConfig.transferOwnership(address(hub));
 
         vm.prank(governance);
-        hub.connectChain(newChainId, address(newConfig), keccak256("POLICY_OFAC"), address(adapter));
+        hub.connectChain(newChainId, address(newConfig), address(adapter));
 
         assertEq(hub.getChainCount(), 4);
 
         ISharedSequencerHub.ChainConfig memory config = hub.getChainConfig(newChainId);
         assertEq(config.systemConfig, address(newConfig));
-        assertEq(config.policyId, keccak256("POLICY_OFAC"));
         assertEq(config.adapter, address(adapter));
         assertTrue(config.isActive);
         assertEq(config.chainId, newChainId);
@@ -134,25 +126,25 @@ contract SharedSequencerHubTest is Test {
     function test_ConnectChain_RevertsIfNotGovernance() public {
         vm.prank(randomUser);
         vm.expectRevert(ISharedSequencerHub.NotGovernance.selector);
-        hub.connectChain(10004, address(0x123), bytes32(0), address(adapter));
+        hub.connectChain(10004, address(0x123), address(adapter));
     }
 
     function test_ConnectChain_RevertsIfChainExists() public {
         vm.prank(governance);
         vm.expectRevert(abi.encodeWithSelector(ISharedSequencerHub.ChainAlreadyExists.selector, CHAIN_ID_1));
-        hub.connectChain(CHAIN_ID_1, address(0x123), bytes32(0), address(adapter));
+        hub.connectChain(CHAIN_ID_1, address(0x123), address(adapter));
     }
 
     function test_ConnectChain_RevertsIfInvalidSystemConfig() public {
         vm.prank(governance);
         vm.expectRevert(ISharedSequencerHub.InvalidSystemConfig.selector);
-        hub.connectChain(10004, address(0), bytes32(0), address(adapter));
+        hub.connectChain(10004, address(0), address(adapter));
     }
 
     function test_ConnectChain_RevertsIfInvalidAdapter() public {
         vm.prank(governance);
         vm.expectRevert(ISharedSequencerHub.InvalidAdapter.selector);
-        hub.connectChain(10004, address(0x123), bytes32(0), address(0));
+        hub.connectChain(10004, address(0x123), address(0));
     }
 
     function test_DisconnectChain_Success() public {
@@ -172,14 +164,12 @@ contract SharedSequencerHubTest is Test {
     }
 
     function test_UpdateChainConfig_Success() public {
-        bytes32 newPolicyId = keccak256("NEW_POLICY");
         OpStackAdapterV1 newAdapter = new OpStackAdapterV1();
 
         vm.prank(governance);
-        hub.updateChainConfig(CHAIN_ID_1, newPolicyId, address(newAdapter));
+        hub.updateChainConfig(CHAIN_ID_1, address(newAdapter));
 
         ISharedSequencerHub.ChainConfig memory config = hub.getChainConfig(CHAIN_ID_1);
-        assertEq(config.policyId, newPolicyId);
         assertEq(config.adapter, address(newAdapter));
     }
 
@@ -368,15 +358,6 @@ contract SharedSequencerHubTest is Test {
         assertEq(hub.proposerRegistry(), newRegistry);
     }
 
-    function test_SetBuilderRegistry_Success() public {
-        address newRegistry = address(0x999);
-
-        vm.prank(governance);
-        hub.setBuilderRegistry(newRegistry);
-
-        assertEq(hub.builderRegistry(), newRegistry);
-    }
-
     function test_SetEpochDuration_Success() public {
         vm.prank(governance);
         hub.setEpochDuration(2 hours);
@@ -524,7 +505,6 @@ contract SharedSequencerHubTest is Test {
             newChainId,
             address(newConfig),
             address(adapter),
-            keccak256("POLICY_NEUTRAL"),
             "Test Chain"
         );
 
@@ -568,7 +548,6 @@ contract SharedSequencerHubTest is Test {
             CHAIN_ID_1, // Already connected
             address(newConfig),
             address(adapter),
-            bytes32(0),
             "Test Chain"
         );
 
@@ -596,9 +575,9 @@ contract SharedSequencerHubTest is Test {
         uint256 chainId2 = 30002;
         uint256 chainId3 = 30003;
 
-        registry.registerChainDirectly(chainId1, address(config1), address(adapter), bytes32(0), "Chain 1");
-        registry.registerChainDirectly(chainId2, address(config2), address(adapter), bytes32(0), "Chain 2");
-        registry.registerChainDirectly(chainId3, address(config3), address(adapter), bytes32(0), "Chain 3");
+        registry.registerChainDirectly(chainId1, address(config1), address(adapter), "Chain 1");
+        registry.registerChainDirectly(chainId2, address(config2), address(adapter), "Chain 2");
+        registry.registerChainDirectly(chainId3, address(config3), address(adapter), "Chain 3");
 
         uint256[] memory chainIds = new uint256[](3);
         chainIds[0] = chainId1;
@@ -622,8 +601,8 @@ contract SharedSequencerHubTest is Test {
         uint256 newChainId = 40001;
 
         // Register both an existing chain and a new one
-        registry.registerChainDirectly(CHAIN_ID_1, address(systemConfig1), address(adapter), bytes32(0), "Existing");
-        registry.registerChainDirectly(newChainId, address(newConfig), address(adapter), bytes32(0), "New");
+        registry.registerChainDirectly(CHAIN_ID_1, address(systemConfig1), address(adapter), "Existing");
+        registry.registerChainDirectly(newChainId, address(newConfig), address(adapter), "New");
 
         uint256[] memory chainIds = new uint256[](2);
         chainIds[0] = CHAIN_ID_1; // Already connected - should skip
@@ -650,7 +629,6 @@ contract SharedSequencerHubTest is Test {
             newChainId,
             address(newConfig),
             address(adapter),
-            keccak256("OLD_POLICY"),
             "Test Chain"
         );
 
@@ -659,13 +637,7 @@ contract SharedSequencerHubTest is Test {
         hub.connectChainFromRegistry(newChainId);
         vm.stopPrank();
 
-        // Now update the registry with new policy
-        OpStackAdapterV1 newAdapter = new OpStackAdapterV1();
-        bytes32 newItemId = registry.getItemId(newChainId);
-        IChainRegistry.Item memory item = registry.getItem(newItemId);
-
         // For testing, we'll just verify the sync function works
-        // In reality, the registry would need to update the item data
 
         vm.prank(governance);
         hub.syncChainFromRegistry(newChainId);
@@ -698,7 +670,6 @@ contract SharedSequencerHubTest is Test {
             newChainId,
             address(newConfig),
             address(adapter),
-            bytes32(0),
             "Registry Chain"
         );
 

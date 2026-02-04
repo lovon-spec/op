@@ -2,11 +2,11 @@
 
 ## Overview
 
-This document defines the acceptance policy for the **Adapter Registry**, a Kleros Curate list that governs which OP Stack adapters can be used by KlerosSequencerManager to rotate sequencers.
+This document defines the acceptance policy for the **Adapter Registry**, a Kleros Curate list that governs which OP Stack adapters can be used by SharedSequencerHub to rotate sequencers.
 
 ## Purpose
 
-The adapter pattern enables the Constitutional L2 to survive OP Stack hardforks without requiring changes to the core KlerosSequencerManager contract. Adapters are hot-swapped via the `upgradeAdapter()` function, which is permissionless but gated by:
+The adapter pattern enables KSSN to survive OP Stack hardforks without requiring changes to the core SharedSequencerHub contract. Adapters are hot-swapped via governance updates, which are permissionless but gated by:
 
 1. **Kleros Arbitration**: Adapter must be registered in the Adapter Registry
 2. **Ratchet Versioning**: New adapter version must be strictly greater than current

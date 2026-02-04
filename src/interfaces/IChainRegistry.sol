@@ -21,7 +21,7 @@ import {IArbitrator} from "./IArbitrator.sol";
  *      Acceptance Criteria (enforced via Kleros arbitration):
  *      - Valid OP Stack deployment with accessible SystemConfig
  *      - Chain team has operational capability (infrastructure, monitoring)
- *      - Chain follows KSSN constitutional requirements
+ *      - Chain follows KSSN sequencer service-level agreement
  *      - No duplicate chain IDs
  */
 interface IChainRegistry {
@@ -53,7 +53,6 @@ interface IChainRegistry {
      * @param chainId The L2 chain ID
      * @param systemConfig The SystemConfig contract address on L1
      * @param adapter The OP Stack adapter address
-     * @param policyId The policy tag this chain requires (e.g., POLICY_NEUTRAL)
      * @param name Human-readable chain name
      * @param metadataURI IPFS URI with additional chain info (logo, description, etc.)
      */
@@ -61,7 +60,6 @@ interface IChainRegistry {
         uint256 chainId;
         address systemConfig;
         address adapter;
-        bytes32 policyId;
         string name;
         string metadataURI;
     }
@@ -117,7 +115,6 @@ interface IChainRegistry {
         address indexed submitter,
         address systemConfig,
         address adapter,
-        bytes32 policyId,
         string name
     );
 
@@ -239,7 +236,6 @@ interface IChainRegistry {
      * @param _chainId The L2 chain ID
      * @param _systemConfig The SystemConfig contract address
      * @param _adapter The OP Stack adapter address
-     * @param _policyId The required policy ID
      * @param _name Human-readable chain name
      * @param _metadataURI IPFS URI with additional info
      * @return itemId The item ID for the submission
@@ -248,7 +244,6 @@ interface IChainRegistry {
         uint256 _chainId,
         address _systemConfig,
         address _adapter,
-        bytes32 _policyId,
         string calldata _name,
         string calldata _metadataURI
     ) external payable returns (bytes32 itemId);

@@ -190,7 +190,6 @@ contract ChainRegistry is IChainRegistry, IArbitrable, IEvidence {
         uint256 _chainId,
         address _systemConfig,
         address _adapter,
-        bytes32 _policyId,
         string calldata _name,
         string calldata _metadataURI
     ) external payable override returns (bytes32 itemId) {
@@ -216,7 +215,6 @@ contract ChainRegistry is IChainRegistry, IArbitrable, IEvidence {
             chainId: _chainId,
             systemConfig: _systemConfig,
             adapter: _adapter,
-            policyId: _policyId,
             name: _name,
             metadataURI: _metadataURI
         });
@@ -238,7 +236,6 @@ contract ChainRegistry is IChainRegistry, IArbitrable, IEvidence {
             msg.sender,
             _systemConfig,
             _adapter,
-            _policyId,
             _name
         );
 

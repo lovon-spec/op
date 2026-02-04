@@ -57,7 +57,7 @@ interface IOpStackAdapter {
 
     /**
      * @notice Rotates the sequencer on the target SystemConfig contract.
-     * @dev Called via delegatecall from KlerosSequencerManager.
+     * @dev Called via delegatecall from SharedSequencerHub.
      *      Must update both batcher and unsafe block signer addresses.
      *
      *      For OP Stack Bedrock/Ecotone:

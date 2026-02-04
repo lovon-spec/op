@@ -1,36 +1,33 @@
 # Kleros Shared Sequencer Network (KSSN)
 
-A fully decentralized shared sequencing layer for multiple OP Stack chains, with constitutional governance powered by Kleros subjective dispute resolution.
+A shared sequencing layer for multiple OP Stack chains, with Kleros arbitration supporting neutral, SLA-focused governance.
 
 ## What is KSSN?
 
-The **Kleros Shared Sequencer Network** centralizes sequencing authority for multiple OP Stack chains into a single "Hub" contract while preserving their individual sovereignty via a Federalist Policy system. It implements **enshrined Proposer-Builder Separation (ePBS)** for capital efficiency and liability separation.
+The **Kleros Shared Sequencer Network** centralizes sequencing authority for multiple OP Stack chains into a single "Hub" contract while preserving their individual sovereignty through opt-in rotation and SLA-based governance. The active sequencer can use Rollup Boost and Flashblocks to keep the mempool private while enabling market-driven MEV without enshrining proposer-builder separation.
 
 **Key Features:**
 - **Hub-and-Spoke Architecture**: Single Hub manages multiple L2 chains atomically
 - **Atomic Multichain Rotation**: Updates ALL connected chains in a single transaction
-- **Dual-Registry PBS**: Separate Proposer Registry (liveness) and Builder Registry (policy)
-- **Federalist Policy System**: Each chain can require specific compliance (OFAC, KYC, etc.)
-- **Sovereignty Matrix**: Builders accumulate policy tags to qualify for specific chains
-- **Union Rule**: Cross-chain atomic bundles require ALL policy tags from touched chains
+- **Sequencer SLA Registry**: Proposer registry focuses on liveness and rotation readiness
 - **Active Handoff Protocol**: Zero-downtime proposer transitions with grace period
 - **Superchain Aligned**: Designed to replace Superchain Council multisig with algorithmic governance
 - **Scalable**: Sharded rotation supports thousands of chains
 
-## The Constitution
+## Policies & SLAs
 
-The Constitutional L2 is governed by formal policies enforced through Kleros arbitration:
+KSSN governance is anchored by formal policies enforced through Kleros arbitration:
 
 | Policy | Description |
 |--------|-------------|
-| [Sequencer Policy](./policies/policy_sequencer_registry.md) | Rules for sequencer operators (censorship, MEV, liveness) |
+| [Sequencer Policy](./policies/policy_sequencer_registry.md) | Service-level requirements for sequencer operators |
 | [Adapter Policy](./policies/policy_adapter_registry.md) | Acceptance criteria for OP Stack adapters |
 | [Chain Registry Policy](./policies/policy_chain_registry.md) | Acceptance/removal criteria for KSSN chain integration |
 
 These policies define:
 - **Acceptance Criteria**: Requirements for registration (Sybil resistance, operational readiness)
-- **Constitutional Rules**: Grounds for removal (censorship, malicious MEV, liveness failures)
-- **Evidence Standards**: How violations are proven (multi-witness, simulation proofs)
+- **Service-Level Requirements**: Grounds for removal (missed handoffs, liveness failures)
+- **Evidence Standards**: How violations are proven
 
 ## Quick Start
 
@@ -49,7 +46,7 @@ cd op
 
 This starts L1 with governance contracts:
 - **L1**: Local Anvil chain (localhost:8545)
-- **Governance**: KlerosSequencerManager with mock Kleros registry
+- **Governance**: SharedSequencerHub with mock Kleros registry
 - **Operators**: 3 test operators registered and ready for rotation
 
 ### Start Full L2 Stack
@@ -102,77 +99,55 @@ cast block-number --rpc-url http://localhost:9545
 
 ### KSSN Hub-and-Spoke Architecture
 
-The KSSN uses a Hub-and-Spoke model with dual registries for Proposer-Builder Separation (PBS):
+The KSSN uses a Hub-and-Spoke model anchored by a ProposerRegistry:
 
 ```
                         KSSN HUB-AND-SPOKE ARCHITECTURE
 
-  ┌─────────────────────────────────────────────────────────────────────────────────┐
-  │                                 L1 (Ethereum)                                    │
-  │                                                                                 │
-  │     ┌─────────────────────┐                   ┌─────────────────────┐           │
-  │     │  ProposerRegistry   │                   │   BuilderRegistry   │           │
-  │     │  "The Dumb Pipe"    │                   │  "The Value Engine" │           │
-  │     │                     │                   │                     │           │
-  │     │  - Top-N DPoS       │                   │  - Policy Tags      │           │
-  │     │  - Liveness Focus   │                   │  - High Bonds       │           │
-  │     │  - Safe Harbor      │                   │  - Content Liable   │           │
-  │     └──────────┬──────────┘                   └──────────┬──────────┘           │
-  │                │                                         │                      │
-  │                └──────────────────┬──────────────────────┘                      │
-  │                                   │                                             │
-  │                                   ▼                                             │
-  │                    ┌──────────────────────────────┐                             │
-  │                    │    SharedSequencerHub        │                             │
-  │                    │    (Central Authority)       │                             │
-  │                    │                              │                             │
-  │                    │  - rotateNetwork()           │  ◄── Atomic Multichain      │
-  │                    │  - connectChain()            │      Rotation               │
-  │                    │  - rotateShard()             │                             │
-  │                    └──────────────┬───────────────┘                             │
-  │                                   │                                             │
-  │              ┌────────────────────┼────────────────────┐                        │
-  │              │                    │                    │                        │
-  │              ▼                    ▼                    ▼                        │
-  │     ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐              │
-  │     │  SystemConfig   │  │  SystemConfig   │  │  SystemConfig   │  (Spokes)    │
-  │     │  Chain A        │  │  Chain B        │  │  Chain C        │              │
-  │     │  Policy: OFAC   │  │  Policy: KYC    │  │  Policy: NEUTRAL│              │
-  │     └─────────────────┘  └─────────────────┘  └─────────────────┘              │
-  │                                                                                 │
-  └─────────────────────────────────────────────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────────────────────────────────┐
+  │                                L1 (Ethereum)                                │
+  │                                                                            │
+  │     ┌─────────────────────┐                                                │
+  │     │  ProposerRegistry   │                                                │
+  │     │  "The Dumb Pipe"    │                                                │
+  │     │                     │                                                │
+  │     │  - Top-N DPoS       │                                                │
+  │     │  - Liveness Focus   │                                                │
+  │     └──────────┬──────────┘                                                │
+  │                │                                                           │
+  │                ▼                                                           │
+  │     ┌──────────────────────────────┐                                       │
+  │     │    SharedSequencerHub        │                                       │
+  │     │    (Central Authority)       │                                       │
+  │     │                              │                                       │
+  │     │  - rotateNetwork()           │  ◄── Atomic Multichain Rotation        │
+  │     │  - connectChain()            │                                       │
+  │     │  - rotateShard()             │                                       │
+  │     └──────────────┬───────────────┘                                       │
+  │                    │                                                      │
+  │         ┌──────────┼──────────┐                                           │
+  │         │          │          │                                           │
+  │         ▼          ▼          ▼                                           │
+  │  ┌────────────┐ ┌────────────┐ ┌────────────┐                              │
+  │  │ SystemConfig│ │ SystemConfig│ │ SystemConfig│ (Spokes)                   │
+  │  │ Chain A     │ │ Chain B     │ │ Chain C     │                              │
+  │  └────────────┘ └────────────┘ └────────────┘                              │
+  │                                                                            │
+  └────────────────────────────────────────────────────────────────────────────┘
 
                               ATOMIC ROTATION
-  ┌─────────────────────────────────────────────────────────────────────────────────┐
-  │                                                                                 │
-  │   rotateNetwork() updates ALL chains in a single transaction:                   │
-  │                                                                                 │
-  │   for (chain in connectedChains) {                                              │
-  │       adapter.rotateSequencer(chain.systemConfig, nextProposer, nextProposer)   │
-  │   }                                                                             │
-  │                                                                                 │
-  │   Gas: ~60k per chain | Max: ~450 chains per block at 30M gas limit             │
-  │                                                                                 │
-  └─────────────────────────────────────────────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────────────────────────────────┐
+  │                                                                            │
+  │   rotateNetwork() updates ALL chains in a single transaction:              │
+  │                                                                            │
+  │   for (chain in connectedChains) {                                         │
+  │       adapter.rotateSequencer(chain.systemConfig, nextProposer, nextProposer) │
+  │   }                                                                        │
+  │                                                                            │
+  │   Gas: ~60k per chain | Max: ~450 chains per block at 30M gas limit         │
+  │                                                                            │
+  └────────────────────────────────────────────────────────────────────────────┘
 ```
-
-### Dual-Registry PBS (Proposer-Builder Separation)
-
-| Registry | Role | Focus | Liability |
-|----------|------|-------|-----------|
-| **ProposerRegistry** | Node Operators | Liveness | Liveness + Registry Compliance |
-| **BuilderRegistry** | MEV Searchers | Policy | Content + Data Availability |
-
-**Proposer Registry ("The Dumb Pipe")**
-- Top-N Delegated Proof of Stake (default: top 100)
-- Public `rebalance()` swaps low-stake active with high-stake inactive
-- **Safe Harbor**: Immune to content-based slashing if signing registered Builder headers
-- Round-robin selection algorithm
-
-**Builder Registry ("The Value Engine")**
-- High bonds (default: 500 ETH) for "Bad Block" damages
-- Policy Tags: `OFAC`, `KYC`, `NO_MEV`, `NO_GAMBLING`, `NEUTRAL`
-- **Union Rule**: For atomic cross-chain bundles, builder needs ALL required policy tags
 
 ### Chain Integration Framework
 
@@ -225,29 +200,7 @@ Unlike the operator registries (which use PermanentGTCR with permanent stakes), 
 - Valid OP Stack deployment with accessible SystemConfig
 - Chain team has operational capability
 - No duplicate chain IDs
-- Compliance with KSSN constitutional requirements
-
-### The Sovereignty Matrix
-
-Each connected chain specifies a `policyId` requirement:
-
-```
-              SOVEREIGNTY MATRIX
-
-  Builder     │ OFAC │ KYC │ NO_MEV │ NEUTRAL │
-  ────────────┼──────┼─────┼────────┼─────────┤
-  Builder A   │  ✓   │  ✓  │   ✗    │    ✓    │
-  Builder B   │  ✓   │  ✗  │   ✓    │    ✓    │
-  Builder C   │  ✗   │  ✗  │   ✗    │    ✓    │
-
-  Chain Eligibility:
-  - Chain with POLICY_OFAC: Builders A, B
-  - Chain with POLICY_KYC: Builder A only
-  - Chain with POLICY_NEUTRAL: All builders
-```
-
-**The Union Rule for Atomicity:**
-For a Builder to construct an atomic bundle touching Chain A (Policy X) and Chain B (Policy Y), the Builder must possess BOTH Tag X AND Tag Y.
+- Alignment with KSSN sequencer SLA requirements
 
 ### Cold Staker / Hot Operator Model
 
@@ -326,7 +279,7 @@ Each proposer MUST run a proposer agent that:
 3. Stops them when no longer active
 4. Calls `rotateNetwork()` during grace period
 
-This is a **constitutional requirement** - proposers that produce blocks while unauthorized can be challenged and removed.
+This is an **SLA requirement** - proposers that produce blocks while unauthorized can be challenged and removed.
 
 See [`agent/`](./agent/) for a reference implementation.
 
@@ -372,7 +325,7 @@ The grace period ensures the outgoing operator can flush all pending batches to 
 1. **Monitor**: Watch for epoch end approaching
 2. **Prepare**: Stop accepting new transactions
 3. **Flush**: Force `op-batcher` to submit all pending unsafe blocks to L1
-4. **Rotate**: Call `rotateOperator()` (ideally in same tx or immediately after batch confirms)
+4. **Rotate**: Call `rotateNetwork()` (ideally in same tx or immediately after batch confirms)
 5. **Handover**: New operator's agent sees L1 state change and immediately starts sequencing
 
 **Constants:**
@@ -388,19 +341,18 @@ The grace period ensures the outgoing operator can flush all pending batches to 
 6. **Active Handoff**: At epoch end, proposer flushes batches and calls `rotateNetwork()` (grace period protects this)
 7. **Atomic Update**: Hub updates BOTH `batcherHash` AND `unsafeBlockSigner` on ALL connected chains
 8. **Proposer Agent Activation**: New proposer's agent detects the change and immediately starts sequencing
-9. **Constitutional Enforcement**: Misbehaving proposers/builders challenged via Kleros
+9. **SLA Enforcement**: Misbehaving proposers challenged via Kleros
 
-### Constitutional Rules (Summary)
+### Sequencer SLA (Summary)
 
-The full constitution is defined in [`policies/policy_sequencer_registry.md`](./policies/policy_sequencer_registry.md).
+The full SLA is defined in [`policies/policy_sequencer_registry.md`](./policies/policy_sequencer_registry.md).
 
-**Key Rules:**
+**Key Requirements:**
 
-| Rule | Violation | Evidence Standard |
-|------|-----------|-------------------|
-| **Censorship Resistance** | Excluding valid tx for >5 minutes | Provider logs + simulation trace |
-| **No Malicious MEV** | Sandwiching, front-running | Simulation proof of user harm |
-| **Unauthorized Production** | Producing blocks when unauthorized | L1 timestamp vs epoch |
+| Requirement | Violation | Evidence Standard |
+|-------------|-----------|-------------------|
+| **Authorized Production** | Producing blocks when unauthorized | L1 timestamp vs epoch |
+| **Active Handoff** | Missed rotation during grace period | Forced rotation evidence |
 | **Liveness** | >5 minute downtime during epoch | Block production gaps |
 
 See the [Sequencer Policy](./policies/policy_sequencer_registry.md) for detailed evidence standards.
@@ -415,7 +367,6 @@ The central nervous system of KSSN - manages atomic rotation across all connecte
 // Chain configuration for each connected Spoke
 struct ChainConfig {
     address systemConfig;   // The OP Stack SystemConfig contract
-    bytes32 policyId;       // The Policy ID this chain requires
     address adapter;        // Adapter for version compatibility
     bool isActive;          // Whether this chain is active
     uint256 chainId;        // The L2 chain ID
@@ -427,16 +378,15 @@ uint256 public currentEpoch;              // Current epoch number
 uint256 public epochDuration;             // Rotation interval (default: 1 hour)
 uint256 public gracePeriod;               // Active Handoff window (default: 10 min)
 address public proposerRegistry;          // ProposerRegistry contract
-address public builderRegistry;           // BuilderRegistry contract
 
 // Rotation functions
 function rotateNetwork() external;        // Atomic rotation of ALL chains
 function rotateShard(uint256 shardIndex); // For scaling beyond 400 chains
 
 // Chain management (governance only)
-function connectChain(uint256 chainId, address systemConfig, bytes32 policyId, address adapter);
+function connectChain(uint256 chainId, address systemConfig, address adapter);
 function disconnectChain(uint256 chainId);
-function updateChainConfig(uint256 chainId, bytes32 policyId, address adapter);
+function updateChainConfig(uint256 chainId, address adapter);
 
 // View functions
 function getChainCount() external view returns (uint256);
@@ -490,49 +440,6 @@ function getTotalStake(address proposer) external view returns (uint256);
 function isActiveProposer(address proposer) external view returns (bool);
 ```
 
-### BuilderRegistry
-
-"The Value Engine" - manages policy-based builder eligibility with sovereignty matrix.
-
-```solidity
-struct BuilderInfo {
-    uint256 bond;               // ETH bond for damages
-    bool isActive;              // Currently active
-    uint256 slashCount;         // Times slashed
-    uint256 lastSlashTime;      // For cooldown tracking
-}
-
-struct PolicyTagStatus {
-    bool isGranted;             // Has this tag
-    uint256 expiresAt;          // 0 = never expires
-    uint256 revokedAt;          // 0 = not revoked
-}
-
-// Policy constants
-bytes32 public constant POLICY_OFAC;
-bytes32 public constant POLICY_KYC;
-bytes32 public constant POLICY_NO_MEV;
-bytes32 public constant POLICY_NO_GAMBLING;
-bytes32 public constant POLICY_NEUTRAL;
-
-// Configuration
-uint256 public minimumBond;     // Default: 500 ETH
-
-// Builder functions
-function register() external payable;
-function addBond() external payable;
-function withdrawBond(uint256 amount) external;
-
-// Eligibility (called by Proposer clients)
-function isBuilderEligible(address builder, bytes32 policyId) external view returns (bool);
-function isBuilderEligibleForBundle(address builder, bytes32[] policyIds) external view returns (bool);
-
-// Policy management (governance/Kleros)
-function grantPolicyTag(address builder, bytes32 policyId, uint256 expiresAt) external;
-function revokePolicyTag(address builder, bytes32 policyId, string reason) external;
-function slash(address builder, uint256 amount, bytes32 policyId, string reason) external;
-```
-
 ### ChainRegistry
 
 GeneralizedTCR for decentralized chain onboarding to KSSN:
@@ -543,7 +450,6 @@ struct ChainData {
     uint256 chainId;         // L2 chain ID
     address systemConfig;    // SystemConfig contract on L1
     address adapter;         // OP Stack adapter
-    bytes32 policyId;        // Required policy (OFAC, KYC, NEUTRAL)
     string name;             // Human-readable name
     string metadataURI;      // IPFS URI with additional info
 }
@@ -561,7 +467,6 @@ function addChain(
     uint256 chainId,
     address systemConfig,
     address adapter,
-    bytes32 policyId,
     string name,
     string metadataURI
 ) external payable returns (bytes32 itemId);
@@ -594,7 +499,6 @@ enum RegistrationStatus {
 function registerChain(
     uint256 chainId,
     address systemConfig,
-    bytes32 policyId,
     string name,
     string metadataURI
 ) external payable returns (bytes32 itemId);
@@ -604,7 +508,6 @@ function registerChainWithAdapter(
     uint256 chainId,
     address systemConfig,
     address adapter,
-    bytes32 policyId,
     string name,
     string metadataURI
 ) external payable returns (bytes32 itemId);
@@ -663,8 +566,8 @@ interface ISystemConfig {
 ./start.sh local
 
 # Interact with contracts
-cast call <MANAGER> "currentOperator()" --rpc-url http://localhost:8545
-cast call <MANAGER> "isCurrentOperator(address,address)(bool)" <batcher> <signer> --rpc-url http://localhost:8545
+cast call <HUB> "currentProposer()" --rpc-url http://localhost:8545
+cast call <HUB> "isCurrentProposer(address)(bool)" <proposer> --rpc-url http://localhost:8545
 ```
 
 ### Sepolia Testnet
@@ -688,24 +591,16 @@ source .env.sepolia
 3. **Transfer SystemConfig Ownership**
 
 ```bash
-cast send $SYSTEM_CONFIG "transferOwnership(address)" $MANAGER_ADDRESS \
+cast send $SYSTEM_CONFIG "transferOwnership(address)" $HUB_ADDRESS \
   --rpc-url $L1_RPC \
   --private-key $OWNER_PRIVATE_KEY
 ```
 
 4. **Register Operators in Kleros**
 
-Visit https://curate.kleros.io/ and submit operator tuples: `abi.encode(batcher, unsafeSigner)`
+Visit https://curate.kleros.io/ and submit proposer entries as required by your registry schema.
 
-5. **Sync Operators**
-
-```bash
-cast send $MANAGER_ADDRESS "syncAddOperator(address,address)" $BATCHER $UNSAFE_SIGNER \
-  --rpc-url $L1_RPC \
-  --private-key $DEPLOYER_PRIVATE_KEY
-```
-
-6. **Deploy KSSN Proposer Agent**
+5. **Deploy KSSN Proposer Agent**
 
 Each proposer must run their own agent:
 ```bash
@@ -719,7 +614,7 @@ python kssn_proposer_agent.py --config kssn_config.yaml
 ### Mainnet Deployment
 
 **Prerequisites:**
-- Kleros Curate TCR deployed with your constitution
+- Kleros Curate TCR deployed with your sequencer policy
 - TCR item type: tuple (address batcher, address unsafeSigner)
 - OP Stack L1 contracts deployed
 - Guardian multisig set up
@@ -756,24 +651,24 @@ Keepers serve as a **liveness fallback** (Dead Man's Switch) - they can only for
 Web3Function.onRun(async (context) => {
   const { userArgs, provider } = context;
 
-  const manager = new ethers.Contract(
-    userArgs.managerAddress,
+  const hub = new ethers.Contract(
+    userArgs.hubAddress,
     [
       "function epochDuration() view returns (uint256)",
-      "function GRACE_PERIOD() view returns (uint256)",
-      "function lastRotationTimestamp() view returns (uint256)",
-      "function rotateOperator()"
+      "function gracePeriod() view returns (uint256)",
+      "function epochStartTime() view returns (uint256)",
+      "function rotateNetwork()"
     ],
     provider
   );
 
-  const epochDuration = await manager.epochDuration();
-  const gracePeriod = await manager.GRACE_PERIOD();
-  const lastRotation = await manager.lastRotationTimestamp();
+  const epochDuration = await hub.epochDuration();
+  const gracePeriod = await hub.gracePeriod();
+  const epochStartTime = await hub.epochStartTime();
   const now = Math.floor(Date.now() / 1000);
 
   // Keepers can only rotate after epoch + grace period (Phase 3 - Dead Man's Switch)
-  const deadMansSwitchTime = lastRotation.add(epochDuration).add(gracePeriod);
+  const deadMansSwitchTime = epochStartTime.add(epochDuration).add(gracePeriod);
 
   if (now <= deadMansSwitchTime) {
     const timeLeft = deadMansSwitchTime.sub(now);
@@ -783,7 +678,7 @@ Web3Function.onRun(async (context) => {
   // Phase 3: Force rotation if operator hasn't rotated
   return {
     canExec: true,
-    callData: manager.interface.encodeFunctionData("rotateOperator")
+    callData: hub.interface.encodeFunctionData("rotateNetwork")
   };
 });
 ```
@@ -813,8 +708,8 @@ Web3Function.onRun(async (context) => {
 - Prevents DoS during rotation with many operators
 - Snapshots decouple from registry reads during rotation
 
-### Constitutional Compliance
-- Constitutional requirement enforced via Kleros
+### SLA Compliance
+- SLA requirements enforced via Kleros
 - Proposers can be challenged for producing blocks while unauthorized
 
 ### Bounded Operations
@@ -833,7 +728,6 @@ op/
 ├── src/
 │   ├── SharedSequencerHub.sol        # KSSN Hub - atomic multichain rotation
 │   ├── ProposerRegistry.sol          # KSSN DPoS proposer management
-│   ├── BuilderRegistry.sol           # KSSN policy-based builder management
 │   ├── ChainRegistry.sol             # GeneralizedTCR for chain onboarding
 │   ├── ChainDeploymentKit.sol        # Helper for chain integration
 │   ├── adapters/
@@ -841,7 +735,6 @@ op/
 │   └── interfaces/
 │       ├── ISharedSequencerHub.sol   # KSSN Hub interface
 │       ├── IProposerRegistry.sol     # KSSN Proposer registry interface
-│       ├── IBuilderRegistry.sol      # KSSN Builder registry interface
 │       ├── IChainRegistry.sol        # Chain registry interface
 │       ├── IOpStackAdapter.sol       # Adapter interface
 │       ├── ICurate.sol               # Kleros Curate interface
@@ -851,11 +744,9 @@ op/
 ├── test/
 │   ├── SharedSequencerHub.t.sol      # KSSN Hub tests (with registry integration)
 │   ├── ProposerRegistry.t.sol        # KSSN Proposer registry tests
-│   ├── BuilderRegistry.t.sol         # KSSN Builder registry tests
 │   ├── ChainRegistry.t.sol           # Chain registry tests
 │   └── mocks/
 │       ├── MockProposerRegistry.sol  # KSSN proposer registry mock
-│       ├── MockBuilderRegistry.sol   # KSSN builder registry mock
 │       ├── MockChainRegistry.sol     # Chain registry mock
 │       ├── MockSystemConfig.sol      # Test SystemConfig mock
 │       └── MockAdapterV2.sol         # V2 adapter stub (for testing)
@@ -865,7 +756,7 @@ op/
 │   ├── IntegrationTest.s.sol         # Solidity integration test
 │   └── run_integration_test.sh       # Full system integration test
 ├── policies/
-│   ├── policy_sequencer_registry.md  # Sequencer constitutional rules
+│   ├── policy_sequencer_registry.md  # Sequencer SLA rules
 │   ├── policy_adapter_registry.md    # Adapter acceptance criteria
 │   └── policy_chain_registry.md      # Chain registry criteria
 ├── devnet/
@@ -889,19 +780,16 @@ op/
 ### KSSN Architecture
 
 **Q: What is KSSN?**
-A: The Kleros Shared Sequencer Network - a Hub-and-Spoke architecture that manages sequencing for multiple OP Stack chains from a single Hub contract. It enables atomic cross-chain composability while preserving chain sovereignty through the Federalist Policy system.
+A: The Kleros Shared Sequencer Network - a Hub-and-Spoke architecture that manages sequencing for multiple OP Stack chains from a single Hub contract. It enables atomic cross-chain composability while preserving chain sovereignty through opt-in rotation and SLA governance.
 
 **Q: How does atomic multichain rotation work?**
 A: When `rotateNetwork()` is called, the Hub iterates through ALL connected chains and updates each SystemConfig in a single transaction. This costs ~60k gas per chain, supporting ~450 chains per block at 30M gas limit. For larger networks, use `rotateShard()`.
 
-**Q: What is Proposer-Builder Separation (PBS)?**
-A: KSSN separates infrastructure providers (Proposers) from transaction content providers (Builders). Proposers focus on liveness and are immune to content-based slashing ("Safe Harbor") if they sign headers from registered Builders. Builders are liable for policy compliance.
+**Q: How is sequencing policy enforced?**
+A: KSSN enforces SLA expectations (liveness, authorized production, and clean handoffs) through the Sequencer Policy and Kleros arbitration.
 
-**Q: What is the Sovereignty Matrix?**
-A: A mapping of builders to their policy compliance status. Each chain specifies a required policy (OFAC, KYC, NEUTRAL, etc.), and only builders with the matching policy tag can build for that chain.
-
-**Q: What is the Union Rule?**
-A: For atomic bundles spanning multiple chains, a builder must have ALL policy tags required by those chains. E.g., to build an atomic bundle for Chain A (OFAC) and Chain B (KYC), the builder needs both OFAC and KYC tags.
+**Q: Can the sequencer use Rollup Boost and Flashblocks?**
+A: Yes. The active sequencer can use Rollup Boost and Flashblocks to keep the mempool private while enabling market-driven MEV without enshrining proposer-builder separation.
 
 **Q: How do I connect a new chain to KSSN?**
 A: There are two paths:
@@ -916,25 +804,16 @@ A: There are two paths:
 **Direct Path (Governance Only):**
 1) Deploy your OP Stack chain with SystemConfig
 2) Transfer SystemConfig ownership to the Hub
-3) Call `hub.connectChain(chainId, systemConfig, policyId, adapter)` as governance
+3) Call `hub.connectChain(chainId, systemConfig, adapter)` as governance
 4) Your chain is now part of the shared sequencer network
 
 **Q: What happens if a chain's rotation fails?**
 A: The Hub continues with other chains and deactivates the failing chain. Individual chain failures don't block the network. The chain can be reactivated after fixing the issue.
 
-### Proposer & Builder
+### Proposers
 
 **Q: How do I become a proposer?**
 A: 1) Call `proposerRegistry.register(operationalKey)` with minimum stake (32 ETH default), 2) Run the KSSN proposer agent, 3) If your stake is in the top-N (100 by default), you'll be in the active set.
-
-**Q: How do I become a builder?**
-A: 1) Call `builderRegistry.register()` with minimum bond (500 ETH default), 2) You automatically get the NEUTRAL policy tag, 3) Apply for additional policy tags through governance/Kleros.
-
-**Q: What is the "Safe Harbor" for proposers?**
-A: Proposers are immune to content-based slashing if they sign headers from registered Builders. Their liability is strictly limited to liveness and registry compliance.
-
-**Q: What happens if I'm slashed as a builder?**
-A: Your bond is reduced, you enter a cooldown period (7 days default), and you're ineligible during that period. After 3 slashes, you're automatically deactivated.
 
 ### Active Handoff & Rotation
 

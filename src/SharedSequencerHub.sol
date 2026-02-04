@@ -3,7 +3,6 @@ pragma solidity ^0.8.20;
 
 import {ISharedSequencerHub} from "./interfaces/ISharedSequencerHub.sol";
 import {IProposerRegistry} from "./interfaces/IProposerRegistry.sol";
-import {IBuilderRegistry} from "./interfaces/IBuilderRegistry.sol";
 import {IOpStackAdapter} from "./interfaces/IOpStackAdapter.sol";
 import {IChainRegistry} from "./interfaces/IChainRegistry.sol";
 
@@ -19,7 +18,7 @@ import {IChainRegistry} from "./interfaces/IChainRegistry.sol";
  *
  *      Key features:
  *      - Atomic Multichain Rotation: Updates all chains in a single transaction
- *      - Federalist Policy System: Each chain can require specific policy compliance
+ *      - Service-level rotation: Each chain opts into shared sequencer rotation
  *      - Active Handoff Protocol: Graceful transition between proposers
  *      - Sharded Rotation: Supports scaling beyond ~400 chains per tx
  *
@@ -60,9 +59,6 @@ contract SharedSequencerHub is ISharedSequencerHub {
     /// @notice The proposer registry contract
     address public override proposerRegistry;
 
-    /// @notice The builder registry contract
-    address public override builderRegistry;
-
     /// @notice Whether the contract is paused
     bool public override isPaused;
 
@@ -93,7 +89,6 @@ contract SharedSequencerHub is ISharedSequencerHub {
     event ChainConnectedFromRegistry(
         uint256 indexed chainId,
         address indexed systemConfig,
-        bytes32 policyId,
         address adapter
     );
 
@@ -124,7 +119,6 @@ contract SharedSequencerHub is ISharedSequencerHub {
      * @param _governance The governance address
      * @param _guardian The guardian address
      * @param _proposerRegistry The proposer registry address
-     * @param _builderRegistry The builder registry address
      * @param _epochDuration The epoch duration in seconds (0 for default)
      * @param _gracePeriod The grace period in seconds (0 for default)
      */
@@ -132,7 +126,6 @@ contract SharedSequencerHub is ISharedSequencerHub {
         address _governance,
         address _guardian,
         address _proposerRegistry,
-        address _builderRegistry,
         uint256 _epochDuration,
         uint256 _gracePeriod
     ) {
@@ -142,7 +135,6 @@ contract SharedSequencerHub is ISharedSequencerHub {
         governance = _governance;
         guardian = _guardian;
         proposerRegistry = _proposerRegistry;
-        builderRegistry = _builderRegistry;
         epochDuration = _epochDuration == 0 ? DEFAULT_EPOCH_DURATION : _epochDuration;
         gracePeriod = _gracePeriod == 0 ? DEFAULT_GRACE_PERIOD : _gracePeriod;
 
@@ -354,7 +346,6 @@ contract SharedSequencerHub is ISharedSequencerHub {
     function connectChain(
         uint256 _chainId,
         address _systemConfig,
-        bytes32 _policyId,
         address _adapter
     ) external override onlyGovernance {
         // Validate inputs
@@ -365,7 +356,6 @@ contract SharedSequencerHub is ISharedSequencerHub {
         // Add chain configuration
         _connectedChains.push(ChainConfig({
             systemConfig: _systemConfig,
-            policyId: _policyId,
             adapter: _adapter,
             isActive: true,
             chainId: _chainId
@@ -374,7 +364,7 @@ contract SharedSequencerHub is ISharedSequencerHub {
         // Store index (1-indexed)
         _chainIdToIndex[_chainId] = _connectedChains.length;
 
-        emit ChainConnected(_chainId, _systemConfig, _policyId, _adapter);
+        emit ChainConnected(_chainId, _systemConfig, _adapter);
     }
 
     /// @inheritdoc ISharedSequencerHub
@@ -402,7 +392,6 @@ contract SharedSequencerHub is ISharedSequencerHub {
     /// @inheritdoc ISharedSequencerHub
     function updateChainConfig(
         uint256 _chainId,
-        bytes32 _policyId,
         address _adapter
     ) external override onlyGovernance {
         uint256 index = _chainIdToIndex[_chainId];
@@ -410,14 +399,11 @@ contract SharedSequencerHub is ISharedSequencerHub {
 
         ChainConfig storage chain = _connectedChains[index - 1];
 
-        if (_policyId != bytes32(0)) {
-            chain.policyId = _policyId;
-        }
         if (_adapter != address(0)) {
             chain.adapter = _adapter;
         }
 
-        emit ChainConfigUpdated(_chainId, chain.policyId, chain.adapter);
+        emit ChainConfigUpdated(_chainId, chain.adapter);
     }
 
     /// @inheritdoc ISharedSequencerHub
@@ -440,12 +426,6 @@ contract SharedSequencerHub is ISharedSequencerHub {
     }
 
     /// @inheritdoc ISharedSequencerHub
-    function setBuilderRegistry(address _newRegistry) external override onlyGovernance {
-        address oldRegistry = builderRegistry;
-        builderRegistry = _newRegistry;
-        emit BuilderRegistryUpdated(oldRegistry, _newRegistry);
-    }
-
     /// @inheritdoc ISharedSequencerHub
     function setEpochDuration(uint256 _newDuration) external override onlyGovernance {
         uint256 oldDuration = epochDuration;
@@ -547,7 +527,6 @@ contract SharedSequencerHub is ISharedSequencerHub {
         // Add chain configuration
         _connectedChains.push(ChainConfig({
             systemConfig: data.systemConfig,
-            policyId: data.policyId,
             adapter: data.adapter,
             isActive: true,
             chainId: _chainId
@@ -556,8 +535,8 @@ contract SharedSequencerHub is ISharedSequencerHub {
         // Store index (1-indexed)
         _chainIdToIndex[_chainId] = _connectedChains.length;
 
-        emit ChainConnectedFromRegistry(_chainId, data.systemConfig, data.policyId, data.adapter);
-        emit ChainConnected(_chainId, data.systemConfig, data.policyId, data.adapter);
+        emit ChainConnectedFromRegistry(_chainId, data.systemConfig, data.adapter);
+        emit ChainConnected(_chainId, data.systemConfig, data.adapter);
     }
 
     /**
@@ -588,7 +567,6 @@ contract SharedSequencerHub is ISharedSequencerHub {
             // Add chain configuration
             _connectedChains.push(ChainConfig({
                 systemConfig: data.systemConfig,
-                policyId: data.policyId,
                 adapter: data.adapter,
                 isActive: true,
                 chainId: chainId
@@ -596,8 +574,8 @@ contract SharedSequencerHub is ISharedSequencerHub {
 
             _chainIdToIndex[chainId] = _connectedChains.length;
 
-            emit ChainConnectedFromRegistry(chainId, data.systemConfig, data.policyId, data.adapter);
-            emit ChainConnected(chainId, data.systemConfig, data.policyId, data.adapter);
+            emit ChainConnectedFromRegistry(chainId, data.systemConfig, data.adapter);
+            emit ChainConnected(chainId, data.systemConfig, data.adapter);
         }
     }
 
@@ -624,9 +602,8 @@ contract SharedSequencerHub is ISharedSequencerHub {
         if (data.adapter != address(0)) {
             chain.adapter = data.adapter;
         }
-        chain.policyId = data.policyId;
 
-        emit ChainConfigUpdated(_chainId, chain.policyId, chain.adapter);
+        emit ChainConfigUpdated(_chainId, chain.adapter);
     }
 
     // ============ Helper Functions ============
