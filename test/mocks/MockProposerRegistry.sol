@@ -16,6 +16,7 @@ contract MockProposerRegistry is IProposerRegistry {
     uint256 public override minimumStake = 1 ether;
     uint256 public override maxActiveSetSize = 100;
     address public override hub;
+    mapping(address => mapping(address => bytes)) public adapterData;
 
     // For testing: control which proposer is selected
     address public nextProposerOverride;
@@ -86,6 +87,10 @@ contract MockProposerRegistry is IProposerRegistry {
         return 0;
     }
 
+    function getAdapterData(address _proposer, address _adapter) external view override returns (bytes memory) {
+        return adapterData[_proposer][_adapter];
+    }
+
     function needsRebalancing() external pure override returns (bool) {
         return false;
     }
@@ -116,6 +121,9 @@ contract MockProposerRegistry is IProposerRegistry {
     function addStake() external payable override {}
     function withdrawStake(uint256) external override {}
     function updateOperationalKey(address) external override {}
+    function setAdapterData(address _adapter, bytes calldata _data) external override {
+        adapterData[msg.sender][_adapter] = _data;
+    }
     function delegate(address) external payable override {}
     function undelegate(address, uint256) external override {}
     function rebalance() external override {}

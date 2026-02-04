@@ -19,7 +19,7 @@ import {IArbitrator} from "./IArbitrator.sol";
  *      5. Chain can request removal via removeChain() if they want to exit KSSN
  *
  *      Acceptance Criteria (enforced via Kleros arbitration):
- *      - Valid OP Stack deployment with accessible SystemConfig
+ *      - Valid rollup deployment with accessible configuration contract
  *      - Chain team has operational capability (infrastructure, monitoring)
  *      - Chain follows KSSN sequencer service-level agreement
  *      - No duplicate chain IDs
@@ -51,14 +51,14 @@ interface IChainRegistry {
     /**
      * @notice Metadata for a chain registration.
      * @param chainId The L2 chain ID
-     * @param systemConfig The SystemConfig contract address on L1
-     * @param adapter The OP Stack adapter address
+     * @param rollupConfig The rollup configuration contract address
+     * @param adapter The rollup adapter address
      * @param name Human-readable chain name
      * @param metadataURI IPFS URI with additional chain info (logo, description, etc.)
      */
     struct ChainData {
         uint256 chainId;
-        address systemConfig;
+        address rollupConfig;
         address adapter;
         string name;
         string metadataURI;
@@ -113,7 +113,7 @@ interface IChainRegistry {
         bytes32 indexed itemId,
         uint256 indexed chainId,
         address indexed submitter,
-        address systemConfig,
+        address rollupConfig,
         address adapter,
         string name
     );
@@ -158,7 +158,7 @@ interface IChainRegistry {
     // ============ Errors ============
 
     error InvalidChainId();
-    error InvalidSystemConfig();
+    error InvalidRollupConfig();
     error InvalidAdapter();
     error ItemAlreadyExists();
     error ItemDoesNotExist();
@@ -234,7 +234,7 @@ interface IChainRegistry {
     /**
      * @notice Submits a chain for registration.
      * @param _chainId The L2 chain ID
-     * @param _systemConfig The SystemConfig contract address
+     * @param _rollupConfig The rollup configuration contract address
      * @param _adapter The OP Stack adapter address
      * @param _name Human-readable chain name
      * @param _metadataURI IPFS URI with additional info
@@ -242,7 +242,7 @@ interface IChainRegistry {
      */
     function addChain(
         uint256 _chainId,
-        address _systemConfig,
+        address _rollupConfig,
         address _adapter,
         string calldata _name,
         string calldata _metadataURI

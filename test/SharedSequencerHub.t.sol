@@ -4,9 +4,9 @@ pragma solidity ^0.8.20;
 import {Test, console2} from "forge-std/Test.sol";
 import {SharedSequencerHub} from "../src/SharedSequencerHub.sol";
 import {ISharedSequencerHub} from "../src/interfaces/ISharedSequencerHub.sol";
-import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
+import {MockSequencerAdapter} from "./mocks/MockSequencerAdapter.sol";
 import {MockProposerRegistry} from "./mocks/MockProposerRegistry.sol";
-import {MockSystemConfig} from "./mocks/MockSystemConfig.sol";
+import {MockRollupConfig} from "./mocks/MockRollupConfig.sol";
 import {MockChainRegistry} from "./mocks/MockChainRegistry.sol";
 
 /**
@@ -26,12 +26,12 @@ contract SharedSequencerHubTest is Test {
     // ============ Contracts ============
     SharedSequencerHub public hub;
     MockProposerRegistry public proposerRegistry;
-    OpStackAdapterV1 public adapter;
+    MockSequencerAdapter public adapter;
 
     // Multiple chain configs for testing
-    MockSystemConfig public systemConfig1;
-    MockSystemConfig public systemConfig2;
-    MockSystemConfig public systemConfig3;
+    MockRollupConfig public rollupConfig1;
+    MockRollupConfig public rollupConfig2;
+    MockRollupConfig public rollupConfig3;
 
     uint256 public constant CHAIN_ID_1 = 10001;
     uint256 public constant CHAIN_ID_2 = 10002;
@@ -44,7 +44,7 @@ contract SharedSequencerHubTest is Test {
         proposerRegistry = new MockProposerRegistry();
 
         // Deploy adapter
-        adapter = new OpStackAdapterV1();
+        adapter = new MockSequencerAdapter();
 
         // Deploy hub
         hub = new SharedSequencerHub(
@@ -56,25 +56,32 @@ contract SharedSequencerHubTest is Test {
         );
 
         // Deploy system configs
-        systemConfig1 = new MockSystemConfig();
-        systemConfig2 = new MockSystemConfig();
-        systemConfig3 = new MockSystemConfig();
+        rollupConfig1 = new MockRollupConfig();
+        rollupConfig2 = new MockRollupConfig();
+        rollupConfig3 = new MockRollupConfig();
 
         // Transfer ownership of system configs to hub
-        systemConfig1.transferOwnership(address(hub));
-        systemConfig2.transferOwnership(address(hub));
-        systemConfig3.transferOwnership(address(hub));
+        rollupConfig1.transferOwnership(address(hub));
+        rollupConfig2.transferOwnership(address(hub));
+        rollupConfig3.transferOwnership(address(hub));
 
         // Add proposers to registry
         proposerRegistry.addProposer(proposer1, 32 ether);
         proposerRegistry.addProposer(proposer2, 32 ether);
         proposerRegistry.addProposer(proposer3, 32 ether);
 
+        vm.prank(proposer1);
+        proposerRegistry.setAdapterData(address(adapter), abi.encode(proposer1));
+        vm.prank(proposer2);
+        proposerRegistry.setAdapterData(address(adapter), abi.encode(proposer2));
+        vm.prank(proposer3);
+        proposerRegistry.setAdapterData(address(adapter), abi.encode(proposer3));
+
         // Connect chains as governance
         vm.startPrank(governance);
-        hub.connectChain(CHAIN_ID_1, address(systemConfig1), address(adapter));
-        hub.connectChain(CHAIN_ID_2, address(systemConfig2), address(adapter));
-        hub.connectChain(CHAIN_ID_3, address(systemConfig3), address(adapter));
+        hub.connectChain(CHAIN_ID_1, address(rollupConfig1), address(adapter));
+        hub.connectChain(CHAIN_ID_2, address(rollupConfig2), address(adapter));
+        hub.connectChain(CHAIN_ID_3, address(rollupConfig3), address(adapter));
         vm.stopPrank();
     }
 
@@ -108,7 +115,7 @@ contract SharedSequencerHubTest is Test {
 
     function test_ConnectChain_Success() public {
         uint256 newChainId = 10004;
-        MockSystemConfig newConfig = new MockSystemConfig();
+        MockRollupConfig newConfig = new MockRollupConfig();
         newConfig.transferOwnership(address(hub));
 
         vm.prank(governance);
@@ -117,7 +124,7 @@ contract SharedSequencerHubTest is Test {
         assertEq(hub.getChainCount(), 4);
 
         ISharedSequencerHub.ChainConfig memory config = hub.getChainConfig(newChainId);
-        assertEq(config.systemConfig, address(newConfig));
+        assertEq(config.rollupConfig, address(newConfig));
         assertEq(config.adapter, address(adapter));
         assertTrue(config.isActive);
         assertEq(config.chainId, newChainId);
@@ -135,9 +142,9 @@ contract SharedSequencerHubTest is Test {
         hub.connectChain(CHAIN_ID_1, address(0x123), address(adapter));
     }
 
-    function test_ConnectChain_RevertsIfInvalidSystemConfig() public {
+    function test_ConnectChain_RevertsIfInvalidRollupConfig() public {
         vm.prank(governance);
-        vm.expectRevert(ISharedSequencerHub.InvalidSystemConfig.selector);
+        vm.expectRevert(ISharedSequencerHub.InvalidRollupConfig.selector);
         hub.connectChain(10004, address(0), address(adapter));
     }
 
@@ -164,7 +171,7 @@ contract SharedSequencerHubTest is Test {
     }
 
     function test_UpdateChainConfig_Success() public {
-        OpStackAdapterV1 newAdapter = new OpStackAdapterV1();
+        MockSequencerAdapter newAdapter = new MockSequencerAdapter();
 
         vm.prank(governance);
         hub.updateChainConfig(CHAIN_ID_1, address(newAdapter));
@@ -195,12 +202,9 @@ contract SharedSequencerHubTest is Test {
         assertEq(hub.currentEpoch(), 1);
 
         // Verify all chains were updated to proposer2
-        assertEq(systemConfig1.batcherHash(), bytes32(uint256(uint160(proposer2))));
-        assertEq(systemConfig1.unsafeBlockSigner(), proposer2);
-        assertEq(systemConfig2.batcherHash(), bytes32(uint256(uint160(proposer2))));
-        assertEq(systemConfig2.unsafeBlockSigner(), proposer2);
-        assertEq(systemConfig3.batcherHash(), bytes32(uint256(uint160(proposer2))));
-        assertEq(systemConfig3.unsafeBlockSigner(), proposer2);
+        assertEq(rollupConfig1.sequencer(), proposer2);
+        assertEq(rollupConfig2.sequencer(), proposer2);
+        assertEq(rollupConfig3.sequencer(), proposer2);
     }
 
     function test_RotateNetwork_RevertsBeforeEpochEnd() public {
@@ -250,9 +254,9 @@ contract SharedSequencerHubTest is Test {
         hub.rotateNetwork();
 
         // Chain 1 and 3 should be updated to proposer2 (epoch 1), chain 2 should not
-        assertEq(systemConfig1.batcherHash(), bytes32(uint256(uint160(proposer2))));
-        assertEq(systemConfig2.batcherHash(), bytes32(0)); // Not updated
-        assertEq(systemConfig3.batcherHash(), bytes32(uint256(uint160(proposer2))));
+        assertEq(rollupConfig1.sequencer(), proposer2);
+        assertEq(rollupConfig2.sequencer(), address(0)); // Not updated
+        assertEq(rollupConfig3.sequencer(), proposer2);
     }
 
     // ============ Sharded Rotation Tests ============
@@ -400,11 +404,14 @@ contract SharedSequencerHubTest is Test {
     function test_EmergencyRotate_Success() public {
         address emergencyProposer = address(0x777);
 
+        vm.prank(emergencyProposer);
+        proposerRegistry.setAdapterData(address(adapter), abi.encode(emergencyProposer));
+
         vm.prank(guardian);
         hub.emergencyRotate(emergencyProposer);
 
         assertEq(hub.currentProposer(), emergencyProposer);
-        assertEq(systemConfig1.batcherHash(), bytes32(uint256(uint160(emergencyProposer))));
+        assertEq(rollupConfig1.sequencer(), emergencyProposer);
     }
 
     function test_EmergencyRotate_RevertsIfNotGuardian() public {
@@ -444,11 +451,11 @@ contract SharedSequencerHubTest is Test {
 
     function test_RotateNetwork_HandlesFailedChainGracefully() public {
         // Create a system config that will fail (not owned by hub)
-        MockSystemConfig failingConfig = new MockSystemConfig();
+        MockRollupConfig failingConfig = new MockRollupConfig();
         // Don't transfer ownership - this will cause rotation to fail for this chain
 
         vm.prank(governance);
-        hub.connectChain(10004, address(failingConfig), bytes32(0), address(adapter));
+        hub.connectChain(10004, address(failingConfig), address(adapter));
 
         vm.warp(block.timestamp + 1 hours + 1);
 
@@ -495,7 +502,7 @@ contract SharedSequencerHubTest is Test {
     function test_ConnectChainFromRegistry_Success() public {
         // Setup chain registry
         MockChainRegistry registry = new MockChainRegistry();
-        MockSystemConfig newConfig = new MockSystemConfig();
+        MockRollupConfig newConfig = new MockRollupConfig();
         newConfig.transferOwnership(address(hub));
 
         uint256 newChainId = 20001;
@@ -518,7 +525,7 @@ contract SharedSequencerHubTest is Test {
         assertEq(hub.getChainCount(), 4); // 3 original + 1 new
 
         ISharedSequencerHub.ChainConfig memory config = hub.getChainConfig(newChainId);
-        assertEq(config.systemConfig, address(newConfig));
+        assertEq(config.rollupConfig, address(newConfig));
         assertEq(config.adapter, address(adapter));
         assertTrue(config.isActive);
     }
@@ -536,13 +543,13 @@ contract SharedSequencerHubTest is Test {
 
     function test_ConnectChainFromRegistry_RevertsIfNoRegistry() public {
         vm.prank(governance);
-        vm.expectRevert(ISharedSequencerHub.InvalidSystemConfig.selector);
+        vm.expectRevert(ISharedSequencerHub.InvalidRollupConfig.selector);
         hub.connectChainFromRegistry(20001);
     }
 
     function test_ConnectChainFromRegistry_RevertsIfAlreadyConnected() public {
         MockChainRegistry registry = new MockChainRegistry();
-        MockSystemConfig newConfig = new MockSystemConfig();
+        MockRollupConfig newConfig = new MockRollupConfig();
 
         registry.registerChainDirectly(
             CHAIN_ID_1, // Already connected
@@ -563,9 +570,9 @@ contract SharedSequencerHubTest is Test {
         MockChainRegistry registry = new MockChainRegistry();
 
         // Create and register multiple new chains
-        MockSystemConfig config1 = new MockSystemConfig();
-        MockSystemConfig config2 = new MockSystemConfig();
-        MockSystemConfig config3 = new MockSystemConfig();
+        MockRollupConfig config1 = new MockRollupConfig();
+        MockRollupConfig config2 = new MockRollupConfig();
+        MockRollupConfig config3 = new MockRollupConfig();
 
         config1.transferOwnership(address(hub));
         config2.transferOwnership(address(hub));
@@ -595,13 +602,13 @@ contract SharedSequencerHubTest is Test {
     function test_BatchConnectChainsFromRegistry_SkipsAlreadyConnected() public {
         MockChainRegistry registry = new MockChainRegistry();
 
-        MockSystemConfig newConfig = new MockSystemConfig();
+        MockRollupConfig newConfig = new MockRollupConfig();
         newConfig.transferOwnership(address(hub));
 
         uint256 newChainId = 40001;
 
         // Register both an existing chain and a new one
-        registry.registerChainDirectly(CHAIN_ID_1, address(systemConfig1), address(adapter), "Existing");
+        registry.registerChainDirectly(CHAIN_ID_1, address(rollupConfig1), address(adapter), "Existing");
         registry.registerChainDirectly(newChainId, address(newConfig), address(adapter), "New");
 
         uint256[] memory chainIds = new uint256[](2);
@@ -620,7 +627,7 @@ contract SharedSequencerHubTest is Test {
         MockChainRegistry registry = new MockChainRegistry();
 
         // First connect a chain
-        MockSystemConfig newConfig = new MockSystemConfig();
+        MockRollupConfig newConfig = new MockRollupConfig();
         newConfig.transferOwnership(address(hub));
 
         uint256 newChainId = 50001;
@@ -661,7 +668,7 @@ contract SharedSequencerHubTest is Test {
     function test_RotateNetwork_WithRegistryConnectedChains() public {
         // Setup chain registry and connect a new chain
         MockChainRegistry registry = new MockChainRegistry();
-        MockSystemConfig newConfig = new MockSystemConfig();
+        MockRollupConfig newConfig = new MockRollupConfig();
         newConfig.transferOwnership(address(hub));
 
         uint256 newChainId = 60001;
@@ -684,7 +691,6 @@ contract SharedSequencerHubTest is Test {
 
         // Verify all chains including the registry-connected one were updated
         // Epoch 1 selects proposer2 (index 1 % 3 = 1)
-        assertEq(newConfig.batcherHash(), bytes32(uint256(uint160(proposer2))));
-        assertEq(newConfig.unsafeBlockSigner(), proposer2);
+        assertEq(newConfig.sequencer(), proposer2);
     }
 }

@@ -2,11 +2,11 @@
 
 ## Overview
 
-This document defines the acceptance policy for the **Adapter Registry**, a Kleros Curate list that governs which OP Stack adapters can be used by SharedSequencerHub to rotate sequencers.
+This document defines the acceptance policy for the **Adapter Registry**, a Kleros Curate list that governs which rollup adapters can be used by SharedSequencerHub to rotate sequencers.
 
 ## Purpose
 
-The adapter pattern enables KSSN to survive OP Stack hardforks without requiring changes to the core SharedSequencerHub contract. Adapters are hot-swapped via governance updates, which are permissionless but gated by:
+The adapter pattern enables KSSN to survive rollup upgrades without requiring changes to the core SharedSequencerHub contract. Adapters are hot-swapped via governance updates, which are permissionless but gated by:
 
 1. **Kleros Arbitration**: Adapter must be registered in the Adapter Registry
 2. **Ratchet Versioning**: New adapter version must be strictly greater than current
@@ -33,8 +33,8 @@ An adapter MUST meet ALL of the following criteria to be accepted:
 
 ### 1. Implementation Requirements
 
-- [ ] Implements `IOpStackAdapter` interface correctly
-- [ ] `rotateSequencer()` function updates both batcher hash and unsafe block signer
+- [ ] Implements `ISequencerAdapter` interface correctly
+- [ ] `rotateSequencer()` function applies the rollup-specific rotation payload correctly
 - [ ] `version()` returns a unique, monotonically increasing version number
 - [ ] `adapterInfo()` returns accurate name and description
 
@@ -49,9 +49,9 @@ An adapter MUST meet ALL of the following criteria to be accepted:
 
 ### 3. Compatibility Requirements
 
-- [ ] Compatible with current OP Stack SystemConfig interface
-- [ ] Uses correct batcher hash format (V0: `bytes32(uint256(uint160(address)))`)
-- [ ] Atomic rotation - both values updated or transaction reverts
+- [ ] Compatible with the target rollup configuration contract
+- [ ] Handles payload encoding/decoding without ambiguity
+- [ ] Atomic rotation - all required fields updated or transaction reverts
 
 ### 4. Code Quality Requirements
 
@@ -83,7 +83,7 @@ An adapter MUST be rejected if ANY of the following apply:
 A registered adapter MAY be removed if:
 
 - A critical vulnerability is discovered
-- The adapter becomes incompatible with OP Stack updates
+- The adapter becomes incompatible with rollup updates
 - A superior adapter is available and community consensus supports removal
 
 **Note**: The manager accepts adapters with `ClearingRequested` status to allow emergency upgrades while removal is being processed.

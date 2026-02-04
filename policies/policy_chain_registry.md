@@ -17,12 +17,12 @@ This policy governs the acceptance and removal of L2 chains from the Kleros Shar
 
 A chain registration SHOULD be accepted if ALL of the following criteria are met:
 
-### 1. Valid OP Stack Deployment
+### 1. Valid Rollup Deployment
 
-The submitted chain MUST be a valid OP Stack deployment:
+The submitted chain MUST be a valid rollup deployment:
 
-- **SystemConfig Contract**: The `systemConfig` address must be a valid OP Stack SystemConfig contract on L1
-- **Ownership**: The SystemConfig must be capable of having its ownership transferred to the KSSN Hub
+- **Rollup Config Contract**: The `rollupConfig` address must be a valid configuration contract on L1
+- **Ownership**: The rollup configuration contract must be capable of having its ownership transferred to the KSSN Hub
 - **Accessibility**: The L1 contracts must be publicly accessible and verifiable
 - **Chain ID Uniqueness**: The `chainId` must not already be registered or connected to KSSN
 
@@ -48,7 +48,7 @@ The registration metadata MUST be accurate:
 
 - **Chain Name**: Unique, non-misleading name that doesn't infringe trademarks
 - **Metadata URI**: Valid IPFS URI containing accurate chain information
-- **Adapter**: Valid OP Stack adapter that is registered in the Adapter Registry
+- **Adapter**: Valid rollup adapter that is registered in the Adapter Registry
 
 ## Rejection Criteria
 
@@ -56,7 +56,7 @@ A chain registration SHOULD be rejected if ANY of the following are true:
 
 ### 1. Technical Invalidity
 
-- SystemConfig address is not a valid OP Stack contract
+- Rollup config address is not a valid rollup contract
 - Chain ID conflicts with existing registrations
 - Adapter is not registered in the Adapter Registry
 - L1 contracts are not accessible or verifiable
@@ -118,7 +118,7 @@ Challengers MUST provide:
 3. **Explanation**: Clear explanation of why the evidence shows non-compliance
 
 Examples of valid evidence:
-- Block explorer links showing SystemConfig is not valid OP Stack
+- Block explorer links showing rollup config is not a valid contract
 - Etherscan verification failure for submitted addresses
 - Public records showing trademark infringement
 - Historical data showing team's previous fraudulent projects
@@ -199,17 +199,17 @@ The following parameters can be adjusted by governance:
 
 **Submission:**
 - Chain ID: 42001
-- SystemConfig: 0x1234... (verified OP Stack contract)
+- RollupConfig: 0x1234... (verified rollup contract)
 - Name: "Optimism Fork Alpha"
 - Metadata: Valid IPFS URI with team info, infrastructure docs
 
 **Assessment**: ACCEPT - All criteria met
 
-### Example 2: Invalid SystemConfig
+### Example 2: Invalid RollupConfig
 
 **Submission:**
 - Chain ID: 42002
-- SystemConfig: 0x5678... (regular EOA, not a contract)
+- RollupConfig: 0x5678... (regular EOA, not a contract)
 - Name: "My L2 Chain"
 
 **Challenge Evidence**: Etherscan shows address is EOA, not contract

@@ -5,7 +5,7 @@ pragma solidity ^0.8.20;
  * @title ISharedSequencerHub
  * @notice Interface for the Kleros Shared Sequencer Hub - the central nervous system of KSSN.
  * @dev The Hub is the single source of truth for the "Active Proposer" and manages
- *      atomic rotation of all connected OP Stack chains in a single transaction.
+ *      atomic rotation of all connected rollup chains in a single transaction.
  *
  *      Key responsibilities:
  *      - Maintain the list of connected Spoke chains (ChainConfig)
@@ -18,13 +18,13 @@ interface ISharedSequencerHub {
 
     /**
      * @notice Configuration for a connected Spoke chain.
-     * @param systemConfig The OP Stack SystemConfig contract address
-     * @param adapter The adapter contract for version compatibility
+     * @param rollupConfig The rollup configuration contract address
+     * @param adapter The adapter contract for rollup-specific compatibility
      * @param isActive Whether this chain is currently active in the network
      * @param chainId The L2 chain ID for identification
      */
     struct ChainConfig {
-        address systemConfig;
+        address rollupConfig;
         address adapter;
         bool isActive;
         uint256 chainId;
@@ -47,8 +47,8 @@ interface ISharedSequencerHub {
     /// @notice Thrown when adapter address is invalid
     error InvalidAdapter();
 
-    /// @notice Thrown when SystemConfig address is invalid
-    error InvalidSystemConfig();
+    /// @notice Thrown when rollup configuration address is invalid
+    error InvalidRollupConfig();
 
     /// @notice Thrown when no active chains exist
     error NoActiveChains();
@@ -75,7 +75,7 @@ interface ISharedSequencerHub {
     /// @notice Emitted when a new chain is connected to the hub
     event ChainConnected(
         uint256 indexed chainId,
-        address indexed systemConfig,
+        address indexed rollupConfig,
         address adapter
     );
 
@@ -186,7 +186,7 @@ interface ISharedSequencerHub {
     /**
      * @notice Rotates the proposer for the entire network atomically.
      * @dev Called by the outgoing proposer (Active Handoff) or by anyone after grace period.
-     *      Updates the SystemConfig of every connected Spoke chain in a single loop.
+     *      Updates the rollup configuration of every connected Spoke chain in a single loop.
      *      Costs ~60k gas per chain. Max ~450 chains per block at 30M gas limit.
      */
     function rotateNetwork() external;
@@ -203,12 +203,12 @@ interface ISharedSequencerHub {
     /**
      * @notice Connects a new Spoke chain to the hub.
      * @param _chainId The L2 chain ID
-     * @param _systemConfig The SystemConfig contract address
+     * @param _rollupConfig The rollup configuration contract address
      * @param _adapter The adapter contract address
      */
     function connectChain(
         uint256 _chainId,
-        address _systemConfig,
+        address _rollupConfig,
         address _adapter
     ) external;
 

@@ -6,7 +6,7 @@ import {ChainRegistry} from "../src/ChainRegistry.sol";
 import {IChainRegistry} from "../src/interfaces/IChainRegistry.sol";
 import {IArbitrator} from "../src/interfaces/IArbitrator.sol";
 import {MockArbitrator} from "./mocks/MockArbitrator.sol";
-import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
+import {OpStackAdapterV1} from "../src/poc/opstack/OpStackAdapterV1.sol";
 
 /**
  * @title ChainRegistryTest
@@ -29,8 +29,8 @@ contract ChainRegistryTest is Test {
     // ============ Test Data ============
     uint256 public constant CHAIN_ID_1 = 42001;
     uint256 public constant CHAIN_ID_2 = 42002;
-    address public systemConfig1 = address(0x100);
-    address public systemConfig2 = address(0x101);
+    address public rollupConfig1 = address(0x100);
+    address public rollupConfig2 = address(0x101);
 
     uint256 public constant REQUIRED_DEPOSIT = 0.1 ether;
     uint256 public constant CHALLENGE_PERIOD = 5 minutes;
@@ -80,7 +80,7 @@ contract ChainRegistryTest is Test {
         vm.prank(submitter1);
         bytes32 itemId = registry.addChain{value: totalDeposit}(
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Test Chain",
             "ipfs://metadata"
@@ -90,7 +90,7 @@ contract ChainRegistryTest is Test {
         IChainRegistry.Item memory item = registry.getItem(itemId);
         assertEq(uint256(item.status), uint256(IChainRegistry.Status.RegistrationRequested));
         assertEq(item.data.chainId, CHAIN_ID_1);
-        assertEq(item.data.systemConfig, systemConfig1);
+        assertEq(item.data.rollupConfig, rollupConfig1);
         assertEq(item.data.adapter, address(adapter));
         assertEq(item.submitter, submitter1);
     }
@@ -100,16 +100,16 @@ contract ChainRegistryTest is Test {
         vm.expectRevert(IChainRegistry.InvalidChainId.selector);
         registry.addChain{value: 1 ether}(
             0, // Invalid
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Test Chain",
             ""
         );
     }
 
-    function test_AddChain_RevertsInvalidSystemConfig() public {
+    function test_AddChain_RevertsInvalidRollupConfig() public {
         vm.prank(submitter1);
-        vm.expectRevert(IChainRegistry.InvalidSystemConfig.selector);
+        vm.expectRevert(IChainRegistry.InvalidRollupConfig.selector);
         registry.addChain{value: 1 ether}(
             CHAIN_ID_1,
             address(0), // Invalid
@@ -124,7 +124,7 @@ contract ChainRegistryTest is Test {
         vm.expectRevert(IChainRegistry.InvalidAdapter.selector);
         registry.addChain{value: 1 ether}(
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(0), // Invalid
             "Test Chain",
             ""
@@ -137,7 +137,7 @@ contract ChainRegistryTest is Test {
         vm.prank(submitter1);
         registry.addChain{value: totalDeposit}(
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Test Chain",
             ""
@@ -147,7 +147,7 @@ contract ChainRegistryTest is Test {
         vm.expectRevert(IChainRegistry.ItemAlreadyExists.selector);
         registry.addChain{value: totalDeposit}(
             CHAIN_ID_1, // Same chain ID
-            systemConfig2,
+            rollupConfig2,
             address(adapter),
             "Another Chain",
             ""
@@ -159,7 +159,7 @@ contract ChainRegistryTest is Test {
         vm.expectRevert(IChainRegistry.InsufficientDeposit.selector);
         registry.addChain{value: 0.01 ether}( // Too low
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Test Chain",
             ""
@@ -174,7 +174,7 @@ contract ChainRegistryTest is Test {
         vm.prank(submitter1);
         bytes32 itemId = registry.addChain{value: totalDeposit}(
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Test Chain",
             ""
@@ -199,7 +199,7 @@ contract ChainRegistryTest is Test {
         vm.prank(submitter1);
         bytes32 itemId = registry.addChain{value: totalDeposit}(
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Test Chain",
             ""
@@ -218,7 +218,7 @@ contract ChainRegistryTest is Test {
         vm.prank(submitter1);
         bytes32 itemId = registry.addChain{value: totalDeposit}(
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Test Chain",
             ""
@@ -249,7 +249,7 @@ contract ChainRegistryTest is Test {
         vm.prank(submitter1);
         bytes32 itemId = registry.addChain{value: totalDeposit}(
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Test Chain",
             ""
@@ -274,7 +274,7 @@ contract ChainRegistryTest is Test {
         vm.prank(submitter1);
         bytes32 itemId = registry.addChain{value: totalDeposit}(
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Test Chain",
             ""
@@ -302,7 +302,7 @@ contract ChainRegistryTest is Test {
         vm.prank(submitter1);
         bytes32 itemId = registry.addChain{value: totalDeposit}(
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Test Chain",
             ""
@@ -342,7 +342,7 @@ contract ChainRegistryTest is Test {
         vm.prank(submitter1);
         bytes32 itemId = registry.addChain{value: totalDeposit}(
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Test Chain",
             ""
@@ -390,14 +390,14 @@ contract ChainRegistryTest is Test {
         vm.startPrank(submitter1);
         registry.addChain{value: totalDeposit}(
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Chain 1",
             ""
         );
         registry.addChain{value: totalDeposit}(
             CHAIN_ID_2,
-            systemConfig2,
+            rollupConfig2,
             address(adapter),
             "Chain 2",
             ""
@@ -420,7 +420,7 @@ contract ChainRegistryTest is Test {
         vm.prank(submitter1);
         registry.addChain{value: totalDeposit}(
             CHAIN_ID_1,
-            systemConfig1,
+            rollupConfig1,
             address(adapter),
             "Test Chain",
             ""
@@ -428,7 +428,7 @@ contract ChainRegistryTest is Test {
 
         IChainRegistry.Item memory item = registry.getItemByChainId(CHAIN_ID_1);
         assertEq(item.data.chainId, CHAIN_ID_1);
-        assertEq(item.data.systemConfig, systemConfig1);
+        assertEq(item.data.rollupConfig, rollupConfig1);
     }
 
     // ============ Governance Tests ============

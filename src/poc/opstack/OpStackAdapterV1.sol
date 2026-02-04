@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IOpStackAdapter} from "../interfaces/IOpStackAdapter.sol";
-import {ISystemConfig} from "../interfaces/ISystemConfig.sol";
+import {ISequencerAdapter} from "../../interfaces/ISequencerAdapter.sol";
+import {ISystemConfig} from "./interfaces/ISystemConfig.sol";
 
 /**
  * @title OpStackAdapterV1
@@ -15,17 +15,35 @@ import {ISystemConfig} from "../interfaces/ISystemConfig.sol";
  *      SharedSequencerHub, which must be the owner of the target
  *      SystemConfig contract(s).
  *
- *      KSSN Architecture:
- *      - Hub owns all connected SystemConfig contracts
- *      - Hub delegatecalls to adapter for version-specific logic
- *      - Adapter code executes in Hub's context (msg.sender = Hub)
- *
- *      Version: 1.0.0 (1000000)
+ *      Version: 1.0.0 (1_000_000)
  */
-contract OpStackAdapterV1 is IOpStackAdapter {
+contract OpStackAdapterV1 is ISequencerAdapter {
+    // ============ Errors ============
+
+    /// @notice Thrown when sequencer rotation fails
+    error RotationFailed(string reason);
+
+    /// @notice Thrown when SystemConfig address is invalid
+    error InvalidSystemConfig();
+
+    /// @notice Thrown when batcher or signer address is zero
+    error InvalidOperatorKeys();
+
+    /// @notice Thrown when rotation payload is malformed
+    error InvalidRotationPayload();
+
+    // ============ Events ============
+
+    /// @notice Emitted when a sequencer rotation is executed
+    event SequencerRotated(
+        address indexed systemConfig,
+        address indexed batcher,
+        address indexed unsafeSigner
+    );
+
     // ============ Constants ============
 
-    /// @notice Adapter version (1.0.0 = 1000000)
+    /// @notice Adapter version (1.0.0 = 1_000_000)
     uint256 public constant VERSION = 1_000_000;
 
     /// @notice Adapter name
@@ -37,14 +55,14 @@ contract OpStackAdapterV1 is IOpStackAdapter {
     // ============ View Functions ============
 
     /**
-     * @inheritdoc IOpStackAdapter
+     * @inheritdoc ISequencerAdapter
      */
     function version() external pure virtual override returns (uint256) {
         return VERSION;
     }
 
     /**
-     * @inheritdoc IOpStackAdapter
+     * @inheritdoc ISequencerAdapter
      */
     function adapterInfo() external pure virtual override returns (string memory name, string memory description) {
         return (NAME, DESCRIPTION);
@@ -53,34 +71,29 @@ contract OpStackAdapterV1 is IOpStackAdapter {
     // ============ Mutating Functions ============
 
     /**
-     * @inheritdoc IOpStackAdapter
-     * @dev Rotates the sequencer by updating both batcher hash and unsafe block signer.
-     *      IMPORTANT: This function is designed to be called via delegatecall.
-     *      The caller (SharedSequencerHub) must be the owner of SystemConfig.
-     *
-     *      Rotation is atomic - both values are updated in a single transaction.
-     *      If either call fails, the entire transaction reverts.
+     * @inheritdoc ISequencerAdapter
+     * @dev Rotation payload is abi-encoded as (address batcher, address unsafeSigner).
      */
-    function rotateSequencer(
-        address _systemConfig,
-        address _batcher,
-        address _unsafeSigner
-    ) external override {
-        // Validate inputs
+    function rotateSequencer(address _systemConfig, bytes calldata _rotationData) external override {
         if (_systemConfig == address(0)) {
             revert InvalidSystemConfig();
         }
-        if (_batcher == address(0) || _unsafeSigner == address(0)) {
+
+        if (_rotationData.length != 64) {
+            revert InvalidRotationPayload();
+        }
+
+        (address batcher, address unsafeSigner) = abi.decode(_rotationData, (address, address));
+
+        if (batcher == address(0) || unsafeSigner == address(0)) {
             revert InvalidOperatorKeys();
         }
 
         ISystemConfig config = ISystemConfig(_systemConfig);
 
         // Convert batcher address to V0 hash format
-        bytes32 batcherHash = bytes32(uint256(uint160(_batcher)));
+        bytes32 batcherHash = bytes32(uint256(uint160(batcher)));
 
-        // Rotate batcher hash
-        // Note: This will revert if caller is not SystemConfig owner
         try config.setBatcherHash(batcherHash) {
             // Success
         } catch Error(string memory reason) {
@@ -89,8 +102,7 @@ contract OpStackAdapterV1 is IOpStackAdapter {
             revert RotationFailed("setBatcherHash failed");
         }
 
-        // Rotate unsafe block signer
-        try config.setUnsafeBlockSigner(_unsafeSigner) {
+        try config.setUnsafeBlockSigner(unsafeSigner) {
             // Success
         } catch Error(string memory reason) {
             revert RotationFailed(reason);
@@ -98,6 +110,6 @@ contract OpStackAdapterV1 is IOpStackAdapter {
             revert RotationFailed("setUnsafeBlockSigner failed");
         }
 
-        emit SequencerRotated(_systemConfig, _batcher, _unsafeSigner);
+        emit SequencerRotated(_systemConfig, batcher, unsafeSigner);
     }
 }

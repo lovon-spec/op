@@ -7,7 +7,7 @@ import {ProposerRegistry} from "../src/ProposerRegistry.sol";
 import {ChainRegistry} from "../src/ChainRegistry.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
 import {MockArbitrator} from "../test/mocks/MockArbitrator.sol";
-import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
+import {OpStackAdapterV1} from "../src/poc/opstack/OpStackAdapterV1.sol";
 import {IArbitrator} from "../src/interfaces/IArbitrator.sol";
 import {TestConstants} from "./TestConstants.sol";
 

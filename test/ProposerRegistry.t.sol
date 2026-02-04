@@ -313,6 +313,25 @@ contract ProposerRegistryTest is Test {
         registry.updateOperationalKey(address(0));
     }
 
+    function test_SetAdapterData_Success() public {
+        bytes memory data = abi.encode(proposer1);
+        address adapter = address(0x1234);
+
+        vm.prank(proposer1);
+        registry.register{value: MIN_STAKE}(proposer1);
+
+        vm.prank(proposer1);
+        registry.setAdapterData(adapter, data);
+
+        assertEq(registry.getAdapterData(proposer1, adapter), data);
+    }
+
+    function test_SetAdapterData_RevertsIfNotRegistered() public {
+        vm.prank(proposer1);
+        vm.expectRevert(abi.encodeWithSelector(IProposerRegistry.ProposerNotRegistered.selector, proposer1));
+        registry.setAdapterData(address(0x1234), abi.encode(proposer1));
+    }
+
     // ============ Liveness Tests ============
 
     function test_ReportLiveness_UpdatesScore() public {

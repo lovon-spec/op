@@ -3,18 +3,18 @@ pragma solidity ^0.8.20;
 
 import {ISharedSequencerHub} from "./interfaces/ISharedSequencerHub.sol";
 import {IProposerRegistry} from "./interfaces/IProposerRegistry.sol";
-import {IOpStackAdapter} from "./interfaces/IOpStackAdapter.sol";
+import {ISequencerAdapter} from "./interfaces/ISequencerAdapter.sol";
 import {IChainRegistry} from "./interfaces/IChainRegistry.sol";
 
 /**
  * @title SharedSequencerHub
  * @notice The central nervous system of the Kleros Shared Sequencer Network (KSSN).
  * @dev This contract is the single source of truth for the "Active Proposer" and manages
- *      atomic rotation of all connected OP Stack chains in a single transaction.
+ *      atomic rotation of all connected rollup chains in a single transaction.
  *
  *      Architecture: Hub-and-Spoke
  *      - Hub (this contract): Manages proposer selection and atomic rotation
- *      - Spokes: Connected OP Stack SystemConfig contracts updated via adapters
+ *      - Spokes: Connected rollup configuration contracts updated via adapters
  *
  *      Key features:
  *      - Atomic Multichain Rotation: Updates all chains in a single transaction
@@ -88,7 +88,7 @@ contract SharedSequencerHub is ISharedSequencerHub {
     /// @notice Emitted when a chain is connected from the registry
     event ChainConnectedFromRegistry(
         uint256 indexed chainId,
-        address indexed systemConfig,
+        address indexed rollupConfig,
         address adapter
     );
 
@@ -316,13 +316,15 @@ contract SharedSequencerHub is ISharedSequencerHub {
             if (!chain.isActive) continue;
 
             // Use delegatecall to execute adapter code in Hub's context
-            // This allows the Hub (as SystemConfig owner) to update chains
+            // This allows the Hub (as rollup config owner) to update chains
             // while supporting versioned adapter logic
+            bytes memory rotationData = IProposerRegistry(proposerRegistry)
+                .getAdapterData(_nextProposer, chain.adapter);
+
             bytes memory callData = abi.encodeWithSelector(
-                IOpStackAdapter.rotateSequencer.selector,
-                chain.systemConfig,
-                _nextProposer, // Batcher
-                _nextProposer  // Unsafe Signer
+                ISequencerAdapter.rotateSequencer.selector,
+                chain.rollupConfig,
+                rotationData
             );
 
             (bool success, ) = chain.adapter.delegatecall(callData);
@@ -345,17 +347,17 @@ contract SharedSequencerHub is ISharedSequencerHub {
     /// @inheritdoc ISharedSequencerHub
     function connectChain(
         uint256 _chainId,
-        address _systemConfig,
+        address _rollupConfig,
         address _adapter
     ) external override onlyGovernance {
         // Validate inputs
-        if (_systemConfig == address(0)) revert InvalidSystemConfig();
+        if (_rollupConfig == address(0)) revert InvalidRollupConfig();
         if (_adapter == address(0)) revert InvalidAdapter();
         if (_chainIdToIndex[_chainId] != 0) revert ChainAlreadyExists(_chainId);
 
         // Add chain configuration
         _connectedChains.push(ChainConfig({
-            systemConfig: _systemConfig,
+            rollupConfig: _rollupConfig,
             adapter: _adapter,
             isActive: true,
             chainId: _chainId
@@ -364,7 +366,7 @@ contract SharedSequencerHub is ISharedSequencerHub {
         // Store index (1-indexed)
         _chainIdToIndex[_chainId] = _connectedChains.length;
 
-        emit ChainConnected(_chainId, _systemConfig, _adapter);
+        emit ChainConnected(_chainId, _rollupConfig, _adapter);
     }
 
     /// @inheritdoc ISharedSequencerHub
@@ -425,7 +427,6 @@ contract SharedSequencerHub is ISharedSequencerHub {
         emit ProposerRegistryUpdated(oldRegistry, _newRegistry);
     }
 
-    /// @inheritdoc ISharedSequencerHub
     /// @inheritdoc ISharedSequencerHub
     function setEpochDuration(uint256 _newDuration) external override onlyGovernance {
         uint256 oldDuration = epochDuration;
@@ -510,7 +511,7 @@ contract SharedSequencerHub is ISharedSequencerHub {
      * @param _chainId The chain ID to connect (must be registered in ChainRegistry)
      */
     function connectChainFromRegistry(uint256 _chainId) external onlyGovernance {
-        if (chainRegistry == address(0)) revert InvalidSystemConfig();
+        if (chainRegistry == address(0)) revert InvalidRollupConfig();
         if (_chainIdToIndex[_chainId] != 0) revert ChainAlreadyExists(_chainId);
 
         // Get chain data from registry
@@ -521,12 +522,12 @@ contract SharedSequencerHub is ISharedSequencerHub {
         IChainRegistry.ChainData memory data = item.data;
 
         // Validate the data
-        if (data.systemConfig == address(0)) revert InvalidSystemConfig();
+        if (data.rollupConfig == address(0)) revert InvalidRollupConfig();
         if (data.adapter == address(0)) revert InvalidAdapter();
 
         // Add chain configuration
         _connectedChains.push(ChainConfig({
-            systemConfig: data.systemConfig,
+            rollupConfig: data.rollupConfig,
             adapter: data.adapter,
             isActive: true,
             chainId: _chainId
@@ -535,8 +536,8 @@ contract SharedSequencerHub is ISharedSequencerHub {
         // Store index (1-indexed)
         _chainIdToIndex[_chainId] = _connectedChains.length;
 
-        emit ChainConnectedFromRegistry(_chainId, data.systemConfig, data.adapter);
-        emit ChainConnected(_chainId, data.systemConfig, data.adapter);
+        emit ChainConnectedFromRegistry(_chainId, data.rollupConfig, data.adapter);
+        emit ChainConnected(_chainId, data.rollupConfig, data.adapter);
     }
 
     /**
@@ -545,7 +546,7 @@ contract SharedSequencerHub is ISharedSequencerHub {
      * @param _chainIds Array of chain IDs to connect
      */
     function batchConnectChainsFromRegistry(uint256[] calldata _chainIds) external onlyGovernance {
-        if (chainRegistry == address(0)) revert InvalidSystemConfig();
+        if (chainRegistry == address(0)) revert InvalidRollupConfig();
 
         IChainRegistry registry = IChainRegistry(chainRegistry);
 
@@ -562,11 +563,11 @@ contract SharedSequencerHub is ISharedSequencerHub {
             IChainRegistry.ChainData memory data = item.data;
 
             // Skip if invalid data
-            if (data.systemConfig == address(0) || data.adapter == address(0)) continue;
+            if (data.rollupConfig == address(0) || data.adapter == address(0)) continue;
 
             // Add chain configuration
             _connectedChains.push(ChainConfig({
-                systemConfig: data.systemConfig,
+                rollupConfig: data.rollupConfig,
                 adapter: data.adapter,
                 isActive: true,
                 chainId: chainId
@@ -574,8 +575,8 @@ contract SharedSequencerHub is ISharedSequencerHub {
 
             _chainIdToIndex[chainId] = _connectedChains.length;
 
-            emit ChainConnectedFromRegistry(chainId, data.systemConfig, data.adapter);
-            emit ChainConnected(chainId, data.systemConfig, data.adapter);
+            emit ChainConnectedFromRegistry(chainId, data.rollupConfig, data.adapter);
+            emit ChainConnected(chainId, data.rollupConfig, data.adapter);
         }
     }
 
@@ -585,7 +586,7 @@ contract SharedSequencerHub is ISharedSequencerHub {
      * @param _chainId The chain ID to sync
      */
     function syncChainFromRegistry(uint256 _chainId) external onlyGovernance {
-        if (chainRegistry == address(0)) revert InvalidSystemConfig();
+        if (chainRegistry == address(0)) revert InvalidRollupConfig();
 
         uint256 index = _chainIdToIndex[_chainId];
         if (index == 0) revert ChainNotFound(_chainId);

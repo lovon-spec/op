@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {OpStackAdapterV1} from "../../src/adapters/OpStackAdapterV1.sol";
+import {OpStackAdapterV1} from "../../src/poc/opstack/OpStackAdapterV1.sol";
 
 /**
  * @title MockAdapterV2

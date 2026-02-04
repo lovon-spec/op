@@ -1,10 +1,10 @@
 # Kleros Shared Sequencer Network (KSSN)
 
-A shared sequencing layer for multiple OP Stack chains, with Kleros arbitration supporting neutral, SLA-focused governance.
+A shared sequencing layer for multiple rollups, with Kleros arbitration supporting neutral, SLA-focused governance. The core framework is rollup-agnostic, with an OP Stack PoC living in `src/poc/opstack` and `script/opstack`.
 
 ## What is KSSN?
 
-The **Kleros Shared Sequencer Network** centralizes sequencing authority for multiple OP Stack chains into a single "Hub" contract while preserving their individual sovereignty through opt-in rotation and SLA-based governance. The active sequencer can use Rollup Boost and Flashblocks to keep the mempool private while enabling market-driven MEV without enshrining proposer-builder separation.
+The **Kleros Shared Sequencer Network** centralizes sequencing authority for multiple rollups (including OP Stack) into a single "Hub" contract while preserving their individual sovereignty through opt-in rotation and SLA-based governance. The active sequencer can use Rollup Boost and Flashblocks to keep the mempool private while enabling market-driven MEV without enshrining proposer-builder separation.
 
 **Key Features:**
 - **Hub-and-Spoke Architecture**: Single Hub manages multiple L2 chains atomically
@@ -21,7 +21,7 @@ KSSN governance is anchored by formal policies enforced through Kleros arbitrati
 | Policy | Description |
 |--------|-------------|
 | [Sequencer Policy](./policies/policy_sequencer_registry.md) | Service-level requirements for sequencer operators |
-| [Adapter Policy](./policies/policy_adapter_registry.md) | Acceptance criteria for OP Stack adapters |
+| [Adapter Policy](./policies/policy_adapter_registry.md) | Acceptance criteria for rollup adapters |
 | [Chain Registry Policy](./policies/policy_chain_registry.md) | Acceptance/removal criteria for KSSN chain integration |
 
 These policies define:
@@ -129,7 +129,7 @@ The KSSN uses a Hub-and-Spoke model anchored by a ProposerRegistry:
   │         │          │          │                                           │
   │         ▼          ▼          ▼                                           │
   │  ┌────────────┐ ┌────────────┐ ┌────────────┐                              │
-  │  │ SystemConfig│ │ SystemConfig│ │ SystemConfig│ (Spokes)                   │
+  │  │ RollupConfig│ │ RollupConfig│ │ RollupConfig│ (Spokes)                    │
   │  │ Chain A     │ │ Chain B     │ │ Chain C     │                              │
   │  └────────────┘ └────────────┘ └────────────┘                              │
   │                                                                            │
@@ -141,7 +141,7 @@ The KSSN uses a Hub-and-Spoke model anchored by a ProposerRegistry:
   │   rotateNetwork() updates ALL chains in a single transaction:              │
   │                                                                            │
   │   for (chain in connectedChains) {                                         │
-  │       adapter.rotateSequencer(chain.systemConfig, nextProposer, nextProposer) │
+  │       adapter.rotateSequencer(chain.rollupConfig, rotationData)               │
   │   }                                                                        │
   │                                                                            │
   │   Gas: ~60k per chain | Max: ~450 chains per block at 30M gas limit         │
@@ -159,8 +159,8 @@ KSSN provides a decentralized onboarding path for new chains via the **ChainRegi
   Chain Team                    ChainRegistry              SharedSequencerHub
   ───────────                   ─────────────              ──────────────────
        │                              │                            │
-       │  1. Deploy OP Stack chain    │                            │
-       │     with SystemConfig        │                            │
+       │  1. Deploy rollup chain      │                            │
+       │     with config contract     │                            │
        │                              │                            │
        │  2. Register via             │                            │
        │     ChainDeploymentKit       │                            │
@@ -197,7 +197,7 @@ Unlike the operator registries (which use PermanentGTCR with permanent stakes), 
 - Community can challenge invalid applications during challenge period
 
 **Registration Requirements:**
-- Valid OP Stack deployment with accessible SystemConfig
+- Valid rollup deployment with accessible configuration contract (e.g., OP Stack SystemConfig)
 - Chain team has operational capability
 - No duplicate chain IDs
 - Alignment with KSSN sequencer SLA requirements
@@ -214,7 +214,7 @@ Separating stake ownership from operational keys improves security:
 
 **Recommendation**: Use different addresses for Staker vs Operational Keys. If hot keys are compromised, the governance stake remains safe.
 
-### Proposer Key Model
+### Proposer Key Model (OP Stack PoC)
 
 **CRITICAL**: OP Stack sequencer authority requires TWO keys rotated together:
 
@@ -339,7 +339,7 @@ The grace period ensures the outgoing operator can flush all pending batches to 
 4. **Hub Connects Chains**: After challenge period, governance connects chains to Hub
 5. **Epoch Operation**: Current proposer produces blocks for `epochDuration` on ALL chains
 6. **Active Handoff**: At epoch end, proposer flushes batches and calls `rotateNetwork()` (grace period protects this)
-7. **Atomic Update**: Hub updates BOTH `batcherHash` AND `unsafeBlockSigner` on ALL connected chains
+7. **Atomic Update**: Hub updates each rollup configuration contract on ALL connected chains
 8. **Proposer Agent Activation**: New proposer's agent detects the change and immediately starts sequencing
 9. **SLA Enforcement**: Misbehaving proposers challenged via Kleros
 
@@ -366,8 +366,8 @@ The central nervous system of KSSN - manages atomic rotation across all connecte
 ```solidity
 // Chain configuration for each connected Spoke
 struct ChainConfig {
-    address systemConfig;   // The OP Stack SystemConfig contract
-    address adapter;        // Adapter for version compatibility
+    address rollupConfig;   // The rollup configuration contract
+    address adapter;        // Adapter for rollup compatibility
     bool isActive;          // Whether this chain is active
     uint256 chainId;        // The L2 chain ID
 }
@@ -384,7 +384,7 @@ function rotateNetwork() external;        // Atomic rotation of ALL chains
 function rotateShard(uint256 shardIndex); // For scaling beyond 400 chains
 
 // Chain management (governance only)
-function connectChain(uint256 chainId, address systemConfig, address adapter);
+function connectChain(uint256 chainId, address rollupConfig, address adapter);
 function disconnectChain(uint256 chainId);
 function updateChainConfig(uint256 chainId, address adapter);
 
@@ -448,8 +448,8 @@ GeneralizedTCR for decentralized chain onboarding to KSSN:
 // Chain registration data
 struct ChainData {
     uint256 chainId;         // L2 chain ID
-    address systemConfig;    // SystemConfig contract on L1
-    address adapter;         // OP Stack adapter
+    address rollupConfig;    // Rollup configuration contract on L1
+    address adapter;         // Rollup adapter
     string name;             // Human-readable name
     string metadataURI;      // IPFS URI with additional info
 }
@@ -465,7 +465,7 @@ enum Status {
 // Registration functions
 function addChain(
     uint256 chainId,
-    address systemConfig,
+    address rollupConfig,
     address adapter,
     string name,
     string metadataURI
@@ -498,7 +498,7 @@ enum RegistrationStatus {
 // Simple registration
 function registerChain(
     uint256 chainId,
-    address systemConfig,
+    address rollupConfig,
     string name,
     string metadataURI
 ) external payable returns (bytes32 itemId);
@@ -506,7 +506,7 @@ function registerChain(
 // With custom adapter
 function registerChainWithAdapter(
     uint256 chainId,
-    address systemConfig,
+    address rollupConfig,
     address adapter,
     string name,
     string metadataURI
@@ -522,40 +522,27 @@ function getChallengeTimeRemaining(uint256 chainId) external view returns (uint2
 function getRequiredDeposit() external view returns (uint256);
 ```
 
-### IOpStackAdapter
+### ISequencerAdapter
 
-Hot-swappable adapter interface for OP Stack compatibility:
+Hot-swappable adapter interface for rollup compatibility:
 
 ```solidity
-interface IOpStackAdapter {
+interface ISequencerAdapter {
     // Version for ratchet upgrade logic (v1.0.0 = 1_000_000)
     function version() external view returns (uint256);
     function adapterInfo() external view returns (string memory name, string memory description);
 
-    // Called via delegatecall from manager
+    // Called via delegatecall from the hub
     function rotateSequencer(
-        address _systemConfig,
-        address _batcher,
-        address _unsafeSigner
+        address _rollupConfig,
+        bytes calldata _rotationData
     ) external;
 }
 ```
 
-### ISystemConfig
+### OP Stack PoC Interfaces
 
-OP Stack SystemConfig interface with both authorization functions:
-
-```solidity
-interface ISystemConfig {
-    function setBatcherHash(bytes32 _batcherHash) external;
-    function batcherHash() external view returns (bytes32);
-
-    function setUnsafeBlockSigner(address _unsafeBlockSigner) external;
-    function unsafeBlockSigner() external view returns (address);
-
-    function owner() external view returns (address);
-}
-```
+The OP Stack integration lives in `src/poc/opstack`, including `OpStackAdapterV1` and the `ISystemConfig` interface for Superchain-compliant SystemConfig contracts.
 
 ## Deployment
 
@@ -588,7 +575,7 @@ source .env.sepolia
 # forge script script/DeployRemote.s.sol:DeployRemote --rpc-url $RPC_URL --broadcast --verify
 ```
 
-3. **Transfer SystemConfig Ownership**
+3. **Transfer rollup config ownership (e.g., SystemConfig for OP Stack)**
 
 ```bash
 cast send $SYSTEM_CONFIG "transferOwnership(address)" $HUB_ADDRESS \
@@ -692,7 +679,7 @@ Web3Function.onRun(async (context) => {
 - Adapters must be registered in the **Adapter Registry** (Kleros Curate)
 - **Ratchet versioning** prevents rollback attacks (newVersion > currentVersion)
 - **Hydra defense** allows multiple submissions to defeat griefing
-- Adapters should only interact with SystemConfig, no arbitrary storage writes
+- Adapters should only interact with the rollup configuration contract (e.g., SystemConfig), no arbitrary storage writes
 
 ### Atomic Rotation
 - Both `batcherHash` and `unsafeBlockSigner` are set in the same transaction
@@ -730,15 +717,17 @@ op/
 │   ├── ProposerRegistry.sol          # KSSN DPoS proposer management
 │   ├── ChainRegistry.sol             # GeneralizedTCR for chain onboarding
 │   ├── ChainDeploymentKit.sol        # Helper for chain integration
-│   ├── adapters/
-│   │   └── OpStackAdapterV1.sol      # OP Stack Bedrock/Ecotone adapter
+│   ├── poc/
+│   │   └── opstack/
+│   │       ├── OpStackAdapterV1.sol  # OP Stack Bedrock/Ecotone adapter (PoC)
+│   │       └── interfaces/
+│   │           └── ISystemConfig.sol # OP Stack SystemConfig interface (PoC)
 │   └── interfaces/
 │       ├── ISharedSequencerHub.sol   # KSSN Hub interface
 │       ├── IProposerRegistry.sol     # KSSN Proposer registry interface
 │       ├── IChainRegistry.sol        # Chain registry interface
-│       ├── IOpStackAdapter.sol       # Adapter interface
+│       ├── ISequencerAdapter.sol     # Adapter interface
 │       ├── ICurate.sol               # Kleros Curate interface
-│       ├── ISystemConfig.sol         # OP Stack interface (batcher + signer)
 │       ├── IArbitrator.sol           # ERC-792 arbitration
 │       └── IArbitrable.sol           # ERC-792 arbitrable
 ├── test/
@@ -748,6 +737,8 @@ op/
 │   └── mocks/
 │       ├── MockProposerRegistry.sol  # KSSN proposer registry mock
 │       ├── MockChainRegistry.sol     # Chain registry mock
+│       ├── MockRollupConfig.sol      # Generic rollup config mock
+│       ├── MockSequencerAdapter.sol  # Generic adapter mock
 │       ├── MockSystemConfig.sol      # Test SystemConfig mock
 │       └── MockAdapterV2.sol         # V2 adapter stub (for testing)
 ├── script/
@@ -780,10 +771,10 @@ op/
 ### KSSN Architecture
 
 **Q: What is KSSN?**
-A: The Kleros Shared Sequencer Network - a Hub-and-Spoke architecture that manages sequencing for multiple OP Stack chains from a single Hub contract. It enables atomic cross-chain composability while preserving chain sovereignty through opt-in rotation and SLA governance.
+A: The Kleros Shared Sequencer Network - a Hub-and-Spoke architecture that manages sequencing for multiple rollups from a single Hub contract. It enables atomic cross-chain composability while preserving chain sovereignty through opt-in rotation and SLA governance.
 
 **Q: How does atomic multichain rotation work?**
-A: When `rotateNetwork()` is called, the Hub iterates through ALL connected chains and updates each SystemConfig in a single transaction. This costs ~60k gas per chain, supporting ~450 chains per block at 30M gas limit. For larger networks, use `rotateShard()`.
+A: When `rotateNetwork()` is called, the Hub iterates through ALL connected chains and updates each rollup configuration contract in a single transaction. This costs ~60k gas per chain, supporting ~450 chains per block at 30M gas limit. For larger networks, use `rotateShard()`.
 
 **Q: How is sequencing policy enforced?**
 A: KSSN enforces SLA expectations (liveness, authorized production, and clean handoffs) through the Sequencer Policy and Kleros arbitration.
@@ -795,16 +786,16 @@ A: Yes. The active sequencer can use Rollup Boost and Flashblocks to keep the me
 A: There are two paths:
 
 **Decentralized Path (ChainRegistry):**
-1) Deploy your OP Stack chain with SystemConfig
+1) Deploy your rollup chain with a configuration contract (e.g., SystemConfig)
 2) Use ChainDeploymentKit to register in ChainRegistry (GeneralizedTCR)
 3) Wait for challenge period (community can dispute invalid chains)
 4) After approval, Hub governance calls `connectChainFromRegistry(chainId)`
 5) Your chain is now part of the shared sequencer network
 
 **Direct Path (Governance Only):**
-1) Deploy your OP Stack chain with SystemConfig
-2) Transfer SystemConfig ownership to the Hub
-3) Call `hub.connectChain(chainId, systemConfig, adapter)` as governance
+1) Deploy your rollup chain with a configuration contract (e.g., SystemConfig)
+2) Transfer rollup config ownership to the Hub
+3) Call `hub.connectChain(chainId, rollupConfig, adapter)` as governance
 4) Your chain is now part of the shared sequencer network
 
 **Q: What happens if a chain's rotation fails?**
@@ -832,7 +823,7 @@ A: After grace period expires (Phase 3), anyone can force rotation via `rotateNe
 A: Single `rotateNetwork()` supports ~450 chains at 30M gas limit. For larger networks, use `rotateShard(shardIndex)` which splits rotation into chunks of 200 chains.
 
 **Q: What is a "Superchain Aligned" design?**
-A: KSSN is designed to eventually replace the Superchain Council multisig. Instead of a committee updating SystemConfigs, the SharedSequencerHub does it algorithmically based on Kleros governance decisions.
+A: KSSN is designed to eventually replace the Superchain Council multisig. Instead of a committee updating rollup configuration contracts, the SharedSequencerHub does it algorithmically based on Kleros governance decisions.
 
 ## Contributing
 

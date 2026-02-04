@@ -7,12 +7,6 @@ pragma solidity ^0.8.20;
  * @dev The SystemConfig contract manages the configuration of an OP Stack chain,
  *      including both the batcher hash (for batch posting authorization) and the
  *      unsafe block signer (for P2P block signing authorization).
- *
- * IMPORTANT: OP Stack sequencer authority requires BOTH:
- *   1. batcherHash - Authorizes which address can post batches to L1
- *   2. unsafeBlockSigner - Authorizes which key signs unsafe blocks on P2P layer
- *
- * Both must be rotated together to avoid a "half-rotated" state.
  */
 interface ISystemConfig {
     /**
