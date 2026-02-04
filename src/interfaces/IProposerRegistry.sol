@@ -132,6 +132,13 @@ interface IProposerRegistry {
         address indexed newKey
     );
 
+    /// @notice Emitted when adapter data is updated for a proposer
+    event AdapterDataUpdated(
+        address indexed proposer,
+        address indexed adapter,
+        bytes data
+    );
+
     /// @notice Emitted when liveness is reported
     event LivenessReported(
         address indexed proposer,
@@ -201,6 +208,14 @@ interface IProposerRegistry {
     function getDelegation(address _delegator, address _proposer) external view returns (uint256);
 
     /**
+     * @notice Returns adapter-specific rotation data for a proposer.
+     * @param _proposer The proposer address
+     * @param _adapter The adapter address
+     * @return The adapter-specific payload
+     */
+    function getAdapterData(address _proposer, address _adapter) external view returns (bytes memory);
+
+    /**
      * @notice Checks if the active set needs rebalancing.
      * @return True if rebalancing would change the set
      */
@@ -266,6 +281,13 @@ interface IProposerRegistry {
      * @param _newKey The new operational key
      */
     function updateOperationalKey(address _newKey) external;
+
+    /**
+     * @notice Sets adapter-specific rotation data for the caller.
+     * @param _adapter The adapter address
+     * @param _data Adapter-specific payload for rotation
+     */
+    function setAdapterData(address _adapter, bytes calldata _data) external;
 
     // ============ Delegation Functions ============
 

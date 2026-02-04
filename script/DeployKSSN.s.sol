@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Script, console2} from "forge-std/Script.sol";
 import {SharedSequencerHub} from "../src/SharedSequencerHub.sol";
 import {ProposerRegistry} from "../src/ProposerRegistry.sol";
-import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
+import {OpStackAdapterV1} from "../src/poc/opstack/OpStackAdapterV1.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
 import {TestConstants} from "./TestConstants.sol";
 
@@ -113,18 +113,21 @@ contract DeployKSSN is Script {
         // Proposer 1
         vm.startBroadcast(TestConstants.PROPOSER_1_KEY);
         proposerRegistry.register{value: MIN_PROPOSER_STAKE}(TestConstants.PROPOSER_1);
+        proposerRegistry.setAdapterData(address(adapter), abi.encode(TestConstants.PROPOSER_1, TestConstants.PROPOSER_1));
         vm.stopBroadcast();
         console2.log("Proposer 1 registered:", TestConstants.PROPOSER_1);
 
         // Proposer 2
         vm.startBroadcast(TestConstants.PROPOSER_2_KEY);
         proposerRegistry.register{value: MIN_PROPOSER_STAKE}(TestConstants.PROPOSER_2);
+        proposerRegistry.setAdapterData(address(adapter), abi.encode(TestConstants.PROPOSER_2, TestConstants.PROPOSER_2));
         vm.stopBroadcast();
         console2.log("Proposer 2 registered:", TestConstants.PROPOSER_2);
 
         // Proposer 3
         vm.startBroadcast(TestConstants.PROPOSER_3_KEY);
         proposerRegistry.register{value: MIN_PROPOSER_STAKE}(TestConstants.PROPOSER_3);
+        proposerRegistry.setAdapterData(address(adapter), abi.encode(TestConstants.PROPOSER_3, TestConstants.PROPOSER_3));
         vm.stopBroadcast();
         console2.log("Proposer 3 registered:", TestConstants.PROPOSER_3);
 

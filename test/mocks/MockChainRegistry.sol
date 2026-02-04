@@ -61,13 +61,13 @@ contract MockChainRegistry is IChainRegistry {
 
     function addChain(
         uint256 _chainId,
-        address _systemConfig,
+        address _rollupConfig,
         address _adapter,
         string calldata _name,
         string calldata _metadataURI
     ) external payable override returns (bytes32 itemId) {
         if (_chainId == 0) revert InvalidChainId();
-        if (_systemConfig == address(0)) revert InvalidSystemConfig();
+        if (_rollupConfig == address(0)) revert InvalidRollupConfig();
         if (_adapter == address(0)) revert InvalidAdapter();
 
         itemId = getItemId(_chainId);
@@ -78,7 +78,7 @@ contract MockChainRegistry is IChainRegistry {
         item.status = Status.RegistrationRequested;
         item.data = ChainData({
             chainId: _chainId,
-            systemConfig: _systemConfig,
+            rollupConfig: _rollupConfig,
             adapter: _adapter,
             name: _name,
             metadataURI: _metadataURI
@@ -95,7 +95,7 @@ contract MockChainRegistry is IChainRegistry {
             itemId,
             _chainId,
             msg.sender,
-            _systemConfig,
+            _rollupConfig,
             _adapter,
             _name
         );
@@ -168,7 +168,7 @@ contract MockChainRegistry is IChainRegistry {
      */
     function registerChainDirectly(
         uint256 _chainId,
-        address _systemConfig,
+        address _rollupConfig,
         address _adapter,
         string calldata _name
     ) external returns (bytes32 itemId) {
@@ -178,7 +178,7 @@ contract MockChainRegistry is IChainRegistry {
         item.status = Status.Registered;
         item.data = ChainData({
             chainId: _chainId,
-            systemConfig: _systemConfig,
+            rollupConfig: _rollupConfig,
             adapter: _adapter,
             name: _name,
             metadataURI: ""

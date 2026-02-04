@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {ISystemConfig} from "../../src/interfaces/ISystemConfig.sol";
+import {ISystemConfig} from "../../src/poc/opstack/interfaces/ISystemConfig.sol";
 
 /**
  * @title MockSystemConfig

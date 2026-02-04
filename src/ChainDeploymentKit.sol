@@ -2,18 +2,17 @@
 pragma solidity ^0.8.20;
 
 import {IChainRegistry} from "./interfaces/IChainRegistry.sol";
-import {IOpStackAdapter} from "./interfaces/IOpStackAdapter.sol";
 
 /**
  * @title ChainDeploymentKit
- * @notice A helper contract for OP Stack chains to easily integrate into KSSN.
+ * @notice A helper contract for rollup chains to easily integrate into KSSN.
  * @dev This contract provides a simplified interface for chain teams to:
  *      1. Register their chain in the ChainRegistry
  *      2. Track their registration status
  *      3. Manage their chain's configuration
  *
  *      Usage Flow:
- *      1. Chain team deploys their OP Stack chain with SystemConfig
+ *      1. Chain team deploys their rollup with a configuration contract
  *      2. Chain team deploys ChainDeploymentKit (or uses shared instance)
  *      3. Chain team calls registerChain() with required deposit
  *      4. Community can challenge during the challenge period
@@ -74,7 +73,7 @@ contract ChainDeploymentKit {
         uint256 indexed chainId,
         bytes32 indexed itemId,
         address indexed registrant,
-        address systemConfig
+        address rollupConfig
     );
 
     /// @notice Emitted when registration is finalized
@@ -93,14 +92,14 @@ contract ChainDeploymentKit {
     error RegistrationNotPending();
     error InsufficientDeposit();
     error InvalidChainId();
-    error InvalidSystemConfig();
+    error InvalidRollupConfig();
 
     // ============ Constructor ============
 
     /**
      * @notice Initializes the ChainDeploymentKit.
      * @param _chainRegistry The ChainRegistry contract address
-     * @param _defaultAdapter The default OP Stack adapter for new chains
+     * @param _defaultAdapter The default rollup adapter for new chains
      * @param _governor The governor address
      */
     constructor(
@@ -124,20 +123,20 @@ contract ChainDeploymentKit {
      *      Anyone can challenge the registration during this time.
      *
      * @param _chainId The L2 chain ID
-     * @param _systemConfig The SystemConfig contract address on L1
+     * @param _rollupConfig The rollup configuration contract address
      * @param _name Human-readable chain name
      * @param _metadataURI IPFS URI with additional chain info
      * @return itemId The registry item ID
      */
     function registerChain(
         uint256 _chainId,
-        address _systemConfig,
+        address _rollupConfig,
         string calldata _name,
         string calldata _metadataURI
     ) external payable returns (bytes32 itemId) {
         return registerChainWithAdapter(
             _chainId,
-            _systemConfig,
+            _rollupConfig,
             defaultAdapter,
             _name,
             _metadataURI
@@ -147,21 +146,21 @@ contract ChainDeploymentKit {
     /**
      * @notice Registers a new chain with a custom adapter.
      * @param _chainId The L2 chain ID
-     * @param _systemConfig The SystemConfig contract address on L1
-     * @param _adapter The OP Stack adapter address
+     * @param _rollupConfig The rollup configuration contract address
+     * @param _adapter The rollup adapter address
      * @param _name Human-readable chain name
      * @param _metadataURI IPFS URI with additional chain info
      * @return itemId The registry item ID
      */
     function registerChainWithAdapter(
         uint256 _chainId,
-        address _systemConfig,
+        address _rollupConfig,
         address _adapter,
         string calldata _name,
         string calldata _metadataURI
     ) public payable returns (bytes32 itemId) {
         if (_chainId == 0) revert InvalidChainId();
-        if (_systemConfig == address(0)) revert InvalidSystemConfig();
+        if (_rollupConfig == address(0)) revert InvalidRollupConfig();
 
         // Check not already registered
         if (registrations[_chainId].status != RegistrationStatus.NotStarted) {
@@ -171,7 +170,7 @@ contract ChainDeploymentKit {
         // Submit to chain registry
         itemId = chainRegistry.addChain{value: msg.value}(
             _chainId,
-            _systemConfig,
+            _rollupConfig,
             _adapter,
             _name,
             _metadataURI
@@ -185,7 +184,7 @@ contract ChainDeploymentKit {
             status: RegistrationStatus.Pending
         });
 
-        emit RegistrationStarted(_chainId, itemId, msg.sender, _systemConfig);
+        emit RegistrationStarted(_chainId, itemId, msg.sender, _rollupConfig);
 
         return itemId;
     }

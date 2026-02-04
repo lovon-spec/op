@@ -6,7 +6,7 @@ import {SharedSequencerHub} from "../src/SharedSequencerHub.sol";
 import {MockSystemConfig} from "../test/mocks/MockSystemConfig.sol";
 import {MockChainRegistry} from "../test/mocks/MockChainRegistry.sol";
 import {MockProposerRegistry} from "../test/mocks/MockProposerRegistry.sol";
-import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
+import {OpStackAdapterV1} from "../src/poc/opstack/OpStackAdapterV1.sol";
 import {TestConstants} from "./TestConstants.sol";
 
 /**
@@ -153,9 +153,21 @@ contract IntegrationTest is Script {
         console2.log("  Registered Proposer 3:", TestConstants.PROPOSER_3);
         console2.log("    Stake: 32 ETH");
 
-        console2.log("  Total active proposers:", uint256(3));
-
         vm.stopBroadcast();
+
+        vm.startBroadcast(TestConstants.PROPOSER_1_KEY);
+        proposerRegistry.setAdapterData(address(adapter), abi.encode(TestConstants.PROPOSER_1, TestConstants.PROPOSER_1));
+        vm.stopBroadcast();
+
+        vm.startBroadcast(TestConstants.PROPOSER_2_KEY);
+        proposerRegistry.setAdapterData(address(adapter), abi.encode(TestConstants.PROPOSER_2, TestConstants.PROPOSER_2));
+        vm.stopBroadcast();
+
+        vm.startBroadcast(TestConstants.PROPOSER_3_KEY);
+        proposerRegistry.setAdapterData(address(adapter), abi.encode(TestConstants.PROPOSER_3, TestConstants.PROPOSER_3));
+        vm.stopBroadcast();
+
+        console2.log("  Total active proposers:", uint256(3));
         console2.log("");
     }
 

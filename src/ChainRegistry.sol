@@ -37,7 +37,7 @@ interface IEvidence {
  *      - Focused on chain metadata validation, not ongoing operational compliance
  *
  *      Integration Flow:
- *      1. Chain team deploys their OP Stack chain with SystemConfig
+ *      1. Chain team deploys their rollup with a configuration contract
  *      2. Chain team calls addChain() with deposit and metadata
  *      3. After challenge period (or winning dispute), chain is Registered
  *      4. Hub governance reviews and calls SharedSequencerHub.connectChain()
@@ -188,13 +188,13 @@ contract ChainRegistry is IChainRegistry, IArbitrable, IEvidence {
     /// @inheritdoc IChainRegistry
     function addChain(
         uint256 _chainId,
-        address _systemConfig,
+        address _rollupConfig,
         address _adapter,
         string calldata _name,
         string calldata _metadataURI
     ) external payable override returns (bytes32 itemId) {
         if (_chainId == 0) revert InvalidChainId();
-        if (_systemConfig == address(0)) revert InvalidSystemConfig();
+        if (_rollupConfig == address(0)) revert InvalidRollupConfig();
         if (_adapter == address(0)) revert InvalidAdapter();
 
         itemId = getItemId(_chainId);
@@ -213,7 +213,7 @@ contract ChainRegistry is IChainRegistry, IArbitrable, IEvidence {
         item.status = Status.RegistrationRequested;
         item.data = ChainData({
             chainId: _chainId,
-            systemConfig: _systemConfig,
+            rollupConfig: _rollupConfig,
             adapter: _adapter,
             name: _name,
             metadataURI: _metadataURI
@@ -234,7 +234,7 @@ contract ChainRegistry is IChainRegistry, IArbitrable, IEvidence {
             itemId,
             _chainId,
             msg.sender,
-            _systemConfig,
+            _rollupConfig,
             _adapter,
             _name
         );

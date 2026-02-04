@@ -71,6 +71,9 @@ contract ProposerRegistry is IProposerRegistry {
     /// @notice Total delegated amount per delegator
     mapping(address => uint256) internal _totalDelegated;
 
+    /// @notice Adapter-specific rotation data for proposers
+    mapping(address => mapping(address => bytes)) internal _adapterData;
+
     // ============ Modifiers ============
 
     modifier onlyGovernance() {
@@ -147,6 +150,11 @@ contract ProposerRegistry is IProposerRegistry {
     /// @inheritdoc IProposerRegistry
     function getDelegation(address _delegator, address _proposer) external view override returns (uint256) {
         return _delegations[_delegator][_proposer];
+    }
+
+    /// @inheritdoc IProposerRegistry
+    function getAdapterData(address _proposer, address _adapter) external view override returns (bytes memory) {
+        return _adapterData[_proposer][_adapter];
     }
 
     /// @inheritdoc IProposerRegistry
@@ -323,6 +331,17 @@ contract ProposerRegistry is IProposerRegistry {
         info.operationalKey = _newKey;
 
         emit OperationalKeyUpdated(msg.sender, oldKey, _newKey);
+    }
+
+    /// @inheritdoc IProposerRegistry
+    function setAdapterData(address _adapter, bytes calldata _data) external override {
+        ProposerInfo storage info = _proposers[msg.sender];
+        if (!info.isRegistered) revert ProposerNotRegistered(msg.sender);
+        if (_adapter == address(0)) revert Unauthorized();
+
+        _adapterData[msg.sender][_adapter] = _data;
+
+        emit AdapterDataUpdated(msg.sender, _adapter, _data);
     }
 
     // ============ Delegation Functions ============

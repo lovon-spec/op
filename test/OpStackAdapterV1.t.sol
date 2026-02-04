@@ -2,8 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {OpStackAdapterV1} from "../src/adapters/OpStackAdapterV1.sol";
-import {IOpStackAdapter} from "../src/interfaces/IOpStackAdapter.sol";
+import {OpStackAdapterV1} from "../src/poc/opstack/OpStackAdapterV1.sol";
 import {MockSystemConfig} from "./mocks/MockSystemConfig.sol";
 
 /**
@@ -83,7 +82,7 @@ contract OpStackAdapterV1Test is Test {
         emit SequencerRotated(address(systemConfig), batcher, unsafeSigner);
 
         // This contract is the owner of SystemConfig
-        adapter.rotateSequencer(address(systemConfig), batcher, unsafeSigner);
+        adapter.rotateSequencer(address(systemConfig), abi.encode(batcher, unsafeSigner));
 
         // Verify SystemConfig was updated
         bytes32 expectedBatcherHash = bytes32(uint256(uint160(batcher)));
@@ -93,7 +92,7 @@ contract OpStackAdapterV1Test is Test {
 
     function test_RotateSequencer_BatcherHashFormat() public {
         // Test that batcher address is correctly converted to V0 hash format
-        adapter.rotateSequencer(address(systemConfig), batcher, unsafeSigner);
+        adapter.rotateSequencer(address(systemConfig), abi.encode(batcher, unsafeSigner));
 
         bytes32 batcherHash = systemConfig.batcherHash();
 
@@ -113,13 +112,13 @@ contract OpStackAdapterV1Test is Test {
         address signer2 = address(0x4444);
 
         // First rotation
-        adapter.rotateSequencer(address(systemConfig), batcher1, signer1);
+        adapter.rotateSequencer(address(systemConfig), abi.encode(batcher1, signer1));
 
         assertEq(systemConfig.batcherHash(), bytes32(uint256(uint160(batcher1))));
         assertEq(systemConfig.unsafeBlockSigner(), signer1);
 
         // Second rotation
-        adapter.rotateSequencer(address(systemConfig), batcher2, signer2);
+        adapter.rotateSequencer(address(systemConfig), abi.encode(batcher2, signer2));
 
         assertEq(systemConfig.batcherHash(), bytes32(uint256(uint160(batcher2))));
         assertEq(systemConfig.unsafeBlockSigner(), signer2);
@@ -129,7 +128,7 @@ contract OpStackAdapterV1Test is Test {
         // Test case where batcher and signer are the same address
         address combined = address(0x5555);
 
-        adapter.rotateSequencer(address(systemConfig), combined, combined);
+        adapter.rotateSequencer(address(systemConfig), abi.encode(combined, combined));
 
         assertEq(systemConfig.batcherHash(), bytes32(uint256(uint160(combined))));
         assertEq(systemConfig.unsafeBlockSigner(), combined);
@@ -138,23 +137,23 @@ contract OpStackAdapterV1Test is Test {
     // ============ Error Tests ============
 
     function test_RotateSequencer_RevertZeroSystemConfig() public {
-        vm.expectRevert(IOpStackAdapter.InvalidSystemConfig.selector);
-        adapter.rotateSequencer(address(0), batcher, unsafeSigner);
+        vm.expectRevert(OpStackAdapterV1.InvalidSystemConfig.selector);
+        adapter.rotateSequencer(address(0), abi.encode(batcher, unsafeSigner));
     }
 
     function test_RotateSequencer_RevertZeroBatcher() public {
-        vm.expectRevert(IOpStackAdapter.InvalidOperatorKeys.selector);
-        adapter.rotateSequencer(address(systemConfig), address(0), unsafeSigner);
+        vm.expectRevert(OpStackAdapterV1.InvalidOperatorKeys.selector);
+        adapter.rotateSequencer(address(systemConfig), abi.encode(address(0), unsafeSigner));
     }
 
     function test_RotateSequencer_RevertZeroSigner() public {
-        vm.expectRevert(IOpStackAdapter.InvalidOperatorKeys.selector);
-        adapter.rotateSequencer(address(systemConfig), batcher, address(0));
+        vm.expectRevert(OpStackAdapterV1.InvalidOperatorKeys.selector);
+        adapter.rotateSequencer(address(systemConfig), abi.encode(batcher, address(0)));
     }
 
     function test_RotateSequencer_RevertBothZero() public {
-        vm.expectRevert(IOpStackAdapter.InvalidOperatorKeys.selector);
-        adapter.rotateSequencer(address(systemConfig), address(0), address(0));
+        vm.expectRevert(OpStackAdapterV1.InvalidOperatorKeys.selector);
+        adapter.rotateSequencer(address(systemConfig), abi.encode(address(0), address(0)));
     }
 
     function test_RotateSequencer_RevertNotOwner() public {
@@ -166,11 +165,11 @@ contract OpStackAdapterV1Test is Test {
         // The adapter wraps the error in RotationFailed
         vm.expectRevert(
             abi.encodeWithSelector(
-                IOpStackAdapter.RotationFailed.selector,
+                OpStackAdapterV1.RotationFailed.selector,
                 "SystemConfig: caller is not the owner"
             )
         );
-        adapter.rotateSequencer(address(otherConfig), batcher, unsafeSigner);
+        adapter.rotateSequencer(address(otherConfig), abi.encode(batcher, unsafeSigner));
     }
 
     function test_RotateSequencer_RevertInvalidSystemConfig() public {
@@ -178,7 +177,7 @@ contract OpStackAdapterV1Test is Test {
         address invalidConfig = address(new InvalidSystemConfig());
 
         vm.expectRevert();
-        adapter.rotateSequencer(invalidConfig, batcher, unsafeSigner);
+        adapter.rotateSequencer(invalidConfig, abi.encode(batcher, unsafeSigner));
     }
 
     // ============ Delegatecall Context Tests ============
@@ -209,7 +208,7 @@ contract OpStackAdapterV1Test is Test {
         vm.assume(_batcher != address(0));
         vm.assume(_signer != address(0));
 
-        adapter.rotateSequencer(address(systemConfig), _batcher, _signer);
+        adapter.rotateSequencer(address(systemConfig), abi.encode(_batcher, _signer));
 
         assertEq(systemConfig.batcherHash(), bytes32(uint256(uint160(_batcher))));
         assertEq(systemConfig.unsafeBlockSigner(), _signer);
@@ -218,7 +217,7 @@ contract OpStackAdapterV1Test is Test {
     function testFuzz_BatcherHashConversion(address _batcher) public {
         vm.assume(_batcher != address(0));
 
-        adapter.rotateSequencer(address(systemConfig), _batcher, unsafeSigner);
+        adapter.rotateSequencer(address(systemConfig), abi.encode(_batcher, unsafeSigner));
 
         bytes32 batcherHash = systemConfig.batcherHash();
         address extracted = address(uint160(uint256(batcherHash)));
@@ -228,7 +227,7 @@ contract OpStackAdapterV1Test is Test {
 
     // ============ Interface Compliance Tests ============
 
-    function test_ImplementsIOpStackAdapter() public view {
+    function test_ImplementsISequencerAdapter() public view {
         // Verify the adapter implements all required interface functions
         adapter.version();
         adapter.adapterInfo();
@@ -261,10 +260,9 @@ contract DelegatecallCaller {
         address _unsafeSigner
     ) external {
         bytes memory data = abi.encodeWithSelector(
-            IOpStackAdapter.rotateSequencer.selector,
+            OpStackAdapterV1.rotateSequencer.selector,
             _systemConfig,
-            _batcher,
-            _unsafeSigner
+            abi.encode(_batcher, _unsafeSigner)
         );
 
         (bool success, bytes memory returnData) = adapter.delegatecall(data);
