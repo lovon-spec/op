@@ -1,18 +1,25 @@
 # ISOCHRON (Interconnected Sequencing Oracle for Cross-chain Harmonized Reliability, Ordering & Network)
 
-A shared sequencing layer for multiple rollups, with arbitrator-based governance (Kleros is the default arbitrator today) supporting neutral, SLA-focused enforcement. The core framework is rollup-agnostic, with an OP Stack PoC living in `src/poc/opstack` and `script/opstack`.
+A **universal shared sequencing layer** for multiple rollups, enabling atomic cross-chain execution, unified liquidity, fair MEV distribution, and sovereign chain policies. The core framework is rollup-agnostic with chain-specific adapters (OP Stack, Arbitrum Nitro, Generic EVM), arbitrator-based governance (Kleros default), and a Rust relay for time-sensitive bundle processing.
 
 ## What is ISOCHRON?
 
-**ISOCHRON** centralizes sequencing authority for multiple rollups (including OP Stack) into a single "Hub" contract while preserving their individual sovereignty through opt-in rotation and SLA-based governance. The active sequencer can use Rollup Boost and Flashblocks to keep the mempool private while enabling market-driven MEV without enshrining proposer-builder separation.
+**ISOCHRON** is a universal shared sequencing layer that manages sequencing authority for multiple rollups from a single Hub contract. It enables **atomic cross-chain bundle execution**, **sovereign per-chain policies**, and **fair MEV distribution** while preserving individual chain sovereignty through opt-in rotation and SLA-based governance.
+
+The default block building mechanism is **MEV-Boost + Flashblocks** (private mempool), but the architecture is fully pluggable - chains can opt into public mempool, encrypted mempool, or custom building mechanisms via the BuilderRegistry.
 
 **Key Features:**
 - **Hub-and-Spoke Architecture**: Single Hub manages multiple L2 chains atomically
-- **Atomic Multichain Rotation**: Updates ALL connected chains in a single transaction
-- **Sequencer SLA Registry**: Proposer registry focuses on liveness and rotation readiness
+- **Atomic Cross-Chain Bundles**: Multi-chain transaction bundles with commitment, verification, and escrow
+- **Universal Chain Support**: Adapters for OP Stack, Arbitrum Nitro, and any EVM rollup (Cosmos planned)
+- **Sovereign Policies**: Each chain declares its own sequencing rules (ordering, MEV, timing, inclusion)
+- **Deterministic Fraud Proofs**: On-chain verifiable proofs for timing, ordering, inclusion, and bundle violations
+- **Kleros Arbitration**: Subjective criteria (MEV violations) escalated to decentralized arbitration
+- **Pluggable Builders**: MEV-Boost + Flashblocks default, upgradeable to any building mechanism
+- **Rust Relay**: Time-sensitive bundle processing, validation, and policy enforcement
 - **Active Handoff Protocol**: Zero-downtime proposer transitions with grace period
-- **Superchain Aligned**: Designed to replace Superchain Council multisig with algorithmic governance
 - **Scalable**: Sharded rotation supports thousands of chains
+- **No Trusted Setups**: No hardcoded TEEs (chains may opt-in via sovereign policy)
 
 ## Policies & SLAs
 
@@ -95,6 +102,28 @@ cast block-number --rpc-url http://localhost:9545
 ./start.sh clean    # Clean all data and start fresh
 ```
 
+### Development
+
+```bash
+# Install Foundry
+curl -L https://foundry.paradigm.xyz | bash && foundryup
+
+# Install dependencies
+forge install
+
+# Build contracts
+forge build
+
+# Run all Solidity tests (228 tests across 9 test suites)
+forge test
+
+# Build Rust relay
+cd relay && cargo build --release
+
+# Run Rust relay tests
+cd relay && cargo test
+```
+
 ## Architecture
 
 ### ISOCHRON Hub-and-Spoke Architecture
@@ -148,6 +177,220 @@ The ISOCHRON uses a Hub-and-Spoke model anchored by a ProposerRegistry:
   │                                                                            │
   └────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Universal Sequencing Layer
+
+The universal sequencing layer extends the Hub-and-Spoke model with four interconnected subsystems:
+
+```
+                    UNIVERSAL SEQUENCING LAYER
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                         SharedSequencerHub                          │
+  │                       (Central Nervous System)                      │
+  │                                                                     │
+  │  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐  ┌──────────┐ │
+  │  │   Bundle     │  │   Builder   │  │   Policy     │  │  Fraud   │ │
+  │  │  Registry    │  │  Registry   │  │  Manager     │  │  Proof   │ │
+  │  │             │  │             │  │              │  │ Verifier │ │
+  │  │ Cross-chain │  │ MEV-Boost + │  │ Per-chain    │  │ Timing,  │ │
+  │  │ atomic      │  │ Flashblocks │  │ sovereign    │  │ ordering │ │
+  │  │ bundles     │  │ (default)   │  │ sequencing   │  │ inclusion│ │
+  │  │             │  │             │  │ rules        │  │ proofs   │ │
+  │  └──────┬──────┘  └──────┬──────┘  └──────┬───────┘  └────┬─────┘ │
+  └─────────┼───────────────┼───────────────┼──────────────┼──────────┘
+            │               │               │              │
+            ▼               ▼               ▼              ▼
+  ┌──────────────┐  ┌──────────────┐ ┌───────────┐  ┌──────────────┐
+  │ BundleEscrow │  │ Flashblocks  │ │ Default   │  │   Kleros     │
+  │              │  │ Builder      │ │ Policy    │  │  Arbitrator  │
+  │ Tips, bonds, │  │              │ │           │  │              │
+  │ slashing     │  │ Private      │ │ FCFS +    │  │  Subjective  │
+  │ (10% reward) │  │ mempool      │ │ sandwich  │  │  dispute     │
+  │              │  │ relay        │ │ protection│  │  resolution  │
+  └──────────────┘  └──────────────┘ └───────────┘  └──────────────┘
+```
+
+**Subsystem Overview:**
+
+| Subsystem | Contract | Purpose |
+|-----------|----------|---------|
+| **Bundle Execution** | `CrossChainBundleRegistry` + `BundleEscrow` | Atomic multi-chain bundles with tip/bond escrow |
+| **Block Building** | `BuilderRegistry` + `FlashblocksBuilder` | Pluggable builders, MEV-Boost + Flashblocks default |
+| **Sovereign Policy** | `SovereignPolicyManager` + `DefaultPolicy` | Per-chain sequencing rules and compliance checking |
+| **Fraud Proofs** | `FraudProofVerifier` | Deterministic proofs + Kleros escalation |
+
+### Cross-Chain Bundle Execution
+
+Bundles allow atomic multi-chain transaction execution with economic guarantees:
+
+```
+                CROSS-CHAIN BUNDLE LIFECYCLE
+
+  Sequencer                BundleRegistry            BundleEscrow
+  ─────────                ──────────────            ────────────
+       │                        │                         │
+       │  1. commitBundle()     │                         │
+       │   + tip + chain IDs    │                         │
+       │───────────────────────▶│  2. Escrow tip          │
+       │                        │────────────────────────▶│
+       │                        │                         │
+       │  3. Execute on each chain (off-chain)            │
+       │                        │                         │
+       │  4. confirmChainExecution(chainId, proof)        │
+       │───────────────────────▶│                         │
+       │  (repeated per chain)  │                         │
+       │                        │                         │
+       │  5. completeBundle()   │                         │
+       │───────────────────────▶│  6. Release tip         │
+       │                        │────────────────────────▶│
+       │                        │                         │
+       │              FAILURE PATH:                       │
+       │                        │                         │
+       │  reportViolation()     │  slashBond()            │
+       │───────────────────────▶│────────────────────────▶│
+       │                        │  10% → reporter         │
+       │                        │  90% → governance       │
+```
+
+**Bundle States:** `Committed` → `Executed` (success) or `Expired` / `Violated` / `Cancelled` (failure)
+
+**Economic Guarantees:**
+- Sequencer posts a bond when committing bundles
+- Tips incentivize timely execution
+- Violated bundles trigger bond slashing (10% to reporter, 90% to governance treasury)
+- Expired bundles can be cleaned up by anyone after deadline
+
+### Sovereign Policy System
+
+Each chain can declare its own sequencing rules that the active sequencer must obey:
+
+```
+                    SOVEREIGN POLICY ARCHITECTURE
+
+  Chain A Governance          SovereignPolicyManager        FraudProofVerifier
+  ──────────────────          ──────────────────────        ──────────────────
+       │                              │                            │
+       │  declarePolicy(              │                            │
+       │    chainId: A,               │                            │
+       │    ordering: FCFS,           │                            │
+       │    enforcement: Hybrid,      │                            │
+       │    maxBlockTime: 2s,         │                            │
+       │    sandwichProtection: true  │                            │
+       │  )                           │                            │
+       │─────────────────────────────▶│                            │
+       │                              │                            │
+       │                              │  Policy violation?         │
+       │                              │───────────────────────────▶│
+       │                              │                            │
+       │                              │  Deterministic proof       │
+       │                              │  (timing, ordering,        │
+       │                              │   inclusion) OR            │
+       │                              │  Kleros escalation         │
+       │                              │  (MEV, subjective)         │
+```
+
+**Ordering Strategies:**
+| Strategy | Description |
+|----------|-------------|
+| `SequencerDiscretion` | Sequencer chooses order freely (default) |
+| `PriorityFee` | Order by gas price / priority fee |
+| `FCFS` | First-come-first-served ordering |
+| `Custom` | Delegated to a custom policy contract |
+
+**Enforcement Types:**
+| Type | Description |
+|------|-------------|
+| `Deterministic` | On-chain verifiable (timing, ordering, inclusion) |
+| `Subjective` | Requires human judgment (MEV violations) → Kleros |
+| `Hybrid` | Deterministic where possible, Kleros for the rest |
+
+### Fraud Proof Verification
+
+The FraudProofVerifier supports two verification paths:
+
+**Deterministic Proofs** (trustless, on-chain):
+| Proof Type | Verification Logic |
+|------------|-------------------|
+| `TimingViolation` | Block gap exceeds chain's `maxBlockTime` |
+| `OrderingViolation` | FCFS misordering (earlier nonce sequenced later) |
+| `InclusionViolation` | Transaction censored past `forcedInclusionDeadline` |
+| `BundleViolation` | Committed bundle deadline passed without execution |
+
+**Subjective Proofs** (Kleros arbitration):
+| Proof Type | Escalation |
+|------------|------------|
+| `MEVViolation` | Sandwich attacks, front-running when policy prohibits |
+| `CustomViolation` | Chain-specific rule violations |
+
+**Challenge Flow:**
+1. Challenger posts bond (0.5 ETH default) with proof data
+2. For deterministic types: `verifyDeterministicProof()` resolves immediately
+3. For subjective types: `escalateToArbitration()` creates Kleros dispute
+4. If no response within 24h: auto-accepted (challenger wins)
+5. Bond returned to winner, slashed from loser
+
+### Chain Adapters
+
+ISOCHRON uses adapters for plug-and-play integration without modifying member chains:
+
+| Adapter | Chain Type | Rotation Mechanism |
+|---------|-----------|-------------------|
+| `OpStackAdapterV1` | OP Stack (Bedrock/Ecotone) | `setBatcherHash()` + `setUnsafeBlockSigner()` |
+| `ArbitrumAdapterV1` | Arbitrum Nitro | `setIsBatchPoster()` on SequencerInbox |
+| `GenericAdapterV1` | Any EVM rollup | Arbitrary function calls (single or multi-call) |
+
+The `GenericAdapterV1` supports two modes:
+- **Single-call**: `abi.encode(bytes4 selector, bytes callData)` - calls one function
+- **Multi-call**: prefix `0xFF` + `abi.encode(bytes4[] selectors, bytes[] callDatas)` - calls multiple functions atomically
+
+### Builder System
+
+The BuilderRegistry manages approved block builders with per-chain overrides:
+
+```
+  BuilderRegistry
+  ├── defaultBuilder: FlashblocksBuilder (MEV-Boost + Flashblocks)
+  ├── chainBuilders:
+  │   ├── Chain 10 (OP): FlashblocksBuilder
+  │   ├── Chain 42161 (Arb): FlashblocksBuilder
+  │   └── Chain 8453 (Base): CustomBuilder (future)
+  └── builderTypes:
+      ├── PrivateMempool  (Flashblocks, MEV-Boost)
+      ├── PublicMempool   (standard building)
+      ├── EncryptedMempool (threshold encryption, future)
+      └── Custom          (chain-specific)
+```
+
+Each builder validates build requests (chain support, gas limits, bundle count, timestamps) and exposes a relay endpoint for discoverability.
+
+### Rust Relay
+
+The `isochron-relay` crate handles time-sensitive components that benefit from Rust's performance:
+
+```
+relay/
+├── src/
+│   ├── main.rs           # Entry point, initializes all components
+│   ├── config.rs         # TOML-based relay configuration
+│   ├── bundle/
+│   │   ├── types.rs      # Bundle, operation, commitment types
+│   │   ├── validator.rs  # Bundle validation (ops, deadline, chains, gas)
+│   │   └── sequencer.rs  # Bundle lifecycle management
+│   ├── chain/
+│   │   └── mod.rs        # Chain adapter registration and management
+│   ├── policy/
+│   │   └── mod.rs        # Real-time policy compliance engine
+│   └── relay/
+│       └── mod.rs        # HTTP API server (health, bundles)
+```
+
+**API Endpoints:**
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check and bundle count |
+| `POST` | `/bundles` | Submit a cross-chain bundle |
+| `GET` | `/bundles/:id` | Query bundle status |
 
 ### Chain Integration Framework
 
@@ -540,6 +783,147 @@ interface ISequencerAdapter {
 }
 ```
 
+### CrossChainBundleRegistry
+
+Manages atomic cross-chain bundle commitments with escrow integration:
+
+```solidity
+// Bundle lifecycle
+function commitBundle(
+    bytes32 operationsHash,
+    uint256[] calldata targetChainIds,
+    uint256 deadline
+) external payable returns (bytes32 bundleId);
+
+function confirmChainExecution(
+    bytes32 bundleId, uint256 chainId, uint256 blockNumber, bytes calldata proof
+) external;
+
+function completeBundle(bytes32 bundleId) external;
+function cancelBundle(bytes32 bundleId) external;
+function expireBundle(bytes32 bundleId) external;
+function reportViolation(bytes32 bundleId, bytes calldata proof, string calldata reason) external;
+
+// View functions
+function getBundle(bytes32 bundleId) external view returns (BundleCommitment memory);
+function getBundleStatus(bytes32 bundleId) external view returns (BundleStatus);
+function getPendingBundleCount() external view returns (uint256);
+function getSequencerBundles(address sequencer) external view returns (bytes32[] memory);
+```
+
+### BundleEscrow
+
+Holds tips and bonds for cross-chain bundles:
+
+```solidity
+function depositTip(bytes32 bundleId) external payable;
+function postBond(bytes32 bundleId) external payable;
+function releaseTip(bytes32 bundleId) external;      // Only by BundleRegistry
+function slashBond(bytes32 bundleId, address reporter) external; // 10% reporter, 90% governance
+function refundTip(bytes32 bundleId) external;
+function returnBond(bytes32 bundleId) external;
+```
+
+### SovereignPolicyManager
+
+Per-chain sovereign policy management:
+
+```solidity
+// Policy declaration (by chain governance or hub governance)
+function declarePolicy(
+    uint256 chainId,
+    OrderingStrategy ordering,
+    EnforcementType enforcement,
+    uint256 maxBlockTime,
+    uint256 forcedInclusionDeadline,
+    bool sandwichProtection,
+    bool backrunOnly,
+    address customPolicyContract,
+    bytes calldata policyData
+) external;
+
+function deactivatePolicy(uint256 chainId) external;
+function checkCompliance(uint256 chainId, bytes calldata txData) external view returns (ComplianceResult memory);
+function getPolicy(uint256 chainId) external view returns (PolicyDeclaration memory);
+function getActivePolicyChains() external view returns (uint256[] memory);
+
+// Chain governance
+function setChainGovernance(uint256 chainId, address governor) external; // Hub governance only
+```
+
+### FraudProofVerifier
+
+Two-path fraud proof verification with Kleros escalation:
+
+```solidity
+// Challenge submission
+function submitChallenge(
+    address sequencer,
+    uint256 chainId,
+    ProofType proofType,
+    bytes calldata proofData
+) external payable returns (bytes32 challengeId);
+
+// Verification
+function verifyDeterministicProof(bytes32 challengeId) external;
+function escalateToArbitration(bytes32 challengeId) external payable;
+function resolveChallenge(bytes32 challengeId) external; // Auto-accept after deadline
+
+// View functions
+function getChallenge(bytes32 challengeId) external view returns (Challenge memory);
+function getChallengeStatus(bytes32 challengeId) external view returns (ChallengeStatus);
+
+// Governance
+function setChallengeBond(uint256 newBond) external;
+function setResponseWindow(uint256 newWindow) external;
+```
+
+### BuilderRegistry
+
+Registry for approved block builders with per-chain overrides:
+
+```solidity
+function registerBuilder(address builder) external;      // Governance only
+function deactivateBuilder(address builder) external;
+function activateBuilder(address builder) external;
+function setDefaultBuilder(address builder) external;
+function setChainBuilder(uint256 chainId, address builder) external;
+
+function getEffectiveBuilder(uint256 chainId) external view returns (address);
+function getActiveBuilders() external view returns (address[] memory);
+function getBuilder(address builder) external view returns (BuilderInfo memory);
+```
+
+### FlashblocksBuilder
+
+Default MEV-Boost + Flashblocks builder implementation:
+
+```solidity
+function builderType() external view returns (BuilderType);  // PrivateMempool
+function supportsChain(uint256 chainId) external view returns (bool);
+function validateBuildRequest(BuildRequest memory request) external view returns (bool valid, string memory reason);
+function relayEndpoint() external view returns (string memory);
+
+function addChainSupport(uint256 chainId) external;    // Governance
+function removeChainSupport(uint256 chainId) external;
+function setRelayEndpoint(string calldata endpoint) external;
+```
+
+### Chain Adapter Interfaces
+
+**ArbitrumAdapterV1** - Arbitrum Nitro integration via SequencerInbox:
+```solidity
+// Rotation payload: abi.encode(newBatchPoster, oldBatchPoster)
+function rotateSequencer(address sequencerInbox, bytes calldata rotationData) external;
+```
+
+**GenericAdapterV1** - Any EVM rollup via arbitrary calls:
+```solidity
+// Single-call: abi.encode(bytes4 selector, bytes callData)
+// Multi-call:  0xFF prefix + abi.encode(bytes4[] selectors, bytes[] callDatas)
+function rotateSequencer(address rollupConfig, bytes calldata rotationData) external;
+```
+
 ### OP Stack PoC Interfaces
 
 The OP Stack integration lives in `src/poc/opstack`, including `OpStackAdapterV1` and the `ISystemConfig` interface for Superchain-compliant SystemConfig contracts.
@@ -708,41 +1092,121 @@ Web3Function.onRun(async (context) => {
 - Guardian can pause in emergencies
 - Hydra defense for adapter submissions
 
+### Bundle Security
+- Only the active sequencer (verified via Hub) can commit bundles
+- Bundle tips held in escrow until execution is confirmed on ALL target chains
+- Bond slashing deters non-delivery (10% reporter reward incentivizes monitoring)
+- Minimum deadline duration prevents unreasonably short execution windows
+
+### Fraud Proof Security
+- Challenge bonds prevent spam (0.5 ETH default)
+- Deterministic proofs are trustless - no oracle or committee required
+- Auto-accept after deadline prevents censorship of valid challenges
+- Kleros arbitration only for inherently subjective criteria (MEV violations)
+- Response window (24h default) balances sequencer defense and challenger protection
+
+### Policy Security
+- Only chain governance (or hub governance) can set chain policies
+- Custom policy contracts are isolated - compliance checks via staticcall
+- Default policy (SequencerDiscretion) is permissive - chains opt into stricter rules
+- Policy deactivation doesn't delete state, allowing re-activation
+
+### No Trusted Setups
+- Protocol does not require TEEs, threshold encryption, or trusted hardware
+- All enforcement is either deterministic (on-chain math) or decentralized (Kleros)
+- Chains MAY opt into trusted setups via sovereign policy, but the protocol doesn't mandate them
+
 ## File Structure
 
 ```
 op/
 ├── src/
 │   ├── SharedSequencerHub.sol        # ISOCHRON Hub - atomic multichain rotation
-│   ├── ProposerRegistry.sol          # ISOCHRON DPoS proposer management
+│   ├── ProposerRegistry.sol          # DPoS proposer management
 │   ├── ChainRegistry.sol             # GeneralizedTCR for chain onboarding
 │   ├── ChainDeploymentKit.sol        # Helper for chain integration
-│   ├── poc/
-│   │   └── opstack/
-│   │       ├── OpStackAdapterV1.sol  # OP Stack Bedrock/Ecotone adapter (PoC)
-│   │       └── interfaces/
-│   │           └── ISystemConfig.sol # OP Stack SystemConfig interface (PoC)
+│   │
+│   ├── bundle/                       # Cross-chain bundle execution
+│   │   ├── CrossChainBundleRegistry.sol  # Atomic multi-chain bundle commitments
+│   │   └── BundleEscrow.sol              # Tip/bond escrow with slashing
+│   │
+│   ├── builder/                      # Universal block building
+│   │   ├── BuilderRegistry.sol       # Pluggable builder management
+│   │   └── FlashblocksBuilder.sol    # MEV-Boost + Flashblocks (default)
+│   │
+│   ├── policy/                       # Sovereign chain policies
+│   │   ├── SovereignPolicyManager.sol    # Per-chain policy declaration
+│   │   └── DefaultPolicy.sol             # Default FCFS + sandwich protection
+│   │
+│   ├── fraud/                        # Fraud proof verification
+│   │   └── FraudProofVerifier.sol    # Deterministic + Kleros arbitration
+│   │
+│   ├── poc/                          # Chain-specific adapters
+│   │   ├── opstack/
+│   │   │   ├── OpStackAdapterV1.sol  # OP Stack Bedrock/Ecotone adapter
+│   │   │   └── interfaces/
+│   │   │       └── ISystemConfig.sol # OP Stack SystemConfig interface
+│   │   ├── arbitrum/
+│   │   │   ├── ArbitrumAdapterV1.sol # Arbitrum Nitro adapter
+│   │   │   └── interfaces/
+│   │   │       └── IArbitrumRollup.sol   # SequencerInbox + RollupCore
+│   │   └── generic/
+│   │       └── GenericAdapterV1.sol  # Any EVM rollup (arbitrary calls)
+│   │
 │   └── interfaces/
-│       ├── ISharedSequencerHub.sol   # ISOCHRON Hub interface
-│       ├── IProposerRegistry.sol     # ISOCHRON Proposer registry interface
+│       ├── ISharedSequencerHub.sol   # Hub interface
+│       ├── IProposerRegistry.sol     # Proposer registry interface
 │       ├── IChainRegistry.sol        # Chain registry interface
 │       ├── ISequencerAdapter.sol     # Adapter interface
+│       ├── ICrossChainBundle.sol     # Bundle registry interface
+│       ├── IBundleEscrow.sol         # Escrow interface
+│       ├── IBuilderRegistry.sol      # Builder registry interface
+│       ├── IUniversalBuilder.sol     # Builder interface
+│       ├── ISovereignPolicy.sol      # Policy interface
+│       ├── IFraudProofVerifier.sol   # Fraud proof interface
 │       ├── ICurate.sol               # Kleros Curate interface
 │       ├── IArbitrator.sol           # ERC-792 arbitration
 │       └── IArbitrable.sol           # ERC-792 arbitrable
+│
+├── relay/                            # Rust relay (time-sensitive components)
+│   ├── Cargo.toml                    # Rust dependencies
+│   └── src/
+│       ├── main.rs                   # Entry point
+│       ├── config.rs                 # TOML configuration
+│       ├── bundle/
+│       │   ├── types.rs              # Bundle/operation types
+│       │   ├── validator.rs          # Bundle validation
+│       │   └── sequencer.rs          # Bundle lifecycle
+│       ├── chain/
+│       │   └── mod.rs                # Chain adapter management
+│       ├── policy/
+│       │   └── mod.rs                # Policy compliance engine
+│       └── relay/
+│           └── mod.rs                # HTTP API server
+│
 ├── test/
-│   ├── SharedSequencerHub.t.sol      # ISOCHRON Hub tests (with registry integration)
-│   ├── ProposerRegistry.t.sol        # ISOCHRON Proposer registry tests
-│   ├── ChainRegistry.t.sol           # Chain registry tests
+│   ├── SharedSequencerHub.t.sol      # Hub tests (54 tests)
+│   ├── ProposerRegistry.t.sol        # Proposer registry tests (41 tests)
+│   ├── ChainRegistry.t.sol           # Chain registry tests (24 tests)
+│   ├── CrossChainBundle.t.sol        # Bundle + escrow tests (25 tests)
+│   ├── BuilderRegistry.t.sol         # Builder + Flashblocks tests (19 tests)
+│   ├── SovereignPolicy.t.sol         # Policy manager tests (18 tests)
+│   ├── FraudProofVerifier.t.sol      # Fraud proof tests (15 tests)
+│   ├── ChainAdapters.t.sol           # Arbitrum + Generic adapter tests (12 tests)
+│   ├── OpStackAdapterV1.t.sol        # OP Stack adapter tests (20 tests)
 │   └── mocks/
-│       ├── MockProposerRegistry.sol  # ISOCHRON proposer registry mock
+│       ├── MockProposerRegistry.sol  # Proposer registry mock
 │       ├── MockChainRegistry.sol     # Chain registry mock
 │       ├── MockRollupConfig.sol      # Generic rollup config mock
 │       ├── MockSequencerAdapter.sol  # Generic adapter mock
-│       ├── MockSystemConfig.sol      # Test SystemConfig mock
-│       └── MockAdapterV2.sol         # V2 adapter stub (for testing)
+│       ├── MockSystemConfig.sol      # OP Stack SystemConfig mock
+│       ├── MockAdapterV2.sol         # V2 adapter stub
+│       ├── MockArbitrator.sol        # Kleros arbitrator mock
+│       ├── MockHub.sol               # Hub mock (for bundle tests)
+│       └── MockSequencerInbox.sol    # Arbitrum SequencerInbox mock
+│
 ├── script/
-│   ├── DeployKSSN.s.sol              # ISOCHRON Hub-and-Spoke deployment
+│   ├── DeployKSSN.s.sol              # Hub-and-Spoke deployment
 │   ├── DeployRemote.s.sol            # Sepolia/Mainnet deployment
 │   ├── IntegrationTest.s.sol         # Solidity integration test
 │   └── run_integration_test.sh       # Full system integration test
@@ -756,8 +1220,8 @@ op/
 ├── docker/
 │   └── config/                       # Generated L2 configs
 ├── agent/
-│   ├── kssn_proposer_agent.py        # ISOCHRON proposer agent (legacy filename)
-│   ├── kssn_config.example.yaml      # ISOCHRON agent config template (legacy filename)
+│   ├── kssn_proposer_agent.py        # Proposer agent
+│   ├── kssn_config.example.yaml      # Agent config template
 │   ├── requirements.txt              # Python dependencies
 │   └── README.md                     # Agent documentation
 ├── docker-compose.yml                # Full OP Stack setup
@@ -780,7 +1244,7 @@ A: When `rotateNetwork()` is called, the Hub iterates through ALL connected chai
 A: ISOCHRON enforces SLA expectations (liveness, authorized production, and clean handoffs) through the Sequencer Policy and the arbitrator (Kleros default).
 
 **Q: Can the sequencer use Rollup Boost and Flashblocks?**
-A: Yes. The active sequencer can use Rollup Boost and Flashblocks to keep the mempool private while enabling market-driven MEV without enshrining proposer-builder separation.
+A: Yes. FlashblocksBuilder is the default builder in the BuilderRegistry, using a private mempool with MEV-Boost integration. The BuilderRegistry supports per-chain overrides, so individual chains can opt into different building mechanisms (public mempool, encrypted mempool, custom) via their sovereign policy.
 
 **Q: How do I connect a new chain to ISOCHRON?**
 A: There are two paths:
@@ -824,6 +1288,58 @@ A: Single `rotateNetwork()` supports ~450 chains at 30M gas limit. For larger ne
 
 **Q: What is a "Superchain Aligned" design?**
 A: ISOCHRON is designed to eventually replace the Superchain Council multisig. Instead of a committee updating rollup configuration contracts, the SharedSequencerHub does it algorithmically based on arbitrator governance decisions (Kleros default).
+
+### Cross-Chain Bundles
+
+**Q: What is a cross-chain bundle?**
+A: A bundle is an atomic set of operations that must execute across multiple chains. The sequencer commits to a bundle by providing an operations hash, target chain IDs, and a deadline. The bundle is tracked on-chain with economic guarantees - tips incentivize execution, and bonds can be slashed if the sequencer fails to deliver.
+
+**Q: How does bundle escrow work?**
+A: Searchers/users deposit tips for their bundles, and sequencers post bonds as economic guarantees. On successful execution, tips are released to the sequencer. On violation, the bond is slashed - 10% goes to the reporter who identified the violation, and 90% goes to the governance treasury.
+
+**Q: What happens if a bundle expires?**
+A: Anyone can call `expireBundle()` after the deadline passes. The bundle status changes to `Expired` and escrowed funds can be returned. Sequencers are expected to either execute or cancel bundles before expiry.
+
+### Sovereign Policies
+
+**Q: How do sovereign policies work?**
+A: Each chain can declare its own sequencing policy via `SovereignPolicyManager.declarePolicy()`. The policy specifies ordering strategy (FCFS, priority fee, sequencer discretion, or custom), enforcement type (deterministic, subjective, or hybrid), timing constraints (max block time, forced inclusion deadline), and MEV protections (sandwich protection, backrun-only). The active sequencer must obey these policies or face fraud proof challenges.
+
+**Q: Can a chain use a custom policy contract?**
+A: Yes. Set `orderingStrategy` to `Custom` and provide a `customPolicyContract` address that implements the `ISovereignPolicy` interface. The `SovereignPolicyManager` will delegate compliance checks to that contract.
+
+**Q: Do chains need TEEs or other trusted setups?**
+A: No. ISOCHRON does not hardcode any trusted setups. Deterministic fraud proofs handle timing, ordering, and inclusion violations trustlessly on-chain. Subjective criteria (MEV violations) are resolved via Kleros arbitration. However, a chain MAY opt into TEEs or other mechanisms via its sovereign policy and custom policy contract.
+
+### Fraud Proofs
+
+**Q: What types of fraud can be proven deterministically?**
+A: Four types: (1) **Timing violations** - block gap exceeds the chain's `maxBlockTime`; (2) **Ordering violations** - FCFS misordering when the policy requires FCFS; (3) **Inclusion violations** - censorship beyond the `forcedInclusionDeadline`; (4) **Bundle violations** - committed bundle deadline passed without execution.
+
+**Q: How does Kleros arbitration work for subjective violations?**
+A: For MEV violations (sandwich attacks, front-running) and custom violations, the challenger escalates to Kleros by paying the arbitration fee. A Kleros court examines the evidence and rules in favor of either the challenger or the sequencer. The bond is then distributed accordingly.
+
+**Q: What if nobody responds to a challenge?**
+A: If a challenge remains in `Pending` status for longer than the response window (24 hours default), anyone can call `resolveChallenge()` to auto-accept it. The challenger gets their bond back.
+
+### Chain Adapters
+
+**Q: How do I integrate a non-OP-Stack chain?**
+A: Use one of the existing adapters or write a new one:
+- **Arbitrum Nitro**: Use `ArbitrumAdapterV1` which calls `setIsBatchPoster()` on the SequencerInbox
+- **Any EVM rollup**: Use `GenericAdapterV1` which supports arbitrary function calls (single or multi-call mode)
+- **Custom**: Implement the `ISequencerAdapter` interface with your chain's specific rotation logic
+
+**Q: Does integrating with ISOCHRON require changes to my rollup?**
+A: No. Adapters handle all chain-specific logic via delegatecall from the Hub. Your rollup's existing contracts remain unchanged. You just need to transfer ownership/permissions of the relevant configuration contract (SystemConfig, SequencerInbox, etc.) to the Hub.
+
+### Rust Relay
+
+**Q: Why is there a Rust relay?**
+A: The relay handles time-sensitive components that benefit from Rust's performance and safety guarantees: bundle validation, ordering policy enforcement, and the HTTP API for bundle submission. The Solidity contracts provide the settlement and dispute resolution layer, while the relay handles real-time processing.
+
+**Q: How do I run the relay?**
+A: Build with `cd relay && cargo build --release`, then configure via `config.toml` (see `relay/src/config.rs` for options). The relay starts an HTTP server with endpoints for health checks, bundle submission, and status queries.
 
 ## Contributing
 
