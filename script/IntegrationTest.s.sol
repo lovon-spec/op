@@ -11,11 +11,11 @@ import {TestConstants} from "./TestConstants.sol";
 
 /**
  * @title IntegrationTest
- * @notice Integration test for the KSSN (Kleros Shared Sequencer Network) lifecycle.
+ * @notice Integration test for the ISOCHRON lifecycle.
  *
- * This script tests the full KSSN flow:
+ * This script tests the full ISOCHRON flow:
  *
- * 1. Deploy KSSN Hub and registries
+ * 1. Deploy ISOCHRON Hub and registries
  * 2. Register proposers in ProposerRegistry
  * 3. Register chains in ChainRegistry
  * 4. Connect chains from registry to Hub
@@ -31,7 +31,7 @@ contract IntegrationTest is Script {
     uint256 constant EPOCH_DURATION = 10 seconds;
     uint256 constant GRACE_PERIOD = 10 minutes;
 
-    // KSSN Components
+    // ISOCHRON Components
     SharedSequencerHub public hub;
     MockChainRegistry public chainRegistry;
     MockProposerRegistry public proposerRegistry;
@@ -48,12 +48,12 @@ contract IntegrationTest is Script {
     function run() external {
         console2.log("");
         console2.log("===========================================");
-        console2.log("  KSSN INTEGRATION TEST");
-        console2.log("  (Kleros Shared Sequencer Network)");
+        console2.log("  ISOCHRON INTEGRATION TEST");
+        console2.log("  (Interconnected Sequencing Oracle for Cross-chain Harmonized Reliability, Ordering & Network)");
         console2.log("===========================================");
         console2.log("");
 
-        // Step 1: Deploy KSSN Hub and registries
+        // Step 1: Deploy ISOCHRON Hub and registries
         _step1_deployKSSN();
 
         // Step 2: Register proposers
@@ -76,7 +76,7 @@ contract IntegrationTest is Script {
         console2.log("  INTEGRATION TEST COMPLETE!");
         console2.log("===========================================");
         console2.log("");
-        console2.log("KSSN Contracts:");
+        console2.log("ISOCHRON Contracts:");
         console2.log("  SharedSequencerHub:", address(hub));
         console2.log("  ChainRegistry:", address(chainRegistry));
         console2.log("  ProposerRegistry:", address(proposerRegistry));
@@ -89,7 +89,7 @@ contract IntegrationTest is Script {
     }
 
     function _step1_deployKSSN() internal {
-        console2.log("STEP 1: Deploying KSSN Hub and registries...");
+        console2.log("STEP 1: Deploying ISOCHRON Hub and registries...");
         console2.log("-------------------------------------------");
 
         vm.startBroadcast(TestConstants.DEPLOYER_KEY);

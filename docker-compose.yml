@@ -1,6 +1,6 @@
-# KSSN - Docker Compose
+# ISOCHRON - Docker Compose
 #
-# This provides a complete local development environment for KSSN.
+# This provides a complete local development environment for ISOCHRON.
 #
 # Quick Start:
 #   ./start.sh              # Start L1 + deploy contracts

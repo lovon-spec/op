@@ -10,9 +10,9 @@ import {TestConstants} from "./TestConstants.sol";
 
 /**
  * @title DeployKSSN
- * @notice Deployment script for Kleros Shared Sequencer Network (KSSN).
+ * @notice Deployment script for ISOCHRON.
  *
- * This deploys the complete KSSN architecture:
+ * This deploys the complete ISOCHRON architecture:
  * - ProposerRegistry (DPoS proposer management)
  * - SharedSequencerHub (Central hub for atomic multichain rotation)
  * - OpStackAdapterV1 (OP Stack rotation adapter)
@@ -51,7 +51,7 @@ contract DeployKSSN is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        console2.log("=== Deploying KSSN Architecture ===\n");
+        console2.log("=== Deploying ISOCHRON Architecture ===\n");
 
         // 1. Deploy ProposerRegistry
         proposerRegistry = new ProposerRegistry(
@@ -141,7 +141,7 @@ contract DeployKSSN is Script {
         vm.stopBroadcast();
 
         // Output deployment summary
-        console2.log("\n=== KSSN Deployment Summary ===");
+        console2.log("\n=== ISOCHRON Deployment Summary ===");
         console2.log("SharedSequencerHub:", address(hub));
         console2.log("ProposerRegistry:", address(proposerRegistry));
         console2.log("OpStackAdapterV1:", address(adapter));

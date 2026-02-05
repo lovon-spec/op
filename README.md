@@ -1,10 +1,10 @@
-# Kleros Shared Sequencer Network (KSSN)
+# ISOCHRON (Interconnected Sequencing Oracle for Cross-chain Harmonized Reliability, Ordering & Network)
 
-A shared sequencing layer for multiple rollups, with Kleros arbitration supporting neutral, SLA-focused governance. The core framework is rollup-agnostic, with an OP Stack PoC living in `src/poc/opstack` and `script/opstack`.
+A shared sequencing layer for multiple rollups, with arbitrator-driven governance (defaulting to Kleros Court today) supporting neutral, SLA-focused enforcement. The core framework is rollup-agnostic, with an OP Stack PoC living in `src/poc/opstack` and `script/opstack`.
 
-## What is KSSN?
+## What is ISOCHRON?
 
-The **Kleros Shared Sequencer Network** centralizes sequencing authority for multiple rollups (including OP Stack) into a single "Hub" contract while preserving their individual sovereignty through opt-in rotation and SLA-based governance. The active sequencer can use Rollup Boost and Flashblocks to keep the mempool private while enabling market-driven MEV without enshrining proposer-builder separation.
+**ISOCHRON** centralizes sequencing authority for multiple rollups (including OP Stack) into a single "Hub" contract while preserving their individual sovereignty through opt-in rotation and SLA-based governance. The active sequencer can use Rollup Boost and Flashblocks to keep the mempool private while enabling market-driven MEV without enshrining proposer-builder separation.
 
 **Key Features:**
 - **Hub-and-Spoke Architecture**: Single Hub manages multiple L2 chains atomically
@@ -16,13 +16,13 @@ The **Kleros Shared Sequencer Network** centralizes sequencing authority for mul
 
 ## Policies & SLAs
 
-KSSN governance is anchored by formal policies enforced through Kleros arbitration:
+ISOCHRON governance is anchored by formal policies enforced through an arbitrator (default Kleros Court):
 
 | Policy | Description |
 |--------|-------------|
 | [Sequencer Policy](./policies/policy_sequencer_registry.md) | Service-level requirements for sequencer operators |
 | [Adapter Policy](./policies/policy_adapter_registry.md) | Acceptance criteria for rollup adapters |
-| [Chain Registry Policy](./policies/policy_chain_registry.md) | Acceptance/removal criteria for KSSN chain integration |
+| [Chain Registry Policy](./policies/policy_chain_registry.md) | Acceptance/removal criteria for ISOCHRON chain integration |
 
 These policies define:
 - **Acceptance Criteria**: Requirements for registration (Sybil resistance, operational readiness)
@@ -46,7 +46,7 @@ cd op
 
 This starts L1 with governance contracts:
 - **L1**: Local Anvil chain (localhost:8545)
-- **Governance**: SharedSequencerHub with mock Kleros registry
+- **Governance**: SharedSequencerHub with a mock arbitrator-backed registry
 - **Operators**: 3 test operators registered and ready for rotation
 
 ### Start Full L2 Stack
@@ -97,12 +97,12 @@ cast block-number --rpc-url http://localhost:9545
 
 ## Architecture
 
-### KSSN Hub-and-Spoke Architecture
+### ISOCHRON Hub-and-Spoke Architecture
 
-The KSSN uses a Hub-and-Spoke model anchored by a ProposerRegistry:
+ISOCHRON uses a Hub-and-Spoke model anchored by a ProposerRegistry:
 
 ```
-                        KSSN HUB-AND-SPOKE ARCHITECTURE
+                        ISOCHRON HUB-AND-SPOKE ARCHITECTURE
 
   ┌────────────────────────────────────────────────────────────────────────────┐
   │                                L1 (Ethereum)                                │
@@ -151,7 +151,7 @@ The KSSN uses a Hub-and-Spoke model anchored by a ProposerRegistry:
 
 ### Chain Integration Framework
 
-KSSN provides a decentralized onboarding path for new chains via the **ChainRegistry** (GeneralizedTCR):
+ISOCHRON provides a decentralized onboarding path for new chains via the **ChainRegistry** (GeneralizedTCR):
 
 ```
                     CHAIN INTEGRATION FLOW
@@ -176,7 +176,7 @@ KSSN provides a decentralized onboarding path for new chains via the **ChainRegi
        │                              │  5. Hub connects chain     │
        │                              │     connectChainFromRegistry│
        │                              │                            │
-       │  6. Chain is now part of KSSN!                            │
+       │  6. Chain is now part of ISOCHRON!                        │
        │     Atomic rotation enabled                               │
        │                              │                            │
 ```
@@ -200,7 +200,7 @@ Unlike the operator registries (which use PermanentGTCR with permanent stakes), 
 - Valid rollup deployment with accessible configuration contract (e.g., OP Stack SystemConfig)
 - Chain team has operational capability
 - No duplicate chain IDs
-- Alignment with KSSN sequencer SLA requirements
+- Alignment with ISOCHRON sequencer SLA requirements
 
 ### Cold Staker / Hot Operator Model
 
@@ -226,7 +226,7 @@ Separating stake ownership from operational keys improves security:
 Both keys are registered with each proposer and rotated atomically across ALL chains by the Hub via adapters.
 
 ```
-                        PROPOSER ROTATION FLOW (KSSN)
+                        PROPOSER ROTATION FLOW (ISOCHRON)
 
   ┌───────────────────────────────────────────────────────────────────────────┐
   │                              L1 (Ethereum)                                 │
@@ -341,7 +341,7 @@ The grace period ensures the outgoing operator can flush all pending batches to 
 6. **Active Handoff**: At epoch end, proposer flushes batches and calls `rotateNetwork()` (grace period protects this)
 7. **Atomic Update**: Hub updates each rollup configuration contract on ALL connected chains
 8. **Proposer Agent Activation**: New proposer's agent detects the change and immediately starts sequencing
-9. **SLA Enforcement**: Misbehaving proposers challenged via Kleros
+9. **SLA Enforcement**: Misbehaving proposers challenged via the arbitrator (default Kleros Court)
 
 ### Sequencer SLA (Summary)
 
@@ -359,9 +359,9 @@ See the [Sequencer Policy](./policies/policy_sequencer_registry.md) for detailed
 
 ## Smart Contracts
 
-### SharedSequencerHub (KSSN)
+### SharedSequencerHub (ISOCHRON)
 
-The central nervous system of KSSN - manages atomic rotation across all connected chains.
+The central nervous system of ISOCHRON - manages atomic rotation across all connected chains.
 
 ```solidity
 // Chain configuration for each connected Spoke
@@ -442,7 +442,7 @@ function isActiveProposer(address proposer) external view returns (bool);
 
 ### ChainRegistry
 
-GeneralizedTCR for decentralized chain onboarding to KSSN:
+GeneralizedTCR for decentralized chain onboarding to ISOCHRON:
 
 ```solidity
 // Chain registration data
@@ -483,7 +483,7 @@ function getItemByChainId(uint256 chainId) external view returns (Item memory);
 
 ### ChainDeploymentKit
 
-Helper contract for easy chain integration into KSSN:
+Helper contract for easy chain integration into ISOCHRON:
 
 ```solidity
 // Registration status tracking
@@ -491,7 +491,7 @@ enum RegistrationStatus {
     NotStarted,     // Chain hasn't been registered
     Pending,        // In challenge period
     Registered,     // Successfully registered
-    Connected,      // Connected to KSSN Hub
+    Connected,      // Connected to ISOCHRON Hub
     Failed          // Registration failed (challenged)
 }
 
@@ -583,11 +583,11 @@ cast send $SYSTEM_CONFIG "transferOwnership(address)" $HUB_ADDRESS \
   --private-key $OWNER_PRIVATE_KEY
 ```
 
-4. **Register Operators in Kleros**
+4. **Register Operators with the arbitrator (default Kleros Court)**
 
 Visit https://curate.kleros.io/ and submit proposer entries as required by your registry schema.
 
-5. **Deploy KSSN Proposer Agent**
+5. **Deploy ISOCHRON Proposer Agent**
 
 Each proposer must run their own agent:
 ```bash
@@ -601,7 +601,7 @@ python kssn_proposer_agent.py --config kssn_config.yaml
 ### Mainnet Deployment
 
 **Prerequisites:**
-- Kleros Curate TCR deployed with your sequencer policy
+- Curate-style TCR deployed with your sequencer policy (default Kleros Curate)
 - TCR item type: tuple (address batcher, address unsafeSigner)
 - OP Stack L1 contracts deployed
 - Guardian multisig set up
@@ -609,7 +609,7 @@ python kssn_proposer_agent.py --config kssn_config.yaml
 
 See `script/DeployRemote.s.sol` for detailed deployment steps.
 
-## KSSN Proposer Agent
+## ISOCHRON Proposer Agent
 
 Each proposer MUST run a proposer agent. See [`agent/README.md`](./agent/README.md) for:
 - Installation instructions
@@ -676,7 +676,7 @@ Web3Function.onRun(async (context) => {
 
 ### Adapter Security
 - Adapters are called via **delegatecall** from the manager
-- Adapters must be registered in the **Adapter Registry** (Kleros Curate)
+- Adapters must be registered in the **Adapter Registry** (default Kleros Curate)
 - **Ratchet versioning** prevents rollback attacks (newVersion > currentVersion)
 - **Hydra defense** allows multiple submissions to defeat griefing
 - Adapters should only interact with the rollup configuration contract (e.g., SystemConfig), no arbitrary storage writes
@@ -696,7 +696,7 @@ Web3Function.onRun(async (context) => {
 - Snapshots decouple from registry reads during rotation
 
 ### SLA Compliance
-- SLA requirements enforced via Kleros
+- SLA requirements enforced via the arbitrator (default Kleros Court)
 - Proposers can be challenged for producing blocks while unauthorized
 
 ### Bounded Operations
@@ -704,7 +704,7 @@ Web3Function.onRun(async (context) => {
 - O(1) add/remove using swap-pop pattern
 
 ### Griefing Mitigation
-- High deposit requirement in Kleros deters frivolous challenges
+- High deposit requirement in the arbitrator system deters frivolous challenges
 - Guardian can pause in emergencies
 - Hydra defense for adapter submissions
 
@@ -713,8 +713,8 @@ Web3Function.onRun(async (context) => {
 ```
 op/
 ├── src/
-│   ├── SharedSequencerHub.sol        # KSSN Hub - atomic multichain rotation
-│   ├── ProposerRegistry.sol          # KSSN DPoS proposer management
+│   ├── SharedSequencerHub.sol        # ISOCHRON Hub - atomic multichain rotation
+│   ├── ProposerRegistry.sol          # ISOCHRON DPoS proposer management
 │   ├── ChainRegistry.sol             # GeneralizedTCR for chain onboarding
 │   ├── ChainDeploymentKit.sol        # Helper for chain integration
 │   ├── poc/
@@ -723,26 +723,26 @@ op/
 │   │       └── interfaces/
 │   │           └── ISystemConfig.sol # OP Stack SystemConfig interface (PoC)
 │   └── interfaces/
-│       ├── ISharedSequencerHub.sol   # KSSN Hub interface
-│       ├── IProposerRegistry.sol     # KSSN Proposer registry interface
+│       ├── ISharedSequencerHub.sol   # ISOCHRON Hub interface
+│       ├── IProposerRegistry.sol     # ISOCHRON Proposer registry interface
 │       ├── IChainRegistry.sol        # Chain registry interface
 │       ├── ISequencerAdapter.sol     # Adapter interface
-│       ├── ICurate.sol               # Kleros Curate interface
+│       ├── ICurate.sol               # Curate-style TCR interface
 │       ├── IArbitrator.sol           # ERC-792 arbitration
 │       └── IArbitrable.sol           # ERC-792 arbitrable
 ├── test/
-│   ├── SharedSequencerHub.t.sol      # KSSN Hub tests (with registry integration)
-│   ├── ProposerRegistry.t.sol        # KSSN Proposer registry tests
+│   ├── SharedSequencerHub.t.sol      # ISOCHRON Hub tests (with registry integration)
+│   ├── ProposerRegistry.t.sol        # ISOCHRON Proposer registry tests
 │   ├── ChainRegistry.t.sol           # Chain registry tests
 │   └── mocks/
-│       ├── MockProposerRegistry.sol  # KSSN proposer registry mock
+│       ├── MockProposerRegistry.sol  # ISOCHRON proposer registry mock
 │       ├── MockChainRegistry.sol     # Chain registry mock
 │       ├── MockRollupConfig.sol      # Generic rollup config mock
 │       ├── MockSequencerAdapter.sol  # Generic adapter mock
 │       ├── MockSystemConfig.sol      # Test SystemConfig mock
 │       └── MockAdapterV2.sol         # V2 adapter stub (for testing)
 ├── script/
-│   ├── DeployKSSN.s.sol              # KSSN Hub-and-Spoke deployment
+│   ├── DeployKSSN.s.sol              # ISOCHRON Hub-and-Spoke deployment (legacy filename)
 │   ├── DeployRemote.s.sol            # Sepolia/Mainnet deployment
 │   ├── IntegrationTest.s.sol         # Solidity integration test
 │   └── run_integration_test.sh       # Full system integration test
@@ -756,8 +756,8 @@ op/
 ├── docker/
 │   └── config/                       # Generated L2 configs
 ├── agent/
-│   ├── kssn_proposer_agent.py        # KSSN proposer agent
-│   ├── kssn_config.example.yaml      # KSSN agent config template
+│   ├── kssn_proposer_agent.py        # ISOCHRON proposer agent (legacy filename)
+│   ├── kssn_config.example.yaml      # ISOCHRON agent config template (legacy filename)
 │   ├── requirements.txt              # Python dependencies
 │   └── README.md                     # Agent documentation
 ├── docker-compose.yml                # Full OP Stack setup
@@ -768,21 +768,21 @@ op/
 
 ## FAQ
 
-### KSSN Architecture
+### ISOCHRON Architecture
 
-**Q: What is KSSN?**
-A: The Kleros Shared Sequencer Network - a Hub-and-Spoke architecture that manages sequencing for multiple rollups from a single Hub contract. It enables atomic cross-chain composability while preserving chain sovereignty through opt-in rotation and SLA governance.
+**Q: What is ISOCHRON?**
+A: ISOCHRON is a Hub-and-Spoke architecture that manages sequencing for multiple rollups from a single Hub contract. It enables atomic cross-chain composability while preserving chain sovereignty through opt-in rotation and SLA governance.
 
 **Q: How does atomic multichain rotation work?**
 A: When `rotateNetwork()` is called, the Hub iterates through ALL connected chains and updates each rollup configuration contract in a single transaction. This costs ~60k gas per chain, supporting ~450 chains per block at 30M gas limit. For larger networks, use `rotateShard()`.
 
 **Q: How is sequencing policy enforced?**
-A: KSSN enforces SLA expectations (liveness, authorized production, and clean handoffs) through the Sequencer Policy and Kleros arbitration.
+A: ISOCHRON enforces SLA expectations (liveness, authorized production, and clean handoffs) through the Sequencer Policy and the configured arbitrator (default Kleros Court).
 
 **Q: Can the sequencer use Rollup Boost and Flashblocks?**
 A: Yes. The active sequencer can use Rollup Boost and Flashblocks to keep the mempool private while enabling market-driven MEV without enshrining proposer-builder separation.
 
-**Q: How do I connect a new chain to KSSN?**
+**Q: How do I connect a new chain to ISOCHRON?**
 A: There are two paths:
 
 **Decentralized Path (ChainRegistry):**
@@ -804,14 +804,14 @@ A: The Hub continues with other chains and deactivates the failing chain. Indivi
 ### Proposers
 
 **Q: How do I become a proposer?**
-A: 1) Call `proposerRegistry.register(operationalKey)` with minimum stake (32 ETH default), 2) Run the KSSN proposer agent, 3) If your stake is in the top-N (100 by default), you'll be in the active set.
+A: 1) Call `proposerRegistry.register(operationalKey)` with minimum stake (32 ETH default), 2) Run the ISOCHRON proposer agent, 3) If your stake is in the top-N (100 by default), you'll be in the active set.
 
 ### Active Handoff & Rotation
 
 **Q: What is the Active Handoff protocol?**
 A: A 3-phase state machine ensuring zero-downtime transitions. During the grace period (10 min default) after epoch ends, only the current proposer can trigger rotation. This allows flushing batches before handover.
 
-**Q: What happens during KSSN rotation?**
+**Q: What happens during ISOCHRON rotation?**
 A: 1) Current proposer's agent detects epoch end, 2) Agent stops sequencing and flushes batches, 3) Agent calls `rotateNetwork()`, 4) Hub updates ALL connected chains atomically, 5) New proposer's agent detects change and starts.
 
 **Q: What if the proposer doesn't rotate during grace period?**
@@ -819,11 +819,11 @@ A: After grace period expires (Phase 3), anyone can force rotation via `rotateNe
 
 ### Technical Details
 
-**Q: How many chains can KSSN support?**
+**Q: How many chains can ISOCHRON support?**
 A: Single `rotateNetwork()` supports ~450 chains at 30M gas limit. For larger networks, use `rotateShard(shardIndex)` which splits rotation into chunks of 200 chains.
 
 **Q: What is a "Superchain Aligned" design?**
-A: KSSN is designed to eventually replace the Superchain Council multisig. Instead of a committee updating rollup configuration contracts, the SharedSequencerHub does it algorithmically based on Kleros governance decisions.
+A: ISOCHRON is designed to eventually replace the Superchain Council multisig. Instead of a committee updating rollup configuration contracts, the SharedSequencerHub does it algorithmically based on arbitrator-backed governance decisions (default Kleros Court).
 
 ## Contributing
 

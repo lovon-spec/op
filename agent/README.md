@@ -1,10 +1,10 @@
-# KSSN Proposer Agent
+# ISOCHRON Proposer Agent
 
 Decentralized agent that monitors on-chain state and automatically manages OP Stack services, implementing the **Active Handoff Protocol** for zero-downtime proposer transitions.
 
 ## Overview
 
-The KSSN Proposer Agent monitors the `SharedSequencerHub` contract and manages OP Stack services for **all connected chains** in the Kleros Shared Sequencer Network.
+The ISOCHRON Proposer Agent monitors the `SharedSequencerHub` contract and manages OP Stack services for **all connected chains** in ISOCHRON.
 
 ```
   ChainRegistry         SharedSequencerHub           ProposerAgent
@@ -30,7 +30,7 @@ The KSSN Proposer Agent monitors the `SharedSequencerHub` contract and manages O
 
 ## Why This Is Required
 
-The KSSN uses a rotating proposer model where proposers take turns producing blocks across all connected chains. Each proposer MUST:
+ISOCHRON uses a rotating proposer model where proposers take turns producing blocks across all connected chains. Each proposer MUST:
 
 1. **Only produce blocks when authorized** - The on-chain Hub determines who is currently authorized
 2. **Actively hand over control at epoch end** - Flush batches and trigger rotation (Active Handoff)
@@ -40,12 +40,12 @@ This agent watches the on-chain state, controls the local OP Stack services, and
 
 ## SLA Requirement
 
-The KSSN sequencer SLA includes:
+The ISOCHRON sequencer SLA includes:
 
 > Proposers MUST run a proposer agent (or equivalent mechanism).
 > Proposers MUST NOT produce unsafe blocks or attempt batching while unauthorized.
 > Proposers MUST execute Active Handoff at epoch end (flush batches, trigger rotation).
-> Violations are removable via Kleros enforcement.
+> Violations are removable via the configured arbitrator (default Kleros Court).
 
 ## Active Handoff Protocol
 
@@ -111,7 +111,7 @@ The grace period ensures the outgoing proposer can flush all pending batches to 
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
-│                         KSSN Proposer Agent                               │
+│                       ISOCHRON Proposer Agent                             │
 │                                                                           │
 │   STATE: INACTIVE                  STATE: ACTIVE                          │
 │  ┌───────────────┐               ┌───────────────────────────────────┐   │
@@ -208,14 +208,14 @@ For production, run the agent as a systemd service:
 ```ini
 # /etc/systemd/system/kssn-proposer.service
 [Unit]
-Description=KSSN Proposer Agent
+Description=ISOCHRON Proposer Agent
 After=network.target
 
 [Service]
 Type=simple
 User=op
-WorkingDirectory=/opt/kssn/agent
-ExecStart=/usr/bin/python3 kssn_proposer_agent.py --config /etc/kssn/agent-config.yaml
+WorkingDirectory=/opt/isochron/agent
+ExecStart=/usr/bin/python3 kssn_proposer_agent.py --config /etc/isochron/agent-config.yaml
 Restart=always
 RestartSec=5
 
@@ -224,8 +224,8 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable kssn-proposer
-sudo systemctl start kssn-proposer
+sudo systemctl enable isochron-proposer
+sudo systemctl start isochron-proposer
 ```
 
 ## Security Considerations

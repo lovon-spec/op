@@ -1,5 +1,5 @@
 #!/bin/bash
-# Full OP Stack L2 Integration Test with Kleros Sequencer Rotation
+# Full OP Stack L2 Integration Test with arbitrator-backed sequencer rotation
 #
 # This script runs a complete integration test showing:
 # 1. L1 (Anvil) with KlerosSequencerManager controlling SystemConfig
@@ -85,7 +85,7 @@ clear
 echo -e "${MAGENTA}"
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║                                                                ║"
-echo "║     KLEROS SEQUENCER MANAGER - FULL OP STACK INTEGRATION TEST  ║"
+echo "║  SEQUENCER MANAGER (KlerosSequencerManager) - FULL OP STACK TEST ║"
 echo "║                                                                ║"
 echo "║     Decentralized Sequencer Rotation for OP Stack              ║"
 echo "║                                                                ║"
@@ -229,7 +229,7 @@ sleep 1
 
 ITEM_ID=$(cast call $MANAGER "itemIDFor(address)(bytes32)" $SEQUENCER_2 --rpc-url $RPC_URL)
 cast send $CURATE "setClearingRequested(bytes32)" $ITEM_ID --rpc-url $RPC_URL --private-key $DEPLOYER_KEY > /dev/null 2>&1
-echo -e "  Challenge submitted to Kleros TCR"
+echo -e "  Challenge submitted to arbitrator-backed TCR (default Kleros Curate)"
 
 cast send $MANAGER "syncRemoveSequencer(address)" $SEQUENCER_2 --rpc-url $RPC_URL --private-key $DEPLOYER_KEY > /dev/null 2>&1
 echo -e "  ${RED}SEQ-2 removed from active set${NC}"
