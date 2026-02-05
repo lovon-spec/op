@@ -7,7 +7,7 @@ This script simulates an op-batcher that:
 2. Checks if it's authorized to submit batches
 3. Submits batch data to the BatchInbox if authorized
 
-This demonstrates the integration between KlerosSequencerManager and OP Stack.
+This demonstrates the integration between the SequencerManager contract and OP Stack.
 """
 
 import argparse

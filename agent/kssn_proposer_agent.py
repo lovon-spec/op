@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-KSSN Proposer Agent for Kleros Shared Sequencer Network
+ISOCHRON Proposer Agent for the shared sequencing network
 
 This agent monitors the on-chain SharedSequencerHub and automatically
 manages the proposer's OP Stack services, implementing the Active Handoff
@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgentState(Enum):
-    """State machine for the KSSN proposer agent."""
+    """State machine for the ISOCHRON proposer agent."""
     INACTIVE = auto()        # Not the current proposer, watching for activation
     ACTIVE = auto()          # Currently the active proposer for the network
     HANDOFF_PENDING = auto() # Epoch ending, executing handoff sequence
@@ -163,7 +163,7 @@ HUB_ABI = [
 
 @dataclass
 class Config:
-    """Agent configuration for KSSN."""
+    """Agent configuration for ISOCHRON."""
     l1_rpc: str
     hub_address: str
     proposer_address: str
@@ -405,14 +405,14 @@ class OPStackController:
 
 class KSSNProposerAgent:
     """
-    KSSN Proposer Agent - monitors SharedSequencerHub and manages local OP Stack services.
+    ISOCHRON Proposer Agent - monitors SharedSequencerHub and manages local OP Stack services.
 
     Implements the Active Handoff Protocol:
     - Monitor epoch countdown while active
     - At epoch end: stop sequencing -> flush batches -> call rotateNetwork()
     - New proposer's agent detects change and starts immediately
 
-    Key KSSN Differences from Single-Chain:
+    Key ISOCHRON differences from single-chain operation:
     - rotateNetwork() updates ALL connected chains atomically
     - Proposer is the same for all chains in the network
     - Sequencer operation targets SLA expectations for rotation and availability
@@ -447,7 +447,7 @@ class KSSNProposerAgent:
         self._epoch_duration = None
         self._grace_period = None
 
-        logger.info(f"KSSN Proposer Agent initialized:")
+        logger.info("ISOCHRON Proposer Agent initialized:")
         logger.info(f"  Proposer: {self.proposer}")
         logger.info(f"  Hub: {config.hub_address}")
 
@@ -588,7 +588,7 @@ class KSSNProposerAgent:
         Returns True if handoff completed successfully.
         """
         logger.info("=" * 70)
-        logger.info("EXECUTING KSSN ACTIVE HANDOFF - ATOMIC MULTICHAIN ROTATION")
+        logger.info("EXECUTING ISOCHRON ACTIVE HANDOFF - ATOMIC MULTICHAIN ROTATION")
         logger.info("=" * 70)
 
         chain_count = self.get_active_chain_count()
@@ -639,7 +639,7 @@ class KSSNProposerAgent:
             if is_current:
                 # We just became the active proposer - start immediately
                 logger.info("=" * 70)
-                logger.info("THIS PROPOSER IS NOW ACTIVE FOR KSSN - Starting services")
+                logger.info("THIS PROPOSER IS NOW ACTIVE FOR ISOCHRON - Starting services")
                 logger.info(f"Epoch: {epoch}, Connected chains: {self.get_chain_count()}")
                 logger.info("=" * 70)
                 if self.controller.activate():
@@ -685,7 +685,7 @@ class KSSNProposerAgent:
 
     def run(self) -> None:
         """Main loop - poll on-chain state and manage services."""
-        logger.info(f"Starting KSSN Proposer Agent (poll interval: {self.config.poll_interval}s)")
+        logger.info(f"Starting ISOCHRON Proposer Agent (poll interval: {self.config.poll_interval}s)")
         logger.info(f"Handoff lead time: {self.config.handoff_lead_time}s")
         logger.info(f"Flush timeout: {self.config.flush_timeout}s")
 
@@ -712,7 +712,7 @@ class KSSNProposerAgent:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="KSSN Proposer Agent for Kleros Shared Sequencer Network"
+        description="ISOCHRON Proposer Agent for the shared sequencing network"
     )
     parser.add_argument(
         "--config", "-c",

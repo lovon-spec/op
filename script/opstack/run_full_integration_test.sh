@@ -1,22 +1,22 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# KLEROS SEQUENCER MANAGER - OP STACK INTEGRATION TEST
+# ISOCHRON SEQUENCER MANAGER - OP STACK INTEGRATION TEST
 # ═══════════════════════════════════════════════════════════════════════════════
 #
-# This script tests the integration between KlerosSequencerManager and
-# the OP Stack architecture. It verifies how the Kleros-governed rotation system
+# This script tests the integration between SequencerManager and
+# the OP Stack architecture. It verifies how the arbitration-governed rotation system
 # controls which sequencer/batcher is authorized to submit L2 batches to L1.
 #
 # Components:
 # - L1 (Anvil): Simulated Ethereum mainnet
 # - MockSystemConfig: Simulates OP Stack's SystemConfig contract
-# - KlerosSequencerManager: Controls batcherHash in SystemConfig
+# - SequencerManager: Controls batcherHash in SystemConfig
 # - Batcher Simulators: Multiple batchers checking authorization
 #
 # In a production OP Stack deployment:
 # - The real SystemConfig contract controls op-batcher authorization
 # - The op-node reads batcherHash to validate batch submissions
-# - KlerosSequencerManager would own SystemConfig and rotate sequencers
+# - SequencerManager would own SystemConfig and rotate sequencers
 
 set -e
 
@@ -105,11 +105,11 @@ print_warning() {
     echo -e "${YELLOW}    ! $1${NC}"
 }
 
-print_header "KLEROS SEQUENCER MANAGER - FULL OP STACK INTEGRATION TEST"
+print_header "ISOCHRON SEQUENCER MANAGER - FULL OP STACK INTEGRATION TEST"
 echo "This integration test simulates a complete OP Stack with:"
 echo "  - L1 chain (Anvil)"
 echo "  - Multiple sequencer/batcher processes"
-echo "  - Kleros-governed rotation between sequencers"
+echo "  - arbitration-governed rotation between sequencers"
 echo "  - Real batch submissions"
 echo ""
 
@@ -120,7 +120,7 @@ print_header "PHASE 1: Deploying L1 Contracts"
 
 cd "$PROJECT_ROOT"
 
-print_step "Deploying MockCurate, MockSystemConfig, and KlerosSequencerManager..."
+print_step "Deploying MockCurate, MockSystemConfig, and SequencerManager..."
 $FORGE script script/DeployLocal.s.sol:DeployLocal --rpc-url $RPC_URL --broadcast 2>&1 | grep -E "(deployed|transferred|Registered)" || true
 
 CURATE=$(get_contract_address "MockCurate")
@@ -129,7 +129,7 @@ MANAGER=$(get_contract_address "KlerosSequencerManager")
 
 print_info "MockCurate: $CURATE"
 print_info "MockSystemConfig: $SYSTEM_CONFIG"
-print_info "KlerosSequencerManager: $MANAGER"
+print_info "SequencerManager (legacy contract): $MANAGER"
 print_info "BatchInbox: $BATCH_INBOX"
 
 # ============================================================
@@ -232,7 +232,7 @@ sleep 5
 print_header "PHASE 6: Challenging Misbehaving Sequencer"
 
 print_step "Simulating: Sequencer 2 is caught extracting MEV..."
-print_warning "Evidence submitted to Kleros TCR"
+print_warning "Evidence submitted to the curation registry"
 
 # Get item ID for sequencer 2
 ITEM_ID=$($CAST call $MANAGER "itemIDFor(address)(bytes32)" $SEQUENCER_2 --rpc-url $RPC_URL)
@@ -295,9 +295,9 @@ sleep 3
 print_header "INTEGRATION TEST COMPLETE - SUMMARY"
 
 echo "L1 Contracts:"
-echo "  - MockCurate (Kleros TCR): $CURATE"
+echo "  - MockCurate (curation registry): $CURATE"
 echo "  - MockSystemConfig (OP Stack): $SYSTEM_CONFIG"
-echo "  - KlerosSequencerManager: $MANAGER"
+echo "  - SequencerManager (legacy contract): $MANAGER"
 echo ""
 echo "Tested Features:"
 echo "  [x] L1 contract deployment and configuration"
@@ -307,7 +307,7 @@ echo "  [x] Only authorized batcher submits batches"
 echo "  [x] Challenge and removal of misbehaving sequencer"
 echo "  [x] Guardian pause/unpause for emergencies"
 echo ""
-echo "This test verifies how KlerosSequencerManager integrates with OP Stack:"
+echo "This test verifies how SequencerManager integrates with OP Stack:"
 echo "  1. Manager controls SystemConfig.batcherHash"
 echo "  2. Each batcher checks if its address matches batcherHash"
 echo "  3. Only the authorized batcher's submissions are valid"

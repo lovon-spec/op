@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# Full OP Stack Devnet with Kleros Sequencer Manager
+# Full OP Stack Devnet with ISOCHRON Sequencer Manager
 #
 # This script runs a complete OP Stack devnet:
 # - L1: Anvil
 # - L2: op-geth + op-node
 # - Batcher: op-batcher (3 instances for rotation testing)
-# - Sequencer control: KlerosSequencerManager
+# - Sequencer control: SequencerManager (legacy contract)
 #
 
 set -e
@@ -123,7 +123,7 @@ print_header "PHASE 2: Deploying L1 Contracts"
 
 cd "$PROJECT_ROOT"
 
-echo "  Deploying KlerosSequencerManager and mocks..."
+echo "  Deploying SequencerManager and mocks..."
 forge script script/DeployLocal.s.sol:DeployLocal \
     --rpc-url "$L1_RPC" \
     --broadcast \
@@ -148,7 +148,7 @@ MANAGER=$(get_addr "KlerosSequencerManager")
 
 echo -e "  ${GREEN}✓${NC} MockCurate: $CURATE"
 echo -e "  ${GREEN}✓${NC} MockSystemConfig: $SYSTEM_CONFIG"
-echo -e "  ${GREEN}✓${NC} KlerosSequencerManager: $MANAGER"
+echo -e "  ${GREEN}✓${NC} SequencerManager (legacy): $MANAGER"
 
 # Get current sequencer
 CURRENT_SEQ=$(cast call "$MANAGER" "currentSequencer()(address)" --rpc-url "$L1_RPC")
@@ -428,7 +428,7 @@ echo ""
 echo "Contracts:"
 echo "  MockCurate: $CURATE"
 echo "  MockSystemConfig: $SYSTEM_CONFIG"
-echo "  KlerosSequencerManager: $MANAGER"
+echo "  SequencerManager (legacy): $MANAGER"
 echo ""
 echo "Current Sequencer: $CURRENT_SEQ"
 echo ""
@@ -438,7 +438,7 @@ echo ""
 # ============================================================
 print_header "TEST: Sequencer Rotation"
 
-echo "Testing sequencer rotation via KlerosSequencerManager..."
+echo "Testing sequencer rotation via SequencerManager..."
 echo ""
 
 advance_time() {

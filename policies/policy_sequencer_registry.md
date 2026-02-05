@@ -1,7 +1,7 @@
 # Sequencer Service-Level Policy
 
 ## 1. Preamble
-This registry lists authorized Sequencer Operators for the KSSN network. Inclusion signals that an Operator meets baseline reliability, security, and operational readiness standards. This policy is a service-level agreement (SLA) focused on uptime, rotation behavior, and operational hygiene. It is intentionally neutral on transaction content and does not prescribe censorship or inclusion rules.
+This registry lists authorized Sequencer Operators for the ISOCHRON network. Inclusion signals that an Operator meets baseline reliability, security, and operational readiness standards. This policy is a service-level agreement (SLA) focused on uptime, rotation behavior, and operational hygiene. It is intentionally neutral on transaction content and does not prescribe censorship or inclusion rules.
 
 ## 2. Acceptance Criteria (Registration Requirements)
 To be accepted into the registry, a submission must satisfy **ALL** of the following criteria.
@@ -19,7 +19,7 @@ To be accepted into the registry, a submission must satisfy **ALL** of the follo
 
 ### C. Operational Readiness Declaration
 * **Requirement:** The submission must include the following declaration:
-  > "I certify that I operate sequencer infrastructure capable of meeting KSSN SLA requirements, including active handoff procedures and monitoring. I agree that persistent SLA violations can lead to removal from this registry."
+  > "I certify that I operate sequencer infrastructure capable of meeting ISOCHRON SLA requirements, including active handoff procedures and monitoring. I agree that persistent SLA violations can lead to removal from this registry."
 
 ## 3. Service-Level Requirements (Grounds for Removal)
 

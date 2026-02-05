@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 /**
  * @title ISharedSequencerHub
- * @notice Interface for the Kleros Shared Sequencer Hub - the central nervous system of KSSN.
+ * @notice Interface for the ISOCHRON Shared Sequencer Hub - the central nervous system of ISOCHRON.
  * @dev The Hub is the single source of truth for the "Active Proposer" and manages
  *      atomic rotation of all connected rollup chains in a single transaction.
  *
