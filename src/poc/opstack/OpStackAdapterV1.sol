@@ -7,21 +7,19 @@ import {ISystemConfig} from "./interfaces/ISystemConfig.sol";
 /**
  * @title OpStackAdapterV1
  * @notice OP Stack adapter for Bedrock/Ecotone sequencer rotation.
- * @dev Implements sequencer rotation for OP Stack chains using:
+ * @dev Implements sequencer rotation for OP Stack chains by returning
+ *      the calldata needed to update SystemConfig:
  *      - setBatcherHash() for batch submitter authorization
  *      - setUnsafeBlockSigner() for P2P block signing authorization
  *
- *      This adapter is designed to be called via delegatecall from
- *      SharedSequencerHub, which must be the owner of the target
- *      SystemConfig contract(s).
+ *      This adapter is called via regular `call` from SharedSequencerHub.
+ *      It returns calldata that the Hub executes against the target
+ *      SystemConfig contract(s). The Hub must be the owner of SystemConfig.
  *
  *      Version: 1.0.0 (1_000_000)
  */
 contract OpStackAdapterV1 is ISequencerAdapter {
     // ============ Errors ============
-
-    /// @notice Thrown when sequencer rotation fails
-    error RotationFailed(string reason);
 
     /// @notice Thrown when SystemConfig address is invalid
     error InvalidSystemConfig();
@@ -31,15 +29,6 @@ contract OpStackAdapterV1 is ISequencerAdapter {
 
     /// @notice Thrown when rotation payload is malformed
     error InvalidRotationPayload();
-
-    // ============ Events ============
-
-    /// @notice Emitted when a sequencer rotation is executed
-    event SequencerRotated(
-        address indexed systemConfig,
-        address indexed batcher,
-        address indexed unsafeSigner
-    );
 
     // ============ Constants ============
 
@@ -68,13 +57,15 @@ contract OpStackAdapterV1 is ISequencerAdapter {
         return (NAME, DESCRIPTION);
     }
 
-    // ============ Mutating Functions ============
-
     /**
      * @inheritdoc ISequencerAdapter
      * @dev Rotation payload is abi-encoded as (address batcher, address unsafeSigner).
+     *      Returns two calls: setBatcherHash and setUnsafeBlockSigner.
      */
-    function rotateSequencer(address _systemConfig, bytes calldata _rotationData) external override {
+    function getRotationCalldata(
+        address _systemConfig,
+        bytes calldata _rotationData
+    ) external pure virtual override returns (bytes[] memory calls) {
         if (_systemConfig == address(0)) {
             revert InvalidSystemConfig();
         }
@@ -89,27 +80,11 @@ contract OpStackAdapterV1 is ISequencerAdapter {
             revert InvalidOperatorKeys();
         }
 
-        ISystemConfig config = ISystemConfig(_systemConfig);
-
         // Convert batcher address to V0 hash format
         bytes32 batcherHash = bytes32(uint256(uint160(batcher)));
 
-        try config.setBatcherHash(batcherHash) {
-            // Success
-        } catch Error(string memory reason) {
-            revert RotationFailed(reason);
-        } catch {
-            revert RotationFailed("setBatcherHash failed");
-        }
-
-        try config.setUnsafeBlockSigner(unsafeSigner) {
-            // Success
-        } catch Error(string memory reason) {
-            revert RotationFailed(reason);
-        } catch {
-            revert RotationFailed("setUnsafeBlockSigner failed");
-        }
-
-        emit SequencerRotated(_systemConfig, batcher, unsafeSigner);
+        calls = new bytes[](2);
+        calls[0] = abi.encodeWithSelector(ISystemConfig.setBatcherHash.selector, batcherHash);
+        calls[1] = abi.encodeWithSelector(ISystemConfig.setUnsafeBlockSigner.selector, unsafeSigner);
     }
 }

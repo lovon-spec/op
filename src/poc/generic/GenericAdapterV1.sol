@@ -11,15 +11,15 @@ import {ISequencerAdapter} from "../../interfaces/ISequencerAdapter.sol";
  *      function selector and ABI encoding to support heterogeneous chains.
  *
  *      Supports two modes:
- *      1. Direct call: Calls a function directly on the rollup config contract
- *      2. Multi-call: Executes multiple function calls for complex rotations
+ *      1. Direct call: Returns calldata for a single function call on the rollup config
+ *      2. Multi-call: Returns calldata for multiple function calls for complex rotations
  *
  *      This adapter is designed as a plug-and-play solution for chains that
  *      don't need a specialized adapter (like OP Stack or Arbitrum).
  *
  *      Rotation payload format:
  *      Single call: abi.encode(bytes4 selector, bytes callData)
- *      Multi-call:  abi.encode(bytes4[] selectors, bytes[] callDatas)
+ *      Multi-call:  0xFF ++ abi.encode(bytes4[] selectors, bytes[] callDatas)
  *
  *      Future adapters (e.g., Cosmos/IBC) can extend this pattern.
  *
@@ -28,15 +28,8 @@ import {ISequencerAdapter} from "../../interfaces/ISequencerAdapter.sol";
 contract GenericAdapterV1 is ISequencerAdapter {
     // ============ Errors ============
 
-    error RotationFailed(string reason);
     error InvalidRollupConfig();
     error InvalidRotationPayload();
-    error CallFailed(uint256 index);
-
-    // ============ Events ============
-
-    event SequencerRotated(address indexed rollupConfig, bytes4 selector);
-    event MultiCallExecuted(address indexed rollupConfig, uint256 callCount);
 
     // ============ Constants ============
 
@@ -63,19 +56,20 @@ contract GenericAdapterV1 is ISequencerAdapter {
         return (NAME, DESCRIPTION);
     }
 
-    // ============ Mutating Functions ============
-
     /**
      * @inheritdoc ISequencerAdapter
      * @dev Supports single-call and multi-call rotation modes.
      *
      *      Single call payload: abi.encode(bytes4 selector, bytes callData)
-     *      The adapter calls rollupConfig.call(abi.encodePacked(selector, callData))
+     *      Returns: [abi.encodePacked(selector, callData)]
      *
-     *      Multi-call payload: abi.encode(0xFF, bytes4[] selectors, bytes[] callDatas)
-     *      The adapter calls each (selector, callData) pair in order
+     *      Multi-call payload: 0xFF ++ abi.encode(bytes4[] selectors, bytes[] callDatas)
+     *      Returns: [abi.encodePacked(selectors[0], callDatas[0]), ...]
      */
-    function rotateSequencer(address _rollupConfig, bytes calldata _rotationData) external override {
+    function getRotationCalldata(
+        address _rollupConfig,
+        bytes calldata _rotationData
+    ) external pure override returns (bytes[] memory calls) {
         if (_rollupConfig == address(0)) {
             revert InvalidRollupConfig();
         }
@@ -85,30 +79,22 @@ contract GenericAdapterV1 is ISequencerAdapter {
         }
 
         // Check for multi-call mode (first byte is 0xFF)
-        if (_rotationData.length > 0 && _rotationData[0] == MULTI_CALL_PREFIX) {
-            _executeMultiCall(_rollupConfig, _rotationData[1:]);
+        if (_rotationData[0] == MULTI_CALL_PREFIX) {
+            calls = _buildMultiCallData(_rotationData[1:]);
         } else {
-            _executeSingleCall(_rollupConfig, _rotationData);
+            calls = new bytes[](1);
+            calls[0] = _buildSingleCallData(_rotationData);
         }
     }
 
     // ============ Internal Functions ============
 
-    function _executeSingleCall(address _rollupConfig, bytes calldata _data) internal {
-        // Decode: (bytes4 selector, bytes callData)
+    function _buildSingleCallData(bytes calldata _data) internal pure returns (bytes memory) {
         (bytes4 selector, bytes memory callData) = abi.decode(_data, (bytes4, bytes));
-
-        bytes memory fullCallData = abi.encodePacked(selector, callData);
-
-        (bool success,) = _rollupConfig.call(fullCallData);
-        if (!success) {
-            revert RotationFailed("Single call failed");
-        }
-
-        emit SequencerRotated(_rollupConfig, selector);
+        return abi.encodePacked(selector, callData);
     }
 
-    function _executeMultiCall(address _rollupConfig, bytes calldata _data) internal {
+    function _buildMultiCallData(bytes calldata _data) internal pure returns (bytes[] memory calls) {
         (bytes4[] memory selectors, bytes[] memory callDatas) =
             abi.decode(_data, (bytes4[], bytes[]));
 
@@ -116,15 +102,9 @@ contract GenericAdapterV1 is ISequencerAdapter {
             revert InvalidRotationPayload();
         }
 
+        calls = new bytes[](selectors.length);
         for (uint256 i = 0; i < selectors.length; i++) {
-            bytes memory fullCallData = abi.encodePacked(selectors[i], callDatas[i]);
-
-            (bool success,) = _rollupConfig.call(fullCallData);
-            if (!success) {
-                revert CallFailed(i);
-            }
+            calls[i] = abi.encodePacked(selectors[i], callDatas[i]);
         }
-
-        emit MultiCallExecuted(_rollupConfig, selectors.length);
     }
 }

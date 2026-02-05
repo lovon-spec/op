@@ -7,12 +7,11 @@ import {ISequencerInbox} from "./interfaces/IArbitrumRollup.sol";
 /**
  * @title ArbitrumAdapterV1
  * @notice Arbitrum Nitro adapter for sequencer rotation in ISOCHRON.
- * @dev Implements sequencer rotation for Arbitrum Nitro chains by:
- *      - Updating the SequencerInbox batch poster authorization
+ * @dev Returns the calldata needed for Arbitrum Nitro sequencer rotation:
  *      - Revoking the old sequencer's batch poster rights
  *      - Granting the new sequencer batch poster rights
  *
- *      Called via delegatecall from SharedSequencerHub.
+ *      Called via regular `call` from SharedSequencerHub.
  *      The Hub must have admin rights over the target SequencerInbox.
  *
  *      Rotation payload: abi.encode(address newBatchPoster, address oldBatchPoster)
@@ -22,18 +21,9 @@ import {ISequencerInbox} from "./interfaces/IArbitrumRollup.sol";
 contract ArbitrumAdapterV1 is ISequencerAdapter {
     // ============ Errors ============
 
-    error RotationFailed(string reason);
     error InvalidSequencerInbox();
     error InvalidOperatorKeys();
     error InvalidRotationPayload();
-
-    // ============ Events ============
-
-    event SequencerRotated(
-        address indexed sequencerInbox,
-        address indexed newBatchPoster,
-        address indexed oldBatchPoster
-    );
 
     // ============ Constants ============
 
@@ -56,16 +46,15 @@ contract ArbitrumAdapterV1 is ISequencerAdapter {
         return (NAME, DESCRIPTION);
     }
 
-    // ============ Mutating Functions ============
-
     /**
      * @inheritdoc ISequencerAdapter
      * @dev Rotation payload: abi.encode(address newBatchPoster, address oldBatchPoster)
+     *      Returns 1-2 calls depending on whether oldBatchPoster is specified.
      */
-    function rotateSequencer(address _sequencerInbox, bytes calldata _rotationData)
-        external
-        override
-    {
+    function getRotationCalldata(
+        address _sequencerInbox,
+        bytes calldata _rotationData
+    ) external pure override returns (bytes[] memory calls) {
         if (_sequencerInbox == address(0)) {
             revert InvalidSequencerInbox();
         }
@@ -81,26 +70,13 @@ contract ArbitrumAdapterV1 is ISequencerAdapter {
             revert InvalidOperatorKeys();
         }
 
-        ISequencerInbox inbox = ISequencerInbox(_sequencerInbox);
-
-        // Revoke old batch poster if specified
         if (oldBatchPoster != address(0)) {
-            try inbox.setIsBatchPoster(oldBatchPoster, false) {}
-            catch Error(string memory reason) {
-                revert RotationFailed(reason);
-            } catch {
-                revert RotationFailed("Revoke old batch poster failed");
-            }
+            calls = new bytes[](2);
+            calls[0] = abi.encodeWithSelector(ISequencerInbox.setIsBatchPoster.selector, oldBatchPoster, false);
+            calls[1] = abi.encodeWithSelector(ISequencerInbox.setIsBatchPoster.selector, newBatchPoster, true);
+        } else {
+            calls = new bytes[](1);
+            calls[0] = abi.encodeWithSelector(ISequencerInbox.setIsBatchPoster.selector, newBatchPoster, true);
         }
-
-        // Grant new batch poster
-        try inbox.setIsBatchPoster(newBatchPoster, true) {}
-        catch Error(string memory reason) {
-            revert RotationFailed(reason);
-        } catch {
-            revert RotationFailed("Set new batch poster failed");
-        }
-
-        emit SequencerRotated(_sequencerInbox, newBatchPoster, oldBatchPoster);
     }
 }

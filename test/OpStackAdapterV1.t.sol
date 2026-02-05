@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {OpStackAdapterV1} from "../src/poc/opstack/OpStackAdapterV1.sol";
+import {ISystemConfig} from "../src/poc/opstack/interfaces/ISystemConfig.sol";
 import {MockSystemConfig} from "./mocks/MockSystemConfig.sol";
 
 /**
@@ -11,10 +12,10 @@ import {MockSystemConfig} from "./mocks/MockSystemConfig.sol";
  *
  * Tests cover:
  * - Version and metadata functions
- * - Sequencer rotation functionality
+ * - Rotation calldata generation
  * - Error cases (invalid inputs)
  * - BatcherHash format validation
- * - Event emission
+ * - Hub-executed rotation via returned calldata
  */
 contract OpStackAdapterV1Test is Test {
     OpStackAdapterV1 public adapter;
@@ -23,26 +24,12 @@ contract OpStackAdapterV1Test is Test {
     address public batcher = address(0x100);
     address public unsafeSigner = address(0x200);
 
-    // Events
-    event SequencerRotated(
-        address indexed systemConfig,
-        address indexed batcher,
-        address indexed unsafeSigner
-    );
-
     function setUp() public {
         // Deploy adapter
         adapter = new OpStackAdapterV1();
 
         // Deploy mock SystemConfig - this test contract is the initial owner
         systemConfig = new MockSystemConfig();
-
-        // Transfer ownership to the adapter for direct call tests.
-        // When calling adapter.rotateSequencer() directly (not via delegatecall),
-        // the adapter makes external calls to SystemConfig where msg.sender = adapter address.
-        // In real usage, the adapter is called via delegatecall from the manager,
-        // so msg.sender would be the manager (which owns SystemConfig).
-        systemConfig.transferOwnership(address(adapter));
     }
 
     // ============ Version Tests ============
@@ -75,14 +62,38 @@ contract OpStackAdapterV1Test is Test {
         assertEq(adapter.DESCRIPTION(), "OP Stack Bedrock/Ecotone sequencer rotation adapter");
     }
 
-    // ============ Rotation Tests ============
+    // ============ Rotation Calldata Tests ============
 
-    function test_RotateSequencer_Success() public {
-        vm.expectEmit(true, true, true, false);
-        emit SequencerRotated(address(systemConfig), batcher, unsafeSigner);
+    function test_GetRotationCalldata_ReturnsCorrectCalls() public view {
+        bytes[] memory calls = adapter.getRotationCalldata(
+            address(systemConfig),
+            abi.encode(batcher, unsafeSigner)
+        );
 
-        // This contract is the owner of SystemConfig
-        adapter.rotateSequencer(address(systemConfig), abi.encode(batcher, unsafeSigner));
+        assertEq(calls.length, 2);
+
+        // Verify first call is setBatcherHash
+        bytes32 expectedBatcherHash = bytes32(uint256(uint160(batcher)));
+        assertEq(calls[0], abi.encodeWithSelector(ISystemConfig.setBatcherHash.selector, expectedBatcherHash));
+
+        // Verify second call is setUnsafeBlockSigner
+        assertEq(calls[1], abi.encodeWithSelector(ISystemConfig.setUnsafeBlockSigner.selector, unsafeSigner));
+    }
+
+    function test_GetRotationCalldata_ExecutedByHub() public {
+        // Simulate the Hub pattern: get calldata from adapter, execute against rollup config
+        // This test contract acts as the Hub (owner of systemConfig)
+
+        bytes[] memory calls = adapter.getRotationCalldata(
+            address(systemConfig),
+            abi.encode(batcher, unsafeSigner)
+        );
+
+        // Execute calls against systemConfig (this contract is the owner)
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool success, ) = address(systemConfig).call(calls[i]);
+            assertTrue(success);
+        }
 
         // Verify SystemConfig was updated
         bytes32 expectedBatcherHash = bytes32(uint256(uint160(batcher)));
@@ -90,14 +101,21 @@ contract OpStackAdapterV1Test is Test {
         assertEq(systemConfig.unsafeBlockSigner(), unsafeSigner);
     }
 
-    function test_RotateSequencer_BatcherHashFormat() public {
-        // Test that batcher address is correctly converted to V0 hash format
-        adapter.rotateSequencer(address(systemConfig), abi.encode(batcher, unsafeSigner));
+    function test_GetRotationCalldata_BatcherHashFormat() public {
+        bytes[] memory calls = adapter.getRotationCalldata(
+            address(systemConfig),
+            abi.encode(batcher, unsafeSigner)
+        );
+
+        // Execute to verify batcher hash format
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool success, ) = address(systemConfig).call(calls[i]);
+            assertTrue(success);
+        }
 
         bytes32 batcherHash = systemConfig.batcherHash();
 
         // V0 format: bytes32(uint256(uint160(address)))
-        // This means the address is right-aligned in the 32-byte value
         assertEq(batcherHash, bytes32(uint256(uint160(batcher))));
 
         // Verify we can extract the original address
@@ -105,30 +123,51 @@ contract OpStackAdapterV1Test is Test {
         assertEq(extracted, batcher);
     }
 
-    function test_RotateSequencer_DifferentAddresses() public {
+    function test_GetRotationCalldata_DifferentAddresses() public {
         address batcher1 = address(0x1111);
         address signer1 = address(0x2222);
         address batcher2 = address(0x3333);
         address signer2 = address(0x4444);
 
         // First rotation
-        adapter.rotateSequencer(address(systemConfig), abi.encode(batcher1, signer1));
+        bytes[] memory calls1 = adapter.getRotationCalldata(
+            address(systemConfig),
+            abi.encode(batcher1, signer1)
+        );
+        for (uint256 i = 0; i < calls1.length; i++) {
+            (bool success, ) = address(systemConfig).call(calls1[i]);
+            assertTrue(success);
+        }
 
         assertEq(systemConfig.batcherHash(), bytes32(uint256(uint160(batcher1))));
         assertEq(systemConfig.unsafeBlockSigner(), signer1);
 
         // Second rotation
-        adapter.rotateSequencer(address(systemConfig), abi.encode(batcher2, signer2));
+        bytes[] memory calls2 = adapter.getRotationCalldata(
+            address(systemConfig),
+            abi.encode(batcher2, signer2)
+        );
+        for (uint256 i = 0; i < calls2.length; i++) {
+            (bool success, ) = address(systemConfig).call(calls2[i]);
+            assertTrue(success);
+        }
 
         assertEq(systemConfig.batcherHash(), bytes32(uint256(uint160(batcher2))));
         assertEq(systemConfig.unsafeBlockSigner(), signer2);
     }
 
-    function test_RotateSequencer_SameBatcherAndSigner() public {
-        // Test case where batcher and signer are the same address
+    function test_GetRotationCalldata_SameBatcherAndSigner() public {
         address combined = address(0x5555);
 
-        adapter.rotateSequencer(address(systemConfig), abi.encode(combined, combined));
+        bytes[] memory calls = adapter.getRotationCalldata(
+            address(systemConfig),
+            abi.encode(combined, combined)
+        );
+
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool success, ) = address(systemConfig).call(calls[i]);
+            assertTrue(success);
+        }
 
         assertEq(systemConfig.batcherHash(), bytes32(uint256(uint160(combined))));
         assertEq(systemConfig.unsafeBlockSigner(), combined);
@@ -136,79 +175,93 @@ contract OpStackAdapterV1Test is Test {
 
     // ============ Error Tests ============
 
-    function test_RotateSequencer_RevertZeroSystemConfig() public {
+    function test_GetRotationCalldata_RevertZeroSystemConfig() public {
         vm.expectRevert(OpStackAdapterV1.InvalidSystemConfig.selector);
-        adapter.rotateSequencer(address(0), abi.encode(batcher, unsafeSigner));
+        adapter.getRotationCalldata(address(0), abi.encode(batcher, unsafeSigner));
     }
 
-    function test_RotateSequencer_RevertZeroBatcher() public {
+    function test_GetRotationCalldata_RevertZeroBatcher() public {
         vm.expectRevert(OpStackAdapterV1.InvalidOperatorKeys.selector);
-        adapter.rotateSequencer(address(systemConfig), abi.encode(address(0), unsafeSigner));
+        adapter.getRotationCalldata(address(systemConfig), abi.encode(address(0), unsafeSigner));
     }
 
-    function test_RotateSequencer_RevertZeroSigner() public {
+    function test_GetRotationCalldata_RevertZeroSigner() public {
         vm.expectRevert(OpStackAdapterV1.InvalidOperatorKeys.selector);
-        adapter.rotateSequencer(address(systemConfig), abi.encode(batcher, address(0)));
+        adapter.getRotationCalldata(address(systemConfig), abi.encode(batcher, address(0)));
     }
 
-    function test_RotateSequencer_RevertBothZero() public {
+    function test_GetRotationCalldata_RevertBothZero() public {
         vm.expectRevert(OpStackAdapterV1.InvalidOperatorKeys.selector);
-        adapter.rotateSequencer(address(systemConfig), abi.encode(address(0), address(0)));
+        adapter.getRotationCalldata(address(systemConfig), abi.encode(address(0), address(0)));
     }
 
-    function test_RotateSequencer_RevertNotOwner() public {
-        // Create a separate SystemConfig owned by someone else
+    function test_GetRotationCalldata_RevertNotOwner() public {
+        // Create a SystemConfig owned by someone else
         MockSystemConfig otherConfig = new MockSystemConfig();
-        // otherConfig is owned by this test contract, not the adapter
 
-        // When adapter calls otherConfig, msg.sender = adapter (not owner)
-        // The adapter wraps the error in RotationFailed
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                OpStackAdapterV1.RotationFailed.selector,
-                "SystemConfig: caller is not the owner"
-            )
+        // Get calldata (this succeeds - adapter just returns calldata)
+        bytes[] memory calls = adapter.getRotationCalldata(
+            address(otherConfig),
+            abi.encode(batcher, unsafeSigner)
         );
-        adapter.rotateSequencer(address(otherConfig), abi.encode(batcher, unsafeSigner));
+
+        // Execute from a non-owner address - should fail at the rollup config level
+        vm.prank(address(0xDEAD));
+        (bool success, ) = address(otherConfig).call(calls[0]);
+        assertFalse(success);
     }
 
-    function test_RotateSequencer_RevertInvalidSystemConfig() public {
-        // Create a contract that doesn't implement the required functions
-        address invalidConfig = address(new InvalidSystemConfig());
+    // ============ Hub Pattern Tests ============
 
-        vm.expectRevert();
-        adapter.rotateSequencer(invalidConfig, abi.encode(batcher, unsafeSigner));
-    }
+    function test_GetRotationCalldata_HubPatternPreservesOwnership() public {
+        // Simulate the full Hub pattern:
+        // 1. Hub (HubCaller) owns the systemConfig
+        // 2. Hub calls adapter.getRotationCalldata() (regular call)
+        // 3. Hub executes returned calldata against systemConfig
 
-    // ============ Delegatecall Context Tests ============
+        MockSystemConfig hubOwnedConfig = new MockSystemConfig();
+        HubCaller hubCaller = new HubCaller(address(adapter));
+        hubOwnedConfig.transferOwnership(address(hubCaller));
 
-    function test_RotateSequencer_WorksViaDelegatecall() public {
-        // Simulate how SharedSequencerHub calls the adapter via delegatecall
-        // The manager must be the owner of SystemConfig
-
-        // Create a fresh SystemConfig for this test
-        MockSystemConfig delegatecallConfig = new MockSystemConfig();
-
-        // Create caller and transfer ownership to it
-        DelegatecallCaller caller = new DelegatecallCaller(address(adapter));
-        delegatecallConfig.transferOwnership(address(caller));
-
-        // Execute rotation via delegatecall
-        // When using delegatecall, msg.sender is preserved as the caller
-        caller.executeRotation(address(delegatecallConfig), batcher, unsafeSigner);
+        // Hub executes the rotation
+        hubCaller.executeRotation(address(hubOwnedConfig), batcher, unsafeSigner);
 
         // Verify the rotation worked
-        assertEq(delegatecallConfig.batcherHash(), bytes32(uint256(uint160(batcher))));
-        assertEq(delegatecallConfig.unsafeBlockSigner(), unsafeSigner);
+        assertEq(hubOwnedConfig.batcherHash(), bytes32(uint256(uint160(batcher))));
+        assertEq(hubOwnedConfig.unsafeBlockSigner(), unsafeSigner);
+    }
+
+    function test_GetRotationCalldata_AdapterCannotModifyHubStorage() public {
+        // This test verifies the security improvement: adapter is called via
+        // regular `call` (view function), so it cannot modify caller storage.
+        // The adapter just returns data - no delegatecall involved.
+
+        HubCaller hubCaller = new HubCaller(address(adapter));
+        uint256 valueBefore = hubCaller.safetyCheck();
+
+        MockSystemConfig hubOwnedConfig = new MockSystemConfig();
+        hubOwnedConfig.transferOwnership(address(hubCaller));
+        hubCaller.executeRotation(address(hubOwnedConfig), batcher, unsafeSigner);
+
+        // Hub's storage is unchanged (adapter couldn't modify it)
+        assertEq(hubCaller.safetyCheck(), valueBefore);
     }
 
     // ============ Fuzz Tests ============
 
-    function testFuzz_RotateSequencer(address _batcher, address _signer) public {
+    function testFuzz_GetRotationCalldata(address _batcher, address _signer) public {
         vm.assume(_batcher != address(0));
         vm.assume(_signer != address(0));
 
-        adapter.rotateSequencer(address(systemConfig), abi.encode(_batcher, _signer));
+        bytes[] memory calls = adapter.getRotationCalldata(
+            address(systemConfig),
+            abi.encode(_batcher, _signer)
+        );
+
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool success, ) = address(systemConfig).call(calls[i]);
+            assertTrue(success);
+        }
 
         assertEq(systemConfig.batcherHash(), bytes32(uint256(uint160(_batcher))));
         assertEq(systemConfig.unsafeBlockSigner(), _signer);
@@ -217,7 +270,15 @@ contract OpStackAdapterV1Test is Test {
     function testFuzz_BatcherHashConversion(address _batcher) public {
         vm.assume(_batcher != address(0));
 
-        adapter.rotateSequencer(address(systemConfig), abi.encode(_batcher, unsafeSigner));
+        bytes[] memory calls = adapter.getRotationCalldata(
+            address(systemConfig),
+            abi.encode(_batcher, unsafeSigner)
+        );
+
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool success, ) = address(systemConfig).call(calls[i]);
+            assertTrue(success);
+        }
 
         bytes32 batcherHash = systemConfig.batcherHash();
         address extracted = address(uint160(uint256(batcherHash)));
@@ -231,7 +292,7 @@ contract OpStackAdapterV1Test is Test {
         // Verify the adapter implements all required interface functions
         adapter.version();
         adapter.adapterInfo();
-        // rotateSequencer is tested above
+        // getRotationCalldata is tested above
     }
 }
 
@@ -244,11 +305,14 @@ contract InvalidSystemConfig {
 }
 
 /**
- * @title DelegatecallCaller
- * @notice Helper contract to test delegatecall behavior.
+ * @title HubCaller
+ * @notice Helper contract to test the Hub call pattern (replacing old DelegatecallCaller).
+ * @dev Simulates how SharedSequencerHub calls adapters: regular call to get calldata,
+ *      then execute calldata against the rollup config.
  */
-contract DelegatecallCaller {
+contract HubCaller {
     address public immutable adapter;
+    uint256 public safetyCheck = 42; // Used to verify adapter can't modify our storage
 
     constructor(address _adapter) {
         adapter = _adapter;
@@ -259,21 +323,23 @@ contract DelegatecallCaller {
         address _batcher,
         address _unsafeSigner
     ) external {
-        bytes memory data = abi.encodeWithSelector(
-            OpStackAdapterV1.rotateSequencer.selector,
+        // Step 1: Call adapter (regular call) to get rotation calldata
+        bytes[] memory calls = OpStackAdapterV1(adapter).getRotationCalldata(
             _systemConfig,
             abi.encode(_batcher, _unsafeSigner)
         );
 
-        (bool success, bytes memory returnData) = adapter.delegatecall(data);
-
-        if (!success) {
-            if (returnData.length > 0) {
-                assembly {
-                    revert(add(returnData, 32), mload(returnData))
+        // Step 2: Execute each call against the rollup config
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool success, bytes memory returnData) = _systemConfig.call(calls[i]);
+            if (!success) {
+                if (returnData.length > 0) {
+                    assembly {
+                        revert(add(returnData, 32), mload(returnData))
+                    }
                 }
+                revert("Call failed");
             }
-            revert("Delegatecall failed");
         }
     }
 }

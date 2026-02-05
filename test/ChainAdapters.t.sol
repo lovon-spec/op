@@ -45,42 +45,58 @@ contract ChainAdaptersTest is Test {
         assertTrue(bytes(description).length > 0);
     }
 
-    function test_Arbitrum_RotateSequencer_Success() public {
+    function test_Arbitrum_GetRotationCalldata_Success() public {
         bytes memory rotationData = abi.encode(newBatchPoster, oldBatchPoster);
 
-        arbitrumAdapter.rotateSequencer(address(sequencerInbox), rotationData);
+        bytes[] memory calls = arbitrumAdapter.getRotationCalldata(address(sequencerInbox), rotationData);
+
+        assertEq(calls.length, 2);
+
+        // Execute calls against the sequencer inbox
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool success, ) = address(sequencerInbox).call(calls[i]);
+            assertTrue(success);
+        }
 
         assertTrue(sequencerInbox.batchPosters(newBatchPoster));
         assertFalse(sequencerInbox.batchPosters(oldBatchPoster));
     }
 
-    function test_Arbitrum_RotateSequencer_WithoutOldPoster() public {
+    function test_Arbitrum_GetRotationCalldata_WithoutOldPoster() public {
         bytes memory rotationData = abi.encode(newBatchPoster, address(0));
 
-        arbitrumAdapter.rotateSequencer(address(sequencerInbox), rotationData);
+        bytes[] memory calls = arbitrumAdapter.getRotationCalldata(address(sequencerInbox), rotationData);
+
+        assertEq(calls.length, 1);
+
+        // Execute calls
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool success, ) = address(sequencerInbox).call(calls[i]);
+            assertTrue(success);
+        }
 
         assertTrue(sequencerInbox.batchPosters(newBatchPoster));
         // Old poster still active since we passed address(0)
         assertTrue(sequencerInbox.batchPosters(oldBatchPoster));
     }
 
-    function test_Arbitrum_RotateSequencer_RevertsIfInvalidInbox() public {
+    function test_Arbitrum_GetRotationCalldata_RevertsIfInvalidInbox() public {
         bytes memory rotationData = abi.encode(newBatchPoster, oldBatchPoster);
 
         vm.expectRevert(ArbitrumAdapterV1.InvalidSequencerInbox.selector);
-        arbitrumAdapter.rotateSequencer(address(0), rotationData);
+        arbitrumAdapter.getRotationCalldata(address(0), rotationData);
     }
 
-    function test_Arbitrum_RotateSequencer_RevertsIfInvalidPayload() public {
+    function test_Arbitrum_GetRotationCalldata_RevertsIfInvalidPayload() public {
         vm.expectRevert(ArbitrumAdapterV1.InvalidRotationPayload.selector);
-        arbitrumAdapter.rotateSequencer(address(sequencerInbox), hex"deadbeef");
+        arbitrumAdapter.getRotationCalldata(address(sequencerInbox), hex"deadbeef");
     }
 
-    function test_Arbitrum_RotateSequencer_RevertsIfZeroNewPoster() public {
+    function test_Arbitrum_GetRotationCalldata_RevertsIfZeroNewPoster() public {
         bytes memory rotationData = abi.encode(address(0), oldBatchPoster);
 
         vm.expectRevert(ArbitrumAdapterV1.InvalidOperatorKeys.selector);
-        arbitrumAdapter.rotateSequencer(address(sequencerInbox), rotationData);
+        arbitrumAdapter.getRotationCalldata(address(sequencerInbox), rotationData);
     }
 
     // ============ Generic Adapter Tests ============
@@ -102,19 +118,27 @@ contract ChainAdaptersTest is Test {
 
         bytes memory rotationData = abi.encode(selector, callData);
 
-        genericAdapter.rotateSequencer(address(genericRollup), rotationData);
+        bytes[] memory calls = genericAdapter.getRotationCalldata(address(genericRollup), rotationData);
+
+        assertEq(calls.length, 1);
+
+        // Execute calls against the generic rollup
+        for (uint256 i = 0; i < calls.length; i++) {
+            (bool success, ) = address(genericRollup).call(calls[i]);
+            assertTrue(success);
+        }
 
         assertEq(genericRollup.currentSequencer(), address(0x42));
     }
 
     function test_Generic_RevertsIfInvalidConfig() public {
         vm.expectRevert(GenericAdapterV1.InvalidRollupConfig.selector);
-        genericAdapter.rotateSequencer(address(0), hex"00000000");
+        genericAdapter.getRotationCalldata(address(0), hex"00000000");
     }
 
     function test_Generic_RevertsIfPayloadTooShort() public {
         vm.expectRevert(GenericAdapterV1.InvalidRotationPayload.selector);
-        genericAdapter.rotateSequencer(address(genericRollup), hex"00");
+        genericAdapter.getRotationCalldata(address(genericRollup), hex"00");
     }
 }
 

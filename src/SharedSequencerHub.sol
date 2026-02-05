@@ -310,6 +310,10 @@ contract SharedSequencerHub is ISharedSequencerHub {
 
     /**
      * @dev Executes rotation for a range of chains.
+     *      Uses a two-step call pattern instead of delegatecall to prevent
+     *      untrusted adapter code from modifying Hub storage:
+     *      1. Call adapter (regular call) to get rotation calldata (view function)
+     *      2. Execute the returned calldata against the rollup config (Hub is msg.sender)
      * @param _nextProposer The next proposer address
      * @param _startIndex Start index in the chains array
      * @param _endIndex End index in the chains array
@@ -327,21 +331,31 @@ contract SharedSequencerHub is ISharedSequencerHub {
 
             if (!chain.isActive) continue;
 
-            // Use delegatecall to execute adapter code in Hub's context
-            // This allows the Hub (as rollup config owner) to update chains
-            // while supporting versioned adapter logic
+            // Step 1: Get adapter-specific rotation data from proposer registry
             bytes memory rotationData = IProposerRegistry(proposerRegistry)
                 .getAdapterData(_nextProposer, chain.adapter);
 
-            bytes memory callData = abi.encodeWithSelector(
-                ISequencerAdapter.rotateSequencer.selector,
+            // Step 2: Call adapter (regular call) to get the calldata for rotation.
+            // This is a view function - the adapter cannot modify Hub storage.
+            bool chainSuccess = true;
+            try ISequencerAdapter(chain.adapter).getRotationCalldata(
                 chain.rollupConfig,
                 rotationData
-            );
+            ) returns (bytes[] memory calls) {
+                // Step 3: Execute each call against the rollup config.
+                // The Hub is msg.sender, preserving ownership semantics.
+                for (uint256 j = 0; j < calls.length; j++) {
+                    (bool callSuccess, ) = chain.rollupConfig.call(calls[j]);
+                    if (!callSuccess) {
+                        chainSuccess = false;
+                        break;
+                    }
+                }
+            } catch {
+                chainSuccess = false;
+            }
 
-            (bool success, ) = chain.adapter.delegatecall(callData);
-
-            if (success) {
+            if (chainSuccess) {
                 chainsUpdated++;
             } else {
                 // Log failure but continue with other chains

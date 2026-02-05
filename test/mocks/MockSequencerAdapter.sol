@@ -27,11 +27,16 @@ contract MockSequencerAdapter is ISequencerAdapter {
         return (NAME, DESCRIPTION);
     }
 
-    function rotateSequencer(address _rollupConfig, bytes calldata _rotationData) external override {
+    function getRotationCalldata(
+        address _rollupConfig,
+        bytes calldata _rotationData
+    ) external pure override returns (bytes[] memory calls) {
         if (_rollupConfig == address(0)) revert InvalidRollupConfig();
         if (_rotationData.length != 32) revert InvalidRotationData();
 
         address nextSequencer = abi.decode(_rotationData, (address));
-        IMockRollupConfig(_rollupConfig).setSequencer(nextSequencer);
+
+        calls = new bytes[](1);
+        calls[0] = abi.encodeWithSelector(IMockRollupConfig.setSequencer.selector, nextSequencer);
     }
 }
