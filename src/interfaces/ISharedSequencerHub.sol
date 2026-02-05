@@ -247,6 +247,68 @@ interface ISharedSequencerHub {
      */
     function setEpochDuration(uint256 _newDuration) external;
 
+    // ============ Cross-Chain Bundle Integration ============
+
+    /// @notice Emitted when the bundle registry is updated
+    event BundleRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
+
+    /// @notice Emitted when the builder registry is updated
+    event BuilderRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
+
+    /// @notice Emitted when the policy manager is updated
+    event PolicyManagerUpdated(address indexed oldManager, address indexed newManager);
+
+    /// @notice Emitted when the fraud proof verifier is updated
+    event FraudProofVerifierUpdated(address indexed oldVerifier, address indexed newVerifier);
+
+    /**
+     * @notice Returns the bundle registry address.
+     * @return The bundle registry address
+     */
+    function bundleRegistry() external view returns (address);
+
+    /**
+     * @notice Returns the builder registry address.
+     * @return The builder registry address
+     */
+    function builderRegistry() external view returns (address);
+
+    /**
+     * @notice Returns the policy manager address.
+     * @return The policy manager address
+     */
+    function policyManager() external view returns (address);
+
+    /**
+     * @notice Returns the fraud proof verifier address.
+     * @return The fraud proof verifier address
+     */
+    function fraudProofVerifier() external view returns (address);
+
+    /**
+     * @notice Sets the bundle registry address.
+     * @param _bundleRegistry The new bundle registry address
+     */
+    function setBundleRegistry(address _bundleRegistry) external;
+
+    /**
+     * @notice Sets the builder registry address.
+     * @param _builderRegistry The new builder registry address
+     */
+    function setBuilderRegistry(address _builderRegistry) external;
+
+    /**
+     * @notice Sets the policy manager address.
+     * @param _policyManager The new policy manager address
+     */
+    function setPolicyManager(address _policyManager) external;
+
+    /**
+     * @notice Sets the fraud proof verifier address.
+     * @param _fraudProofVerifier The new fraud proof verifier address
+     */
+    function setFraudProofVerifier(address _fraudProofVerifier) external;
+
     // ============ Guardian Functions ============
 
     /**

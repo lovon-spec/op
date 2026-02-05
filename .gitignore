@@ -26,6 +26,9 @@ docker/data/
 *.log
 *.pid
 
+# Rust build artifacts
+relay/target/
+
 # OS files
 .DS_Store
 Thumbs.db

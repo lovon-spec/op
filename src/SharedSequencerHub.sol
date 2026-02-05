@@ -83,6 +83,18 @@ contract SharedSequencerHub is ISharedSequencerHub {
     /// @notice The chain registry contract (GeneralizedTCR for chain applications)
     address public chainRegistry;
 
+    /// @notice The cross-chain bundle registry
+    address public override bundleRegistry;
+
+    /// @notice The builder registry
+    address public override builderRegistry;
+
+    /// @notice The sovereign policy manager
+    address public override policyManager;
+
+    /// @notice The fraud proof verifier
+    address public override fraudProofVerifier;
+
     // ============ Events ============
 
     /// @notice Emitted when a chain is connected from the registry
@@ -605,6 +617,36 @@ contract SharedSequencerHub is ISharedSequencerHub {
         }
 
         emit ChainConfigUpdated(_chainId, chain.adapter);
+    }
+
+    // ============ Cross-Chain Bundle Integration ============
+
+    /// @inheritdoc ISharedSequencerHub
+    function setBundleRegistry(address _bundleRegistry) external override onlyGovernance {
+        address old = bundleRegistry;
+        bundleRegistry = _bundleRegistry;
+        emit BundleRegistryUpdated(old, _bundleRegistry);
+    }
+
+    /// @inheritdoc ISharedSequencerHub
+    function setBuilderRegistry(address _builderRegistry) external override onlyGovernance {
+        address old = builderRegistry;
+        builderRegistry = _builderRegistry;
+        emit BuilderRegistryUpdated(old, _builderRegistry);
+    }
+
+    /// @inheritdoc ISharedSequencerHub
+    function setPolicyManager(address _policyManager) external override onlyGovernance {
+        address old = policyManager;
+        policyManager = _policyManager;
+        emit PolicyManagerUpdated(old, _policyManager);
+    }
+
+    /// @inheritdoc ISharedSequencerHub
+    function setFraudProofVerifier(address _fraudProofVerifier) external override onlyGovernance {
+        address old = fraudProofVerifier;
+        fraudProofVerifier = _fraudProofVerifier;
+        emit FraudProofVerifierUpdated(old, _fraudProofVerifier);
     }
 
     // ============ Helper Functions ============
