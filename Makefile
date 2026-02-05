@@ -1,4 +1,4 @@
-# KSSN - Makefile
+# ISOCHRON - Makefile
 #
 # Common commands for development, testing, and deployment
 
@@ -49,7 +49,7 @@ coverage:
 anvil:
 	anvil --port 8545 --block-time 2
 
-# Deploy KSSN architecture to local Anvil
+# Deploy ISOCHRON architecture to local Anvil
 deploy-kssn:
 	forge script script/DeployKSSN.s.sol:DeployKSSN \
 		--rpc-url http://127.0.0.1:8545 \
@@ -135,7 +135,7 @@ sizes:
 # =============================================================
 
 help:
-	@echo "KSSN - Development Commands"
+	@echo "ISOCHRON - Development Commands"
 	@echo ""
 	@echo "Setup:"
 	@echo "  make install      - Install dependencies"
@@ -152,8 +152,8 @@ help:
 	@echo ""
 	@echo "Local Development:"
 	@echo "  make anvil            - Start local Anvil node"
-	@echo "  make deploy-kssn      - Deploy KSSN Hub-and-Spoke to local Anvil"
-	@echo "  make integration-test - Run KSSN integration test"
+	@echo "  make deploy-kssn      - Deploy ISOCHRON Hub-and-Spoke to local Anvil (legacy target name)"
+	@echo "  make integration-test - Run ISOCHRON integration test"
 	@echo ""
 	@echo "Docker (Full OP Stack):"
 	@echo "  make docker-up    - Start all services"

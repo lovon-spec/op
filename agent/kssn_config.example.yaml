@@ -1,5 +1,5 @@
-# KSSN Proposer Agent Configuration
-# Copy this file to kssn_config.yaml and customize for your setup
+# ISOCHRON Proposer Agent Configuration
+# Copy this file to kssn_config.yaml (legacy filename) and customize for your setup
 
 # L1 RPC endpoint (Ethereum mainnet or testnet)
 l1_rpc: "http://localhost:8545"

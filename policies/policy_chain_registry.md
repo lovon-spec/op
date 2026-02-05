@@ -2,16 +2,16 @@
 
 ## Overview
 
-This policy governs the acceptance and removal of L2 chains from the Kleros Shared Sequencer Network (KSSN) Chain Registry. The registry uses a GeneralizedTCR (Token Curated Registry) pattern where community members can challenge invalid applications during the challenge period.
+This policy governs the acceptance and removal of L2 chains from the ISOCHRON Chain Registry. The registry uses a GeneralizedTCR (Token Curated Registry) pattern where community members can challenge invalid applications during the challenge period.
 
 ## Court Information
 
 | Parameter | Value |
 |-----------|-------|
-| Arbitrator | Kleros Court |
+| Arbitrator | Default: Kleros Court |
 | Court ID | 4 (Blockchain Technical) |
 | Number of Jurors | 3 (initial round) |
-| Appeal Rounds | Standard Kleros appeal process |
+| Appeal Rounds | Standard arbitrator appeal process (Kleros default) |
 
 ## Acceptance Criteria
 
@@ -22,9 +22,9 @@ A chain registration SHOULD be accepted if ALL of the following criteria are met
 The submitted chain MUST be a valid rollup deployment:
 
 - **Rollup Config Contract**: The `rollupConfig` address must be a valid configuration contract on L1
-- **Ownership**: The rollup configuration contract must be capable of having its ownership transferred to the KSSN Hub
+- **Ownership**: The rollup configuration contract must be capable of having its ownership transferred to the ISOCHRON Hub
 - **Accessibility**: The L1 contracts must be publicly accessible and verifiable
-- **Chain ID Uniqueness**: The `chainId` must not already be registered or connected to KSSN
+- **Chain ID Uniqueness**: The `chainId` must not already be registered or connected to ISOCHRON
 
 ### 2. Operational Capability
 
@@ -40,7 +40,7 @@ The chain team MUST demonstrate operational capability:
 The chain team MUST acknowledge and commit to:
 
 - **Sequencer Policy**: Agreement to enforce the [Sequencer Registry Policy](./policy_sequencer_registry.md) for operators
-- **KSSN Governance**: Acceptance of KSSN governance decisions regarding the chain
+- **ISOCHRON Governance**: Acceptance of ISOCHRON governance decisions regarding the chain
 
 ### 4. Valid Metadata
 
@@ -88,7 +88,7 @@ A registered chain MAY be removed (challenged) if:
 
 - Consistent failure to maintain liveness requirements
 - Failure to execute rotation handoffs as required by the sequencer SLA
-- Refusal to comply with KSSN governance decisions
+- Refusal to comply with ISOCHRON governance decisions
 
 ### 2. Operational Abandonment
 
@@ -99,7 +99,7 @@ A registered chain MAY be removed (challenged) if:
 ### 3. Changed Circumstances
 
 - Chain ownership transferred to entity that doesn't meet acceptance criteria
-- Fundamental change to chain's purpose that conflicts with KSSN policies
+- Fundamental change to chain's purpose that conflicts with ISOCHRON policies
 - Chain requests voluntary removal
 
 ### 4. False Registration
@@ -148,11 +148,11 @@ Examples of valid evidence:
 
 ### Arbitration
 
-1. Dispute is created in Kleros Court (Blockchain Technical)
+1. Dispute is created in the arbitrator (Kleros Court default, Blockchain Technical)
 2. Three jurors are drawn for initial round
 3. Both parties present evidence
 4. Jurors vote based on this policy
-5. Standard Kleros appeal process applies
+5. Standard arbitrator appeal process applies (Kleros default)
 
 ### Ruling Guidelines for Jurors
 
@@ -173,14 +173,14 @@ When evaluating removals:
 ## Appeal Process
 
 1. **First Appeal**: Requires 2x the number of jurors
-2. **Subsequent Appeals**: Follow standard Kleros escalation
+2. **Subsequent Appeals**: Follow standard arbitrator escalation (Kleros default)
 3. **Final Round**: General Court for contentious disputes
 
 ## Governance
 
 ### Policy Updates
 
-This policy may be updated by KSSN governance through:
+This policy may be updated by ISOCHRON governance through:
 - Formal governance proposal
 - Community discussion period (minimum 7 days)
 - Majority vote by governance token holders
@@ -230,4 +230,4 @@ The following parameters can be adjusted by governance:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | 2026-02-01 | Initial policy for KSSN chain integration |
+| 1.0 | 2026-02-01 | Initial policy for ISOCHRON chain integration |
