@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 /**
  * @title IProposerRegistry
- * @notice Interface for the Proposer Registry - "The Dumb Pipe" in KSSN.
+ * @notice Interface for the Proposer Registry - "The Dumb Pipe" in ISOCHRON.
  * @dev Proposers are infrastructure providers focused solely on Liveness and
  *      rotation readiness. The registry tracks stake, liveness, and operator keys.
  *
@@ -331,7 +331,7 @@ interface IProposerRegistry {
 
     /**
      * @notice Slashes a proposer for liveness failure.
-     * @dev Called by governance or through Kleros dispute.
+     * @dev Called by governance or through arbitrator dispute (Kleros default).
      * @param _proposer The proposer to slash
      * @param _percentage The percentage to slash (in basis points, 10000 = 100%)
      */

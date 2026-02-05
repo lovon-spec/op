@@ -6,7 +6,7 @@ import {IArbitrable} from "../../src/interfaces/IArbitrable.sol";
 
 /**
  * @title MockArbitrator
- * @notice Mock Kleros arbitrator for testing PermanentGTCRHybrid.
+ * @notice Mock arbitrator for testing PermanentGTCRHybrid (Kleros-compatible).
  * @dev Simulates dispute creation, rulings, and appeals for testing.
  */
 contract MockArbitrator is IArbitrator {
@@ -91,7 +91,7 @@ contract MockArbitrator is IArbitrator {
     // ============ Admin Functions (for testing) ============
 
     /**
-     * @notice Gives a ruling for a dispute (simulates Kleros ruling).
+     * @notice Gives a ruling for a dispute (simulates a Kleros-style ruling).
      * @param _disputeID The dispute ID.
      * @param _ruling The ruling (0=refuse, 1=submitter wins, 2=challenger wins).
      */

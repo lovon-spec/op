@@ -8,7 +8,7 @@ import {IChainRegistry} from "./interfaces/IChainRegistry.sol";
 
 /**
  * @title SharedSequencerHub
- * @notice The central nervous system of the Kleros Shared Sequencer Network (KSSN).
+ * @notice The central nervous system of ISOCHRON.
  * @dev This contract is the single source of truth for the "Active Proposer" and manages
  *      atomic rotation of all connected rollup chains in a single transaction.
  *
