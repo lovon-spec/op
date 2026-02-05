@@ -5,9 +5,9 @@ import {IArbitrator} from "./IArbitrator.sol";
 
 /**
  * @title IChainRegistry
- * @notice Interface for the Chain Registry - a GeneralizedTCR for KSSN chain integration.
- * @dev This registry allows L2 chains to apply for integration into the Kleros Shared
- *      Sequencer Network. Unlike the operator registries (which use PermanentGTCR with
+ * @notice Interface for the Chain Registry - a GeneralizedTCR for ISOCHRON chain integration.
+ * @dev This registry allows L2 chains to apply for integration into ISOCHRON. Unlike the
+ *      operator registries (which use PermanentGTCR with
  *      permanent stakes), this uses a standard GeneralizedTCR pattern where deposits
  *      are returned after successful registration.
  *
@@ -16,12 +16,12 @@ import {IArbitrator} from "./IArbitrator.sol";
  *      2. Challenge period allows community to dispute invalid chains
  *      3. After period expires (or dispute resolved), chain becomes Registered
  *      4. Hub governance can then call connectChain() using the registered data
- *      5. Chain can request removal via removeChain() if they want to exit KSSN
+ *      5. Chain can request removal via removeChain() if they want to exit ISOCHRON
  *
- *      Acceptance Criteria (enforced via Kleros arbitration):
+ *      Acceptance Criteria (enforced via configurable arbitration, Kleros Court default):
  *      - Valid rollup deployment with accessible configuration contract
  *      - Chain team has operational capability (infrastructure, monitoring)
- *      - Chain follows KSSN sequencer service-level agreement
+ *      - Chain follows ISOCHRON sequencer service-level agreement
  *      - No duplicate chain IDs
  */
 interface IChainRegistry {
@@ -33,7 +33,7 @@ interface IChainRegistry {
     enum Status {
         Absent,                 // Chain not in registry
         RegistrationRequested,  // Registration pending, in challenge period
-        Registered,             // Chain is registered and eligible for KSSN
+        Registered,             // Chain is registered and eligible for ISOCHRON
         ClearingRequested       // Removal pending, in challenge period
     }
 
@@ -83,7 +83,7 @@ interface IChainRegistry {
     /**
      * @notice A request to change an item's status (registration or clearing).
      * @param disputed Whether this request is under dispute
-     * @param disputeID The Kleros dispute ID (if disputed)
+     * @param disputeID The default arbitrator dispute ID (if disputed)
      * @param submissionTime When the request was made
      * @param resolved Whether the request has been resolved
      * @param requester Address that made the request

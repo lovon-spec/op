@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 /**
  * @title ICurate
- * @notice Interface for Kleros Curate Classic (GeneralizedTCR) registry.
+ * @notice Interface for the Curate Classic (GeneralizedTCR) registry (Kleros Curate default).
  * @dev This is the interface for the original Curate contract that stores
  *      all item data on-chain, allowing other contracts to query item status.
  *

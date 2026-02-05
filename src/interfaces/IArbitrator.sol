@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 /**
  * @title IArbitrator
- * @notice Interface for Kleros arbitrator contracts.
+ * @notice Interface for configurable arbitrator contracts (Kleros Court default).
  * @dev Based on ERC-792 Arbitration Standard.
  */
 interface IArbitrator {
