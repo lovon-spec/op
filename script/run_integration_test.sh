@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================
-#  KSSN — Full System Integration Test
+#  ISOCHRON — Full System Integration Test
 # =============================================================
 #
 # A self-contained integration test that deploys every contract
@@ -161,7 +161,7 @@ print('')
 section "CONSTITUTIONAL L2 — FULL SYSTEM INTEGRATION TEST"
 
 echo "This integration test deploys all contracts and exercises every major"
-echo "subsystem of the KSSN governance stack."
+echo "subsystem of the ISOCHRON governance stack."
 
 # ─── Step 0 ──────────────────────────────────────────────────
 echo ""
@@ -202,7 +202,7 @@ echo "  ├───────────────────────
 echo "  │ SystemConfig       (MockSystemConfig)                    │"
 echo "  │   $SYSTEM_CONFIG │"
 echo "  ├──────────────────────────────────────────────────────────┤"
-echo "  │ Manager            (KlerosSequencerManager)              │"
+echo "  │ Manager            (SequencerManager, Kleros default)     │"
 echo "  │   $MANAGER │"
 echo "  └──────────────────────────────────────────────────────────┘"
 
@@ -260,7 +260,7 @@ echo "  batcherHash():      $BATCHER_HASH"
 echo "  unsafeBlockSigner(): $UNSAFE_SIGNER"
 echo "  owner():             $SC_OWNER"
 echo ""
-echo "  The owner is the KlerosSequencerManager — only it can"
+echo "  The owner is the SequencerManager (Kleros default) — only it can"
 echo "  update batcherHash and unsafeBlockSigner via the adapter."
 
 # ─── Step 5: Rotation cycle (Active Handoff) ─────────────────
@@ -310,13 +310,13 @@ section "STEP 6 · Challenge & Remove Operator 2"
 
 echo "Operator 2 (batcher $BATCHER_2)"
 echo "has been caught violating the sequencer SLA (e.g. missed handoff"
-echo "or sustained downtime).  A Kleros jury ruled against them."
+echo "or sustained downtime).  The default arbitrator (Kleros Court) ruled against them."
 echo ""
 
 echo "Step 6a: Mark operator as removed in registry…"
 send_tx "$CHALLENGER_KEY" "$REGISTRY" \
     "setOperatorClearingRequested(address,address)" "$BATCHER_2" "$SIGNER_2"
-echo "  Registry status set to Absent (removed by Kleros ruling)"
+echo "  Registry status set to Absent (removed by default arbitrator ruling)"
 echo ""
 
 echo "Step 6b: Sync removal to manager (anyone can call)…"
@@ -368,7 +368,7 @@ section "STEP 8 · Adapter Upgrade (V1 → V2)"
 
 echo "A new adapter has been developed (e.g. for an OP Stack"
 echo "hardfork).  It has been submitted to the Adapter Registry"
-echo "and passed the Kleros curation challenge period."
+echo "and passed the default curation challenge period (Kleros Curate today)."
 echo ""
 
 echo "Step 8a: Deploy MockAdapterV2…"

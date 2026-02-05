@@ -5,7 +5,7 @@ import {IProposerRegistry} from "./interfaces/IProposerRegistry.sol";
 
 /**
  * @title ProposerRegistry
- * @notice "The Dumb Pipe" - Registry for proposers in KSSN.
+ * @notice "The Dumb Pipe" - Registry for proposers in ISOCHRON.
  * @dev Proposers are infrastructure providers focused on Liveness and rotation readiness.
  *      They operate a Top-N Delegated Proof of Stake (DPoS) system.
  *

@@ -5,7 +5,7 @@ import {IChainRegistry} from "./interfaces/IChainRegistry.sol";
 
 /**
  * @title ChainDeploymentKit
- * @notice A helper contract for rollup chains to easily integrate into KSSN.
+ * @notice A helper contract for rollup chains to easily integrate into ISOCHRON.
  * @dev This contract provides a simplified interface for chain teams to:
  *      1. Register their chain in the ChainRegistry
  *      2. Track their registration status
@@ -17,12 +17,12 @@ import {IChainRegistry} from "./interfaces/IChainRegistry.sol";
  *      3. Chain team calls registerChain() with required deposit
  *      4. Community can challenge during the challenge period
  *      5. After period expires, chain team calls finalizeRegistration()
- *      6. Hub governance calls connectChainFromRegistry() to add to KSSN
+ *      6. Hub governance calls connectChainFromRegistry() to add to ISOCHRON
  *
- *      This contract is designed to be deployed once per KSSN deployment
+ *      This contract is designed to be deployed once per ISOCHRON deployment
  *      and used by all chains seeking integration.
  *
- * @custom:security-contact security@kleros.io
+ * @custom:security-contact security@isochron.network
  */
 contract ChainDeploymentKit {
     // ============ State Variables ============
@@ -62,7 +62,7 @@ contract ChainDeploymentKit {
         NotStarted,     // Chain hasn't been registered
         Pending,        // Registration submitted, in challenge period
         Registered,     // Successfully registered in ChainRegistry
-        Connected,      // Connected to KSSN Hub
+        Connected,      // Connected to ISOCHRON Hub
         Failed          // Registration failed (challenged and lost)
     }
 
@@ -115,7 +115,7 @@ contract ChainDeploymentKit {
     // ============ Registration Functions ============
 
     /**
-     * @notice Registers a new chain for KSSN integration.
+     * @notice Registers a new chain for ISOCHRON integration.
      * @dev Submits the chain to the ChainRegistry. The caller must provide
      *      enough ETH to cover the required deposit + arbitration cost.
      *
@@ -218,7 +218,7 @@ contract ChainDeploymentKit {
     }
 
     /**
-     * @notice Requests removal of a registered chain from KSSN.
+     * @notice Requests removal of a registered chain from ISOCHRON.
      * @dev Only the original registrant can request removal.
      * @param _chainId The chain ID to remove
      */
@@ -270,7 +270,7 @@ contract ChainDeploymentKit {
     }
 
     /**
-     * @notice Checks if a chain is ready to be connected to KSSN.
+     * @notice Checks if a chain is ready to be connected to ISOCHRON.
      * @dev A chain is ready when it's registered in the ChainRegistry.
      * @param _chainId The chain ID
      * @return True if ready for connection

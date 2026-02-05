@@ -13,11 +13,11 @@ import {TestConstants} from "./TestConstants.sol";
 
 /**
  * @title DeployRemote
- * @notice Deployment script for Sepolia or Mainnet using KSSN architecture.
+ * @notice Deployment script for Sepolia or Mainnet using ISOCHRON architecture.
  *
- * This deploys the complete KSSN Hub-and-Spoke architecture:
+ * This deploys the complete ISOCHRON Hub-and-Spoke architecture:
  * - ProposerRegistry (DPoS proposer management)
- * - ChainRegistry (GeneralizedTCR for chain onboarding with Kleros)
+ * - ChainRegistry (GeneralizedTCR for chain onboarding with a default Kleros arbitrator)
  * - SharedSequencerHub (Central hub for atomic multichain rotation)
  * - OpStackAdapterV1 (OP Stack rotation adapter)
  *
@@ -102,9 +102,9 @@ contract DeployRemote is Script {
         );
 
         // ============ Log configuration ============
-        console2.log("=== KSSN Remote Deployment ===");
+        console2.log("=== ISOCHRON Remote Deployment ===");
         console2.log("Mode:", isProduction ? "PRODUCTION" : "TEST");
-        console2.log("Architecture: Hub-and-Spoke with Kleros Governance");
+        console2.log("Architecture: Hub-and-Spoke with configurable arbitration (Kleros default)");
         console2.log("");
 
         vm.startBroadcast(deployerPrivateKey);
@@ -119,7 +119,7 @@ contract DeployRemote is Script {
         if (isProduction) {
             address klerosCourt = vm.envAddress("KLEROS_COURT");
             arbitrator = IArbitrator(klerosCourt);
-            console2.log("Using Kleros Court:", klerosCourt);
+            console2.log("Using default arbitrator (Kleros Court):", klerosCourt);
         } else {
             MockArbitrator mockArbitrator = new MockArbitrator(ARBITRATION_COST_TEST);
             arbitrator = IArbitrator(address(mockArbitrator));
@@ -196,7 +196,7 @@ contract DeployRemote is Script {
     ) internal view {
         console2.log("");
         console2.log("===========================================");
-        console2.log("       KSSN DEPLOYMENT SUMMARY");
+        console2.log("     ISOCHRON DEPLOYMENT SUMMARY");
         console2.log("===========================================");
         console2.log("");
         console2.log("Architecture: Hub-and-Spoke shared sequencer");
@@ -219,7 +219,7 @@ contract DeployRemote is Script {
         console2.log("Key Features:");
         console2.log("  - Hub-and-Spoke atomic multichain rotation");
         console2.log("  - Top-N DPoS proposer selection");
-        console2.log("  - GeneralizedTCR chain onboarding with Kleros");
+        console2.log("  - GeneralizedTCR chain onboarding with default arbitrator (Kleros Court)");
         console2.log("  - Hot-swappable adapters for different chain types");
         console2.log("");
         console2.log("Commands:");

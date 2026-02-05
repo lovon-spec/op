@@ -57,7 +57,7 @@ class L2Simulator:
         self.block_queue = Queue()
 
     def get_current_sequencer(self) -> str:
-        """Get current sequencer from KlerosSequencerManager"""
+        """Get current sequencer from SequencerManager (Kleros default arbitrator)"""
         result = subprocess.run(
             [self.cast_path, "call", self.manager,
              "currentSequencer()(address)", "--rpc-url", self.rpc_url],
@@ -188,7 +188,7 @@ def main():
     parser = argparse.ArgumentParser(description="OP Stack L2 Simulator")
     parser.add_argument("--rpc-url", required=True, help="L1 RPC URL")
     parser.add_argument("--system-config", required=True, help="SystemConfig address")
-    parser.add_argument("--manager", required=True, help="KlerosSequencerManager address")
+    parser.add_argument("--manager", required=True, help="SequencerManager address (Kleros default arbitrator)")
     parser.add_argument("--duration", type=int, default=60, help="Simulation duration (seconds)")
     parser.add_argument("--block-time", type=int, default=2, help="Block time (seconds)")
 
