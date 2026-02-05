@@ -34,7 +34,7 @@ An adapter MUST meet ALL of the following criteria to be accepted:
 ### 1. Implementation Requirements
 
 - [ ] Implements `ISequencerAdapter` interface correctly
-- [ ] `rotateSequencer()` function applies the rollup-specific rotation payload correctly
+- [ ] `getRotationCalldata()` function returns correct calldata for the rollup-specific rotation
 - [ ] `version()` returns a unique, monotonically increasing version number
 - [ ] `adapterInfo()` returns accurate name and description
 
@@ -43,6 +43,7 @@ An adapter MUST meet ALL of the following criteria to be accepted:
 - [ ] No backdoors or privileged functions beyond rotation logic
 - [ ] No self-destruct capability
 - [ ] No delegatecall to external contracts
+- [ ] No state mutations (adapter functions must be view/pure)
 - [ ] No arbitrary storage writes
 - [ ] Reverts on invalid inputs (zero addresses)
 - [ ] Proper error handling with descriptive revert reasons
@@ -71,7 +72,7 @@ An adapter MUST meet ALL of the following criteria to be accepted:
 An adapter MUST be rejected if ANY of the following apply:
 
 - Contains malicious code or backdoors
-- Modifies storage other than intended adapter state
+- Contains state-modifying functions (adapters must be view/pure)
 - Makes external calls to untrusted contracts
 - Has unverified source code
 - Version number is not greater than existing registered adapters

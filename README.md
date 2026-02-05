@@ -170,7 +170,8 @@ The ISOCHRON uses a Hub-and-Spoke model anchored by a ProposerRegistry:
   │   rotateNetwork() updates ALL chains in a single transaction:              │
   │                                                                            │
   │   for (chain in connectedChains) {                                         │
-  │       adapter.rotateSequencer(chain.rollupConfig, rotationData)               │
+  │       calls = adapter.getRotationCalldata(chain.rollupConfig, rotationData)  │
+  │       for (call in calls) { rollupConfig.call(call) }                       │
   │   }                                                                        │
   │                                                                            │
   │   Gas: ~60k per chain | Max: ~450 chains per block at 30M gas limit         │
@@ -775,11 +776,11 @@ interface ISequencerAdapter {
     function version() external view returns (uint256);
     function adapterInfo() external view returns (string memory name, string memory description);
 
-    // Called via delegatecall from the hub
-    function rotateSequencer(
+    // Called via regular call from the hub; returns calldata for hub to execute
+    function getRotationCalldata(
         address _rollupConfig,
         bytes calldata _rotationData
-    ) external;
+    ) external view returns (bytes[] memory calls);
 }
 ```
 
@@ -914,14 +915,14 @@ function setRelayEndpoint(string calldata endpoint) external;
 **ArbitrumAdapterV1** - Arbitrum Nitro integration via SequencerInbox:
 ```solidity
 // Rotation payload: abi.encode(newBatchPoster, oldBatchPoster)
-function rotateSequencer(address sequencerInbox, bytes calldata rotationData) external;
+function getRotationCalldata(address sequencerInbox, bytes calldata rotationData) external view returns (bytes[] memory);
 ```
 
 **GenericAdapterV1** - Any EVM rollup via arbitrary calls:
 ```solidity
 // Single-call: abi.encode(bytes4 selector, bytes callData)
 // Multi-call:  0xFF prefix + abi.encode(bytes4[] selectors, bytes[] callDatas)
-function rotateSequencer(address rollupConfig, bytes calldata rotationData) external;
+function getRotationCalldata(address rollupConfig, bytes calldata rotationData) external view returns (bytes[] memory);
 ```
 
 ### OP Stack PoC Interfaces
@@ -1059,11 +1060,12 @@ Web3Function.onRun(async (context) => {
 ## Security Considerations
 
 ### Adapter Security
-- Adapters are called via **delegatecall** from the manager
+- Adapters are called via regular **call** from the Hub (view functions that return calldata)
+- The Hub executes the returned calldata against the rollup config, preserving its role as `msg.sender`
+- This eliminates the delegatecall attack vector: adapters cannot modify Hub storage
 - Adapters must be registered in the **Adapter Registry** (Kleros Curate by default)
 - **Ratchet versioning** prevents rollback attacks (newVersion > currentVersion)
 - **Hydra defense** allows multiple submissions to defeat griefing
-- Adapters should only interact with the rollup configuration contract (e.g., SystemConfig), no arbitrary storage writes
 
 ### Atomic Rotation
 - Both `batcherHash` and `unsafeBlockSigner` are set in the same transaction
@@ -1331,7 +1333,7 @@ A: Use one of the existing adapters or write a new one:
 - **Custom**: Implement the `ISequencerAdapter` interface with your chain's specific rotation logic
 
 **Q: Does integrating with ISOCHRON require changes to my rollup?**
-A: No. Adapters handle all chain-specific logic via delegatecall from the Hub. Your rollup's existing contracts remain unchanged. You just need to transfer ownership/permissions of the relevant configuration contract (SystemConfig, SequencerInbox, etc.) to the Hub.
+A: No. Adapters are view functions that return calldata for the Hub to execute against your rollup config. Your rollup's existing contracts remain unchanged. You just need to transfer ownership/permissions of the relevant configuration contract (SystemConfig, SequencerInbox, etc.) to the Hub.
 
 ### Rust Relay
 
