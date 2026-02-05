@@ -1,10 +1,10 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# KLEROS SEQUENCER MANAGER - OP STACK INTEGRATION TEST
+# SEQUENCER MANAGER (KlerosSequencerManager) - OP STACK INTEGRATION TEST
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # This script tests the integration between KlerosSequencerManager and
-# the OP Stack architecture. It verifies how the Kleros-governed rotation system
+# the OP Stack architecture. It verifies how the arbitrator-governed rotation system
 # controls which sequencer/batcher is authorized to submit L2 batches to L1.
 #
 # Components:
@@ -105,11 +105,11 @@ print_warning() {
     echo -e "${YELLOW}    ! $1${NC}"
 }
 
-print_header "KLEROS SEQUENCER MANAGER - FULL OP STACK INTEGRATION TEST"
+print_header "SEQUENCER MANAGER (KlerosSequencerManager) - FULL OP STACK INTEGRATION TEST"
 echo "This integration test simulates a complete OP Stack with:"
 echo "  - L1 chain (Anvil)"
 echo "  - Multiple sequencer/batcher processes"
-echo "  - Kleros-governed rotation between sequencers"
+echo "  - Arbitrator-governed rotation between sequencers (default Kleros Court)"
 echo "  - Real batch submissions"
 echo ""
 
@@ -232,7 +232,7 @@ sleep 5
 print_header "PHASE 6: Challenging Misbehaving Sequencer"
 
 print_step "Simulating: Sequencer 2 is caught extracting MEV..."
-print_warning "Evidence submitted to Kleros TCR"
+print_warning "Evidence submitted to arbitrator-backed TCR (default Kleros Curate)"
 
 # Get item ID for sequencer 2
 ITEM_ID=$($CAST call $MANAGER "itemIDFor(address)(bytes32)" $SEQUENCER_2 --rpc-url $RPC_URL)
@@ -295,7 +295,7 @@ sleep 3
 print_header "INTEGRATION TEST COMPLETE - SUMMARY"
 
 echo "L1 Contracts:"
-echo "  - MockCurate (Kleros TCR): $CURATE"
+echo "  - MockCurate (default Kleros Curate): $CURATE"
 echo "  - MockSystemConfig (OP Stack): $SYSTEM_CONFIG"
 echo "  - KlerosSequencerManager: $MANAGER"
 echo ""

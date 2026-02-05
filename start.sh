@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# KSSN - Quick Start Script
+# ISOCHRON - Quick Start Script
 #
 # Usage:
 #   ./start.sh              # Start local devnet (L1 only, mocks, no internet needed)
@@ -33,7 +33,7 @@ NC='\033[0m'
 print_header() {
     echo ""
     echo -e "${CYAN}================================================================${NC}"
-    echo -e "${CYAN}  KSSN - OP Stack with Kleros Governance${NC}"
+    echo -e "${CYAN}  ISOCHRON - OP Stack with arbitrator governance (default Kleros Court)${NC}"
     echo -e "${CYAN}================================================================${NC}"
     echo ""
 }
@@ -152,7 +152,7 @@ get_address() {
 
 start_local() {
     print_header
-    echo -e "${GREEN}Starting KSSN local devnet (L1 only)...${NC}"
+    echo -e "${GREEN}Starting ISOCHRON local devnet (L1 only)...${NC}"
     echo ""
 
     # Start L1 and deployer
@@ -172,7 +172,7 @@ start_local() {
 
     echo ""
     echo -e "${GREEN}================================================================${NC}"
-    echo -e "${GREEN}  KSSN - L1 is running!${NC}"
+    echo -e "${GREEN}  ISOCHRON - L1 is running!${NC}"
     echo -e "${GREEN}================================================================${NC}"
     echo ""
     echo "Endpoints:"
@@ -200,7 +200,7 @@ start_local() {
 
 start_l2() {
     print_header
-    echo -e "${GREEN}Starting KSSN full stack...${NC}"
+    echo -e "${GREEN}Starting ISOCHRON full stack...${NC}"
     echo ""
 
     # First make sure L1 is running and contracts are deployed
@@ -235,7 +235,7 @@ start_l2() {
 
     echo ""
     echo -e "${GREEN}================================================================${NC}"
-    echo -e "${GREEN}  KSSN - Full Stack is running!${NC}"
+    echo -e "${GREEN}  ISOCHRON - Full Stack is running!${NC}"
     echo -e "${GREEN}================================================================${NC}"
     echo ""
     echo "Endpoints:"
@@ -384,8 +384,8 @@ deploy_remote() {
         echo -e "${RED}Error: RPC_URL not set in ${ENV_FILE}${NC}"
         exit 1
     fi
-    if [ -z "$KLEROS_COURT" ]; then
-        echo -e "${RED}Error: KLEROS_COURT not set in ${ENV_FILE}${NC}"
+    if [ -z "$ARBITRATOR_ADDRESS" ]; then
+        echo -e "${RED}Error: ARBITRATOR_ADDRESS not set in ${ENV_FILE}${NC}"
         exit 1
     fi
     if [ -z "$WETH" ]; then
@@ -397,11 +397,11 @@ deploy_remote() {
         exit 1
     fi
 
-    echo -e "${GREEN}Deploying KSSN to ${MODE}...${NC}"
+    echo -e "${GREEN}Deploying ISOCHRON to ${MODE}...${NC}"
     echo ""
     echo "Configuration:"
     echo "  RPC URL:      $RPC_URL"
-    echo "  Kleros Court: $KLEROS_COURT"
+    echo "  Arbitrator: $ARBITRATOR_ADDRESS"
     echo "  WETH:         $WETH"
     echo "  Production:   ${PRODUCTION:-false}"
     echo ""
@@ -458,7 +458,7 @@ deploy_remote() {
         echo "To complete setup, run Phase 2 and Phase 3 manually."
         echo ""
     else
-        echo "Production mode: Register operators through the Kleros registry."
+        echo "Production mode: Register operators through the arbitrator-backed registry (default Kleros Curate)."
         echo "See the deployment summary above for contract addresses."
         echo ""
     fi

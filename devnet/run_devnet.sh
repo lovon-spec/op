@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Full OP Stack Devnet with Kleros Sequencer Manager
+# Full OP Stack Devnet with Sequencer Manager (KlerosSequencerManager contract)
 #
 # This script runs a complete OP Stack devnet:
 # - L1: Anvil

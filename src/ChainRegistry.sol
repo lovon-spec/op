@@ -20,14 +20,14 @@ interface IEvidence {
 
 /**
  * @title ChainRegistry
- * @notice A GeneralizedTCR for L2 chains seeking integration into the Kleros Shared Sequencer Network.
+ * @notice A GeneralizedTCR for L2 chains seeking integration into ISOCHRON.
  * @dev This contract implements a standard Token Curated Registry pattern where:
  *      - Chains apply for registration with a deposit
  *      - Community can challenge invalid applications during the challenge period
- *      - Disputes are resolved via Kleros arbitration
+ *      - Disputes are resolved via the configured arbitrator
  *      - Deposits are returned to successful registrants (unlike PermanentGTCR)
  *
- *      This registry serves as the decentralized onboarding mechanism for KSSN.
+ *      This registry serves as the decentralized onboarding mechanism for ISOCHRON.
  *      Once a chain is Registered here, the Hub governance can call connectChain()
  *      to add it to the active sequencer rotation.
  *
@@ -41,7 +41,7 @@ interface IEvidence {
  *      2. Chain team calls addChain() with deposit and metadata
  *      3. After challenge period (or winning dispute), chain is Registered
  *      4. Hub governance reviews and calls SharedSequencerHub.connectChain()
- *      5. Chain is now part of KSSN with atomic rotation
+ *      5. Chain is now part of ISOCHRON with atomic rotation
  *
  * @custom:security-contact security@kleros.io
  */
@@ -59,7 +59,7 @@ contract ChainRegistry is IChainRegistry, IArbitrable, IEvidence {
     /// @notice Governance address that can update parameters
     address public governor;
 
-    /// @notice The Kleros arbitrator contract
+    /// @notice The arbitrator contract
     IArbitrator public arbitrator;
 
     /// @notice Extra data for the arbitrator (court selection, etc.)
@@ -118,7 +118,7 @@ contract ChainRegistry is IChainRegistry, IArbitrable, IEvidence {
     /**
      * @notice Initializes the Chain Registry.
      * @param _governor The governance address
-     * @param _arbitrator The Kleros arbitrator contract
+     * @param _arbitrator The arbitrator contract
      * @param _arbitratorExtraData Extra data for court selection
      * @param _requiredDeposit Required deposit for submissions
      * @param _challengePeriod Challenge period in seconds
