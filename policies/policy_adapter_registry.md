@@ -2,18 +2,18 @@
 
 ## Overview
 
-This document defines the acceptance policy for the **Adapter Registry**, a Kleros Curate list that governs which rollup adapters can be used by SharedSequencerHub to rotate sequencers.
+This document defines the acceptance policy for the **Adapter Registry**, a Curate-compatible list that governs which rollup adapters can be used by SharedSequencerHub to rotate sequencers.
 
 ## Purpose
 
-The adapter pattern enables KSSN to survive rollup upgrades without requiring changes to the core SharedSequencerHub contract. Adapters are hot-swapped via governance updates, which are permissionless but gated by:
+The adapter pattern enables ISOCHRON to survive rollup upgrades without requiring changes to the core SharedSequencerHub contract. Adapters are hot-swapped via governance updates, which are permissionless but gated by:
 
-1. **Kleros Arbitration**: Adapter must be registered in the Adapter Registry
+1. **External Arbitration**: Adapter must be registered in the Adapter Registry
 2. **Ratchet Versioning**: New adapter version must be strictly greater than current
 
 ## Registry Type
 
-- **Registry**: Kleros Curate (GeneralizedTCR)
+- **Registry**: Curate-compatible (GeneralizedTCR)
 - **Court**: Blockchain Technical (Court ID: 4)
 - **Challenge Period**: Recommended 5-7 days for security
 
@@ -76,7 +76,7 @@ An adapter MUST be rejected if ANY of the following apply:
 - Has unverified source code
 - Version number is not greater than existing registered adapters
 - Does not properly implement the rotation logic
-- Contains upgrade mechanisms that bypass Kleros governance
+- Contains upgrade mechanisms that bypass governance controls
 
 ## Removal (Clearing) Criteria
 
