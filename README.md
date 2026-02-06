@@ -323,6 +323,7 @@ The FraudProofVerifier supports two verification paths:
 |------------|------------|
 | `MEVViolation` | Sandwich attacks, front-running when policy prohibits |
 | `CustomViolation` | Chain-specific rule violations |
+| `UnjustifiedPause` | Circuit breaker pause was not justified (disputed via Kleros) |
 
 **Challenge Flow:**
 1. Challenger posts bond (0.5 ETH default) with proof data
@@ -599,6 +600,8 @@ The full SLA is defined in [`policies/policy_sequencer_registry.md`](./policies/
 | **Active Handoff** | Missed rotation during grace period | Forced rotation evidence |
 | **Liveness** | >5 minute downtime during epoch | Block production gaps |
 
+**Liveness Enforcement:** The Hub reports each outgoing proposer's liveness score to the `ProposerRegistry` during every `rotateNetwork()` / `rotateShard()` call. Proposers who rotate within the grace period receive full liveness credit; forced rotations (past grace period) are penalized proportionally. Liveness scores below 95% trigger automatic slashing. Chains may designate a **circuit breaker** address (e.g., a security council multisig) in their policy that can officially pause sequencing via `setPause()`. Paused chains immunize the sequencer from `TimingViolation` slashing. Unjustified pauses can be disputed via `ProofType.UnjustifiedPause` through Kleros arbitration.
+
 See the [Sequencer Policy](./policies/policy_sequencer_registry.md) for detailed evidence standards.
 
 ## Smart Contracts
@@ -623,7 +626,7 @@ uint256 public epochDuration;             // Rotation interval (default: 1 hour)
 uint256 public gracePeriod;               // Active Handoff window (default: 10 min)
 address public proposerRegistry;          // ProposerRegistry contract
 
-// Rotation functions
+// Rotation functions (report outgoing proposer liveness to ProposerRegistry on each rotation)
 function rotateNetwork() external;        // Atomic rotation of ALL chains
 function rotateShard(uint256 shardIndex); // For scaling beyond 400 chains
 
@@ -675,8 +678,10 @@ function undelegate(address proposer, uint256 amount) external;
 // Public functions
 function rebalance() external;  // Swap low-stake active with high-stake inactive
 
-// Selection (called by Hub)
+// Selection & liveness (called by Hub during rotation)
 function selectNextProposer(uint256 epoch) external view returns (address);
+function reportLiveness(address proposer, uint256 epoch, uint256 blocksProduced, uint256 blocksExpected) external;
+function slashForLiveness(address proposer, uint256 basisPoints) external;
 
 // View functions
 function getActiveProposers() external view returns (address[] memory);
@@ -842,6 +847,26 @@ function declarePolicy(
     address customPolicyContract,
     bytes calldata policyData
 ) external;
+
+// Policy declaration with circuit breaker (sovereign security halt)
+function declarePolicyWithCircuitBreaker(
+    uint256 chainId,
+    OrderingStrategy ordering,
+    EnforcementType enforcement,
+    uint256 maxBlockTime,
+    uint256 forcedInclusionDeadline,
+    bool sandwichProtection,
+    bool backrunOnly,
+    address customPolicyContract,
+    bytes calldata policyData,
+    address circuitBreaker          // Address authorized to pause sequencing
+) external;
+
+// Circuit breaker: pause/unpause sequencing (callable only by circuitBreaker)
+// When paused, sequencer is immunized from TimingViolation slashing.
+// Unjustified pauses can be disputed via ProofType.UnjustifiedPause (Kleros).
+function setPause(uint256 chainId, bool paused) external;
+function getChainPauseInfo(uint256 chainId) external view returns (bool isPaused, uint256 pauseTimestamp, uint256 unpauseTimestamp);
 
 function deactivatePolicy(uint256 chainId) external;
 function checkCompliance(uint256 chainId, bytes calldata txData) external view returns (ComplianceResult memory);
@@ -1243,7 +1268,7 @@ A: ISOCHRON is a Hub-and-Spoke architecture that manages sequencing for multiple
 A: When `rotateNetwork()` is called, the Hub iterates through ALL connected chains and updates each rollup configuration contract in a single transaction. This costs ~60k gas per chain, supporting ~450 chains per block at 30M gas limit. For larger networks, use `rotateShard()`.
 
 **Q: How is sequencing policy enforced?**
-A: ISOCHRON enforces SLA expectations (liveness, authorized production, and clean handoffs) through the Sequencer Policy and the arbitrator (Kleros default).
+A: ISOCHRON enforces SLA expectations (liveness, authorized production, and clean handoffs) through multiple mechanisms: the Hub reports liveness scores to the `ProposerRegistry` at every epoch rotation, the `FraudProofVerifier` handles deterministic proofs (timing, ordering, inclusion, bundle violations) and subjective proofs via Kleros arbitration (MEV, custom, unjustified pause), and sovereign chains can set circuit breakers to pause sequencing during security incidents without triggering liveness penalties.
 
 **Q: Can the sequencer use Rollup Boost and Flashblocks?**
 A: Yes. FlashblocksBuilder is the default builder in the BuilderRegistry, using a private mempool with MEV-Boost integration. The BuilderRegistry supports per-chain overrides, so individual chains can opt into different building mechanisms (public mempool, encrypted mempool, custom) via their sovereign policy.
