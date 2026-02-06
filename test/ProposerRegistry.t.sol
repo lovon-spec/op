@@ -448,6 +448,151 @@ contract ProposerRegistryTest is Test {
         assertTrue(registry.isRegistered(proposer1));
     }
 
+    // ============ Lookahead Buffer Tests ============
+
+    function test_CommitLookahead_SnapshotsActiveSet() public {
+        vm.prank(proposer1);
+        registry.register{value: MIN_STAKE}(proposer1);
+
+        vm.prank(proposer2);
+        registry.register{value: MIN_STAKE}(proposer2);
+
+        vm.prank(hub);
+        registry.commitLookahead(1);
+
+        address[] memory lookahead = registry.getProposerLookahead();
+        assertEq(lookahead.length, 2);
+        assertEq(lookahead[0], proposer1);
+        assertEq(lookahead[1], proposer2);
+        assertEq(registry.lookaheadLastCommitEpoch(), 1);
+    }
+
+    function test_CommitLookahead_RevertsIfNotHubOrGovernance() public {
+        vm.prank(randomUser);
+        vm.expectRevert(IProposerRegistry.Unauthorized.selector);
+        registry.commitLookahead(1);
+    }
+
+    function test_CommitLookahead_GovernanceCanCommit() public {
+        vm.prank(proposer1);
+        registry.register{value: MIN_STAKE}(proposer1);
+
+        vm.prank(governance);
+        registry.commitLookahead(5);
+
+        address[] memory lookahead = registry.getProposerLookahead();
+        assertEq(lookahead.length, 1);
+        assertEq(lookahead[0], proposer1);
+        assertEq(registry.lookaheadLastCommitEpoch(), 5);
+    }
+
+    function test_SelectNextProposer_UsesLookaheadWhenCommitted() public {
+        vm.prank(proposer1);
+        registry.register{value: MIN_STAKE}(proposer1);
+
+        vm.prank(proposer2);
+        registry.register{value: MIN_STAKE}(proposer2);
+
+        vm.prank(proposer3);
+        registry.register{value: MIN_STAKE}(proposer3);
+
+        // Commit lookahead with 3 proposers
+        vm.prank(hub);
+        registry.commitLookahead(0);
+
+        // Selection should use the committed lookahead
+        assertEq(registry.selectNextProposer(0), proposer1);
+        assertEq(registry.selectNextProposer(1), proposer2);
+        assertEq(registry.selectNextProposer(2), proposer3);
+        assertEq(registry.selectNextProposer(3), proposer1);
+    }
+
+    function test_SelectNextProposer_StableAfterActiveSetChange() public {
+        // Register 3 proposers
+        vm.prank(proposer1);
+        registry.register{value: MIN_STAKE}(proposer1);
+
+        vm.prank(proposer2);
+        registry.register{value: MIN_STAKE}(proposer2);
+
+        vm.prank(proposer3);
+        registry.register{value: MIN_STAKE}(proposer3);
+
+        // Commit lookahead with all 3
+        vm.prank(hub);
+        registry.commitLookahead(0);
+
+        // Record who is selected for epochs 0-5
+        address epoch0 = registry.selectNextProposer(0);
+        address epoch1 = registry.selectNextProposer(1);
+        address epoch2 = registry.selectNextProposer(2);
+
+        // Now slash proposer2 so they are removed from the ACTIVE set
+        vm.prank(hub);
+        registry.slashForLiveness(proposer2, 10000); // 100% slash removes from active
+
+        // The active set changed, but the LOOKAHEAD should still be stable
+        assertEq(registry.selectNextProposer(0), epoch0);
+        assertEq(registry.selectNextProposer(1), epoch1);
+        assertEq(registry.selectNextProposer(2), epoch2);
+
+        // The lookahead still has 3 entries
+        address[] memory lookahead = registry.getProposerLookahead();
+        assertEq(lookahead.length, 3);
+    }
+
+    function test_SelectNextProposer_FallsBackToActiveSetIfNoLookahead() public {
+        // Without committing lookahead, selection should fall back to active set
+        vm.prank(proposer1);
+        registry.register{value: MIN_STAKE}(proposer1);
+
+        vm.prank(proposer2);
+        registry.register{value: MIN_STAKE}(proposer2);
+
+        // No commitLookahead called — should use active set directly
+        address[] memory lookahead = registry.getProposerLookahead();
+        assertEq(lookahead.length, 0);
+
+        assertEq(registry.selectNextProposer(0), proposer1);
+        assertEq(registry.selectNextProposer(1), proposer2);
+    }
+
+    function test_CommitLookahead_OverwritesPrevious() public {
+        vm.prank(proposer1);
+        registry.register{value: MIN_STAKE}(proposer1);
+
+        // First commit with 1 proposer
+        vm.prank(hub);
+        registry.commitLookahead(1);
+
+        address[] memory lookahead1 = registry.getProposerLookahead();
+        assertEq(lookahead1.length, 1);
+
+        // Register another proposer
+        vm.prank(proposer2);
+        registry.register{value: MIN_STAKE}(proposer2);
+
+        // Second commit with 2 proposers
+        vm.prank(hub);
+        registry.commitLookahead(2);
+
+        address[] memory lookahead2 = registry.getProposerLookahead();
+        assertEq(lookahead2.length, 2);
+        assertEq(registry.lookaheadLastCommitEpoch(), 2);
+    }
+
+    function test_CommitLookahead_EmptyActiveSet() public {
+        // Commit with no active proposers
+        vm.prank(hub);
+        registry.commitLookahead(1);
+
+        address[] memory lookahead = registry.getProposerLookahead();
+        assertEq(lookahead.length, 0);
+
+        // Selection should return address(0) since both lookahead and active are empty
+        assertEq(registry.selectNextProposer(0), address(0));
+    }
+
     // ============ Receive Tests ============
 
     function test_ReceiveEth_Accepts() public {

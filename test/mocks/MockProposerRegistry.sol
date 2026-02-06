@@ -29,6 +29,10 @@ contract MockProposerRegistry is IProposerRegistry {
     uint256 public lastLivenessBlocksExpected;
     uint256 public livenessReportCount;
 
+    // Lookahead buffer
+    address[] internal _proposerLookahead;
+    uint256 public override lookaheadLastCommitEpoch;
+
     // ============ Constructor ============
 
     constructor() {
@@ -115,10 +119,17 @@ contract MockProposerRegistry is IProposerRegistry {
         if (useOverride) {
             return nextProposerOverride;
         }
+        if (_proposerLookahead.length > 0) {
+            return _proposerLookahead[_currentEpoch % _proposerLookahead.length];
+        }
         if (proposers.length == 0) {
             return address(0);
         }
         return proposers[_currentEpoch % proposers.length];
+    }
+
+    function getProposerLookahead() external view override returns (address[] memory) {
+        return _proposerLookahead;
     }
 
     // ============ Stub Functions ============
@@ -134,6 +145,13 @@ contract MockProposerRegistry is IProposerRegistry {
     function delegate(address) external payable override {}
     function undelegate(address, uint256) external override {}
     function rebalance() external override {}
+    function commitLookahead(uint256 _epoch) external override {
+        delete _proposerLookahead;
+        for (uint256 i = 0; i < proposers.length; i++) {
+            _proposerLookahead.push(proposers[i]);
+        }
+        lookaheadLastCommitEpoch = _epoch;
+    }
     function reportLiveness(address _proposer, uint256 _epoch, uint256 _blocksProduced, uint256 _blocksExpected) external override {
         lastLivenessProposer = _proposer;
         lastLivenessEpoch = _epoch;

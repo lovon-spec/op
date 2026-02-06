@@ -74,6 +74,12 @@ contract ProposerRegistry is IProposerRegistry {
     /// @notice Adapter-specific rotation data for proposers
     mapping(address => mapping(address => bytes)) internal _adapterData;
 
+    /// @notice Committed proposer lookahead buffer for stable selection
+    address[] internal _proposerLookahead;
+
+    /// @notice The epoch at which the lookahead was last committed
+    uint256 public override lookaheadLastCommitEpoch;
+
     // ============ Modifiers ============
 
     modifier onlyGovernance() {
@@ -219,13 +225,24 @@ contract ProposerRegistry is IProposerRegistry {
 
     /// @inheritdoc IProposerRegistry
     function selectNextProposer(uint256 _currentEpoch) external view override returns (address) {
-        if (_activeProposers.length == 0) {
+        // Use the committed lookahead buffer for stable selection.
+        // Falls back to the live active set only if no lookahead has been committed yet.
+        uint256 lookaheadLen = _proposerLookahead.length;
+        if (lookaheadLen > 0) {
+            return _proposerLookahead[_currentEpoch % lookaheadLen];
+        }
+
+        uint256 activeLen = _activeProposers.length;
+        if (activeLen == 0) {
             return address(0);
         }
 
-        // Simple round-robin selection based on epoch
-        uint256 index = _currentEpoch % _activeProposers.length;
-        return _activeProposers[index];
+        return _activeProposers[_currentEpoch % activeLen];
+    }
+
+    /// @inheritdoc IProposerRegistry
+    function getProposerLookahead() external view override returns (address[] memory) {
+        return _proposerLookahead;
     }
 
     // ============ Proposer Functions ============
@@ -394,6 +411,20 @@ contract ProposerRegistry is IProposerRegistry {
     }
 
     // ============ Hub Functions ============
+
+    /// @inheritdoc IProposerRegistry
+    function commitLookahead(uint256 _epoch) external override onlyHubOrGovernance {
+        delete _proposerLookahead;
+
+        uint256 len = _activeProposers.length;
+        for (uint256 i = 0; i < len; i++) {
+            _proposerLookahead.push(_activeProposers[i]);
+        }
+
+        lookaheadLastCommitEpoch = _epoch;
+
+        emit LookaheadCommitted(_epoch, len);
+    }
 
     /// @inheritdoc IProposerRegistry
     function reportLiveness(

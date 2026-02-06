@@ -146,6 +146,9 @@ interface IProposerRegistry {
         uint256 newScore
     );
 
+    /// @notice Emitted when the proposer lookahead buffer is committed
+    event LookaheadCommitted(uint256 indexed epoch, uint256 setSize);
+
     // ============ View Functions ============
 
     /**
@@ -237,12 +240,24 @@ interface IProposerRegistry {
 
     /**
      * @notice Selects the next proposer based on the selection algorithm.
-     * @dev Used by the Hub to determine who should propose next.
-     *      Can be round-robin, weighted random, or stake-weighted.
+     * @dev Uses the committed lookahead buffer for stable selection.
+     *      Falls back to the live active set if no lookahead has been committed.
      * @param _currentEpoch The current epoch number
      * @return The next proposer's address
      */
     function selectNextProposer(uint256 _currentEpoch) external view returns (address);
+
+    /**
+     * @notice Returns the committed proposer lookahead buffer.
+     * @return Array of proposer addresses in the lookahead
+     */
+    function getProposerLookahead() external view returns (address[] memory);
+
+    /**
+     * @notice Returns the epoch at which the lookahead was last committed.
+     * @return The last commit epoch
+     */
+    function lookaheadLastCommitEpoch() external view returns (uint256);
 
     /**
      * @notice Returns the hub contract address.
@@ -313,6 +328,15 @@ interface IProposerRegistry {
     function rebalance() external;
 
     // ============ Hub Functions ============
+
+    /**
+     * @notice Commits the current active proposer set as the lookahead buffer.
+     * @dev Called by the Hub or governance at epoch boundaries to lock in the
+     *      proposer schedule. Changes to the active set (slashing, rebalancing)
+     *      will not affect selection until the next commit.
+     * @param _epoch The epoch number at which this commit takes effect
+     */
+    function commitLookahead(uint256 _epoch) external;
 
     /**
      * @notice Reports liveness for a proposer after their epoch.

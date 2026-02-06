@@ -680,11 +680,13 @@ function rebalance() external;  // Swap low-stake active with high-stake inactiv
 
 // Selection & liveness (called by Hub during rotation)
 function selectNextProposer(uint256 epoch) external view returns (address);
+function commitLookahead(uint256 epoch) external;  // Snapshot active set for stable selection
 function reportLiveness(address proposer, uint256 epoch, uint256 blocksProduced, uint256 blocksExpected) external;
 function slashForLiveness(address proposer, uint256 basisPoints) external;
 
 // View functions
 function getActiveProposers() external view returns (address[] memory);
+function getProposerLookahead() external view returns (address[] memory);
 function getTotalStake(address proposer) external view returns (uint256);
 function isActiveProposer(address proposer) external view returns (bool);
 ```
