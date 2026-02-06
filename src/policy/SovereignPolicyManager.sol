@@ -53,6 +53,12 @@ contract SovereignPolicyManager is ISovereignPolicy {
     /// @notice Mapping from chainId to index in _activePolicyChains (1-indexed)
     mapping(uint256 => uint256) internal _activePolicyIndex;
 
+    /// @notice Mapping from chainId to the timestamp when the chain was last paused
+    mapping(uint256 => uint256) internal _pauseTimestamp;
+
+    /// @notice Mapping from chainId to the timestamp when the chain was last unpaused
+    mapping(uint256 => uint256) internal _unpauseTimestamp;
+
     // ============ Events (additional) ============
 
     event ChainGovernanceSet(uint256 indexed chainId, address indexed chainGovernor);
@@ -167,6 +173,58 @@ contract SovereignPolicyManager is ISovereignPolicy {
         address _customPolicyContract,
         bytes calldata _policyData
     ) external onlyChainGovernance(_chainId) {
+        _declarePolicy(
+            _chainId,
+            _orderingStrategy,
+            _enforcementType,
+            _maxBlockTime,
+            _forcedInclusionDeadline,
+            _sandwichProtection,
+            _backrunOnly,
+            _customPolicyContract,
+            _policyData,
+            address(0)
+        );
+    }
+
+    function declarePolicyWithCircuitBreaker(
+        uint256 _chainId,
+        OrderingStrategy _orderingStrategy,
+        EnforcementType _enforcementType,
+        uint256 _maxBlockTime,
+        uint256 _forcedInclusionDeadline,
+        bool _sandwichProtection,
+        bool _backrunOnly,
+        address _customPolicyContract,
+        bytes calldata _policyData,
+        address _circuitBreaker
+    ) external onlyChainGovernance(_chainId) {
+        _declarePolicy(
+            _chainId,
+            _orderingStrategy,
+            _enforcementType,
+            _maxBlockTime,
+            _forcedInclusionDeadline,
+            _sandwichProtection,
+            _backrunOnly,
+            _customPolicyContract,
+            _policyData,
+            _circuitBreaker
+        );
+    }
+
+    function _declarePolicy(
+        uint256 _chainId,
+        OrderingStrategy _orderingStrategy,
+        EnforcementType _enforcementType,
+        uint256 _maxBlockTime,
+        uint256 _forcedInclusionDeadline,
+        bool _sandwichProtection,
+        bool _backrunOnly,
+        address _customPolicyContract,
+        bytes calldata _policyData,
+        address _circuitBreaker
+    ) internal {
         _policies[_chainId] = PolicyDeclaration({
             chainId: _chainId,
             orderingStrategy: _orderingStrategy,
@@ -177,7 +235,9 @@ contract SovereignPolicyManager is ISovereignPolicy {
             backrunOnly: _backrunOnly,
             customPolicyContract: _customPolicyContract,
             policyData: _policyData,
-            isActive: true
+            isActive: true,
+            circuitBreaker: _circuitBreaker,
+            isPaused: false
         });
 
         // Track in active list
@@ -218,6 +278,45 @@ contract SovereignPolicyManager is ISovereignPolicy {
         emit PolicyDeactivated(_chainId);
     }
 
+    // ============ Circuit Breaker Functions ============
+
+    /**
+     * @notice Pauses or unpauses sequencing for a chain. Only callable by the
+     *         chain's designated circuit breaker address.
+     * @dev When paused, the sequencer is immunized from TimingViolation slashing.
+     *      An unjustified pause can be disputed via ProofType.UnjustifiedPause
+     *      through Kleros arbitration.
+     * @param _chainId The chain to pause/unpause
+     * @param _paused Whether to pause (true) or unpause (false)
+     */
+    function setPause(uint256 _chainId, bool _paused) external {
+        require(msg.sender == _policies[_chainId].circuitBreaker, "Not circuit breaker");
+        _policies[_chainId].isPaused = _paused;
+
+        if (_paused) {
+            _pauseTimestamp[_chainId] = block.timestamp;
+        } else {
+            _unpauseTimestamp[_chainId] = block.timestamp;
+        }
+
+        emit ChainPaused(_chainId, _paused);
+    }
+
+    /**
+     * @notice Returns pause timing information for a chain.
+     * @param _chainId The chain to query
+     * @return isPaused Whether the chain is currently paused
+     * @return pauseTimestamp When the chain was last paused (0 if never)
+     * @return unpauseTimestamp When the chain was last unpaused (0 if never or still paused)
+     */
+    function getChainPauseInfo(uint256 _chainId)
+        external
+        view
+        returns (bool isPaused, uint256 pauseTimestamp, uint256 unpauseTimestamp)
+    {
+        return (_policies[_chainId].isPaused, _pauseTimestamp[_chainId], _unpauseTimestamp[_chainId]);
+    }
+
     // ============ Governance Functions ============
 
     function setChainGovernance(uint256 _chainId, address _chainGovernor) external onlyGovernance {
@@ -246,7 +345,9 @@ contract SovereignPolicyManager is ISovereignPolicy {
             backrunOnly: false,
             customPolicyContract: address(0),
             policyData: "",
-            isActive: false
+            isActive: false,
+            circuitBreaker: address(0),
+            isPaused: false
         });
     }
 }

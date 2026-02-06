@@ -366,4 +366,200 @@ contract FraudProofVerifierTest is Test {
 
         assertEq(verifier.responseWindow(), 48 hours);
     }
+
+    // ============ Circuit Breaker / Pause-Aware Timing Tests ============
+
+    function test_VerifyTimingViolation_RejectsWhenChainPaused() public {
+        address circuitBreaker = address(0xCB);
+
+        // Declare policy with circuit breaker
+        vm.prank(governance);
+        policyManager.declarePolicyWithCircuitBreaker(
+            CHAIN_ID,
+            ISovereignPolicy.OrderingStrategy.FCFS,
+            ISovereignPolicy.EnforcementType.Hybrid,
+            12 seconds,
+            30 seconds,
+            true,
+            false,
+            address(0),
+            "",
+            circuitBreaker
+        );
+
+        // Pause the chain
+        vm.prank(circuitBreaker);
+        policyManager.setPause(CHAIN_ID, true);
+
+        // Submit a timing violation (gap of 20s > 12s max)
+        bytes memory proofData = abi.encode(uint256(1000), uint256(1020));
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.TimingViolation,
+            proofData
+        );
+
+        // Verify: should be REJECTED because chain is paused
+        uint256 govBalBefore = governance.balance;
+        verifier.verifyDeterministicProof(challengeId);
+
+        assertEq(
+            uint256(verifier.getChallengeStatus(challengeId)),
+            uint256(IFraudProofVerifier.ChallengeStatus.Rejected)
+        );
+
+        // Bond goes to governance (invalid challenge)
+        assertEq(governance.balance, govBalBefore + CHALLENGE_BOND);
+    }
+
+    function test_VerifyTimingViolation_AcceptsAfterUnpause() public {
+        address circuitBreaker = address(0xCB);
+
+        // Declare policy with circuit breaker
+        vm.prank(governance);
+        policyManager.declarePolicyWithCircuitBreaker(
+            CHAIN_ID,
+            ISovereignPolicy.OrderingStrategy.FCFS,
+            ISovereignPolicy.EnforcementType.Hybrid,
+            12 seconds,
+            30 seconds,
+            true,
+            false,
+            address(0),
+            "",
+            circuitBreaker
+        );
+
+        // Pause then unpause
+        vm.prank(circuitBreaker);
+        policyManager.setPause(CHAIN_ID, true);
+
+        vm.warp(block.timestamp + 1 hours);
+
+        vm.prank(circuitBreaker);
+        policyManager.setPause(CHAIN_ID, false);
+
+        // Submit a timing violation for a gap AFTER the unpause
+        // Use timestamps well after the unpause window
+        uint256 postUnpauseTime = block.timestamp + 100;
+        bytes memory proofData = abi.encode(postUnpauseTime, postUnpauseTime + 20);
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.TimingViolation,
+            proofData
+        );
+
+        // Verify: should be ACCEPTED because chain is no longer paused
+        // and the gap doesn't overlap with the pause period
+        uint256 challengerBalBefore = challenger.balance;
+        verifier.verifyDeterministicProof(challengeId);
+
+        assertEq(
+            uint256(verifier.getChallengeStatus(challengeId)),
+            uint256(IFraudProofVerifier.ChallengeStatus.Accepted)
+        );
+
+        assertEq(challenger.balance, challengerBalBefore + CHALLENGE_BOND);
+    }
+
+    function test_VerifyTimingViolation_RejectsDuringHistoricalPause() public {
+        address circuitBreaker = address(0xCB);
+
+        // Declare policy with circuit breaker
+        vm.prank(governance);
+        policyManager.declarePolicyWithCircuitBreaker(
+            CHAIN_ID,
+            ISovereignPolicy.OrderingStrategy.FCFS,
+            ISovereignPolicy.EnforcementType.Hybrid,
+            12 seconds,
+            30 seconds,
+            true,
+            false,
+            address(0),
+            "",
+            circuitBreaker
+        );
+
+        // Pause at timestamp 1000
+        vm.warp(1000);
+        vm.prank(circuitBreaker);
+        policyManager.setPause(CHAIN_ID, true);
+
+        // Unpause at timestamp 2000
+        vm.warp(2000);
+        vm.prank(circuitBreaker);
+        policyManager.setPause(CHAIN_ID, false);
+
+        // Submit timing violation for gap that overlaps with pause window [1000, 2000]
+        // Gap: [900, 1500] overlaps with pause [1000, 2000]
+        bytes memory proofData = abi.encode(uint256(900), uint256(1500));
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.TimingViolation,
+            proofData
+        );
+
+        // Verify: should be REJECTED because gap overlaps with pause window
+        uint256 govBalBefore = governance.balance;
+        verifier.verifyDeterministicProof(challengeId);
+
+        assertEq(
+            uint256(verifier.getChallengeStatus(challengeId)),
+            uint256(IFraudProofVerifier.ChallengeStatus.Rejected)
+        );
+
+        assertEq(governance.balance, govBalBefore + CHALLENGE_BOND);
+    }
+
+    function test_UnjustifiedPause_RequiresSubjectiveVerification() public {
+        // UnjustifiedPause is subjective - should fail deterministic verification
+        bytes memory proofData = abi.encode(uint256(1000), uint256(2000));
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.UnjustifiedPause,
+            proofData
+        );
+
+        // Deterministic verification should reject (it's a subjective proof type)
+        uint256 govBalBefore = governance.balance;
+        verifier.verifyDeterministicProof(challengeId);
+
+        assertEq(
+            uint256(verifier.getChallengeStatus(challengeId)),
+            uint256(IFraudProofVerifier.ChallengeStatus.Rejected)
+        );
+
+        assertEq(governance.balance, govBalBefore + CHALLENGE_BOND);
+    }
+
+    function test_UnjustifiedPause_CanBeEscalatedToArbitration() public {
+        bytes memory proofData = abi.encode(uint256(1000), uint256(2000));
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.UnjustifiedPause,
+            proofData
+        );
+
+        // Escalate to Kleros arbitration
+        vm.prank(challenger);
+        verifier.escalateToArbitration{value: 0.1 ether}(challengeId);
+
+        IFraudProofVerifier.Challenge memory challenge = verifier.getChallenge(challengeId);
+        assertEq(uint256(challenge.status), uint256(IFraudProofVerifier.ChallengeStatus.Disputed));
+    }
 }

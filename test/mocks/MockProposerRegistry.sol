@@ -22,6 +22,13 @@ contract MockProposerRegistry is IProposerRegistry {
     address public nextProposerOverride;
     bool public useOverride;
 
+    // For testing: track liveness reports
+    address public lastLivenessProposer;
+    uint256 public lastLivenessEpoch;
+    uint256 public lastLivenessBlocksProduced;
+    uint256 public lastLivenessBlocksExpected;
+    uint256 public livenessReportCount;
+
     // ============ Constructor ============
 
     constructor() {
@@ -127,7 +134,13 @@ contract MockProposerRegistry is IProposerRegistry {
     function delegate(address) external payable override {}
     function undelegate(address, uint256) external override {}
     function rebalance() external override {}
-    function reportLiveness(address, uint256, uint256, uint256) external override {}
+    function reportLiveness(address _proposer, uint256 _epoch, uint256 _blocksProduced, uint256 _blocksExpected) external override {
+        lastLivenessProposer = _proposer;
+        lastLivenessEpoch = _epoch;
+        lastLivenessBlocksProduced = _blocksProduced;
+        lastLivenessBlocksExpected = _blocksExpected;
+        livenessReportCount++;
+    }
     function slashForLiveness(address, uint256) external override {}
     function setMinimumStake(uint256 _newMinimum) external override {
         minimumStake = _newMinimum;

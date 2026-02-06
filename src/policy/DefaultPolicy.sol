@@ -41,7 +41,9 @@ contract DefaultPolicy is ISovereignPolicy {
             backrunOnly: true,
             customPolicyContract: address(0),
             policyData: "",
-            isActive: true
+            isActive: true,
+            circuitBreaker: address(0),
+            isPaused: false
         });
     }
 

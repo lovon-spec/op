@@ -693,4 +693,92 @@ contract SharedSequencerHubTest is Test {
         // Epoch 1 selects proposer2 (index 1 % 3 = 1)
         assertEq(newConfig.sequencer(), proposer2);
     }
+
+    // ============ Liveness Reporting Tests ============
+
+    function test_RotateNetwork_ReportsLivenessForOutgoingProposer() public {
+        // Epoch 1: warp past epoch + grace period so anyone can rotate
+        // epochStartTime starts at block.timestamp (~1), epochDuration = 3600, grace = 600
+        // Epoch end = 1 + 3600 = 3601, grace end = 4201, so warp to 4202
+        vm.warp(4202);
+        hub.rotateNetwork();
+        assertEq(hub.currentProposer(), proposer2);
+        // After rotation: epochStartTime = 4202, epoch = 1
+
+        // Epoch 2: epochEndTime = 4202 + 3600 = 7802, grace end = 7802 + 600 = 8402
+        vm.warp(8403);
+        hub.rotateNetwork();
+
+        // Verify liveness was reported for the outgoing proposer (proposer2)
+        assertEq(proposerRegistry.lastLivenessProposer(), proposer2);
+        assertEq(proposerRegistry.lastLivenessEpoch(), 1);
+        // First rotation: currentProposer was address(0) -> skip. Second rotation: report for proposer2
+        assertEq(proposerRegistry.livenessReportCount(), 1);
+    }
+
+    function test_RotateNetwork_FullLivenessWhenWithinGracePeriod() public {
+        // First rotation: warp past epoch + grace
+        vm.warp(4202);
+        hub.rotateNetwork();
+        // After rotation: epochStartTime = 4202, currentProposer = proposer2
+
+        // Second rotation: within grace period
+        // Epoch end = 4202 + 3600 = 7802
+        // Grace period [7802, 7802+600=8402]
+        // Warp to 8102 (5 min into grace period)
+        vm.warp(8102);
+        vm.prank(proposer2); // proposer2 is currentProposer
+        hub.rotateNetwork();
+
+        // Within grace period = full liveness credit
+        assertEq(proposerRegistry.lastLivenessBlocksProduced(), proposerRegistry.lastLivenessBlocksExpected());
+    }
+
+    function test_RotateNetwork_PenalizedLivenessWhenForcedRotation() public {
+        // First rotation: warp past epoch + grace
+        vm.warp(4202);
+        hub.rotateNetwork();
+        // After rotation: epochStartTime = 4202
+
+        // Forced rotation: well past grace period
+        // Epoch end = 4202 + 3600 = 7802, grace end = 8402
+        // Warp to 8402 + 1800 = 10202 (1800s past grace)
+        vm.warp(10202);
+        hub.rotateNetwork();
+
+        // Liveness should be penalized proportionally
+        uint256 produced = proposerRegistry.lastLivenessBlocksProduced();
+        uint256 expected = proposerRegistry.lastLivenessBlocksExpected();
+        assertEq(expected, 3600); // epochDuration
+        assertTrue(produced < expected);
+    }
+
+    function test_RotateNetwork_NoLivenessReportWhenNoCurrentProposer() public {
+        // First rotation - no prior proposer (currentProposer = address(0))
+        assertEq(hub.currentProposer(), address(0));
+
+        vm.warp(4202);
+        hub.rotateNetwork();
+
+        // _reportOutgoingProposerLiveness skips when currentProposer == address(0)
+        assertEq(proposerRegistry.livenessReportCount(), 0);
+    }
+
+    function test_RotateShard_ReportsLiveness() public {
+        // First rotation via shard
+        vm.warp(4202);
+        hub.rotateShard(0);
+        assertEq(hub.currentProposer(), proposer2);
+        // After rotation: epochStartTime = 4202
+
+        // Second rotation via shard (past grace period)
+        // Epoch end = 4202 + 3600 = 7802, grace end = 8402
+        vm.warp(8403);
+        hub.rotateShard(0);
+
+        // Verify liveness was reported for outgoing proposer
+        assertEq(proposerRegistry.lastLivenessProposer(), proposer2);
+        // First rotation: address(0) -> skip. Second: report for proposer2
+        assertEq(proposerRegistry.livenessReportCount(), 1);
+    }
 }

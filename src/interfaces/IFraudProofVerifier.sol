@@ -32,7 +32,8 @@ interface IFraudProofVerifier {
         TimingViolation,       // Block time exceeded max allowed
         BundleViolation,       // Committed cross-chain bundle not executed
         MEVViolation,          // MEV rules violated (sandwich, frontrun)
-        CustomViolation        // Chain-specific custom violation
+        CustomViolation,       // Chain-specific custom violation
+        UnjustifiedPause       // Circuit breaker pause was not justified (subjective, Kleros)
     }
 
     /// @notice Status of a fraud proof challenge

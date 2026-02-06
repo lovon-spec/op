@@ -289,4 +289,167 @@ contract SovereignPolicyTest is Test {
         (string memory name, ) = policyManager.policyInfo();
         assertEq(name, "SovereignPolicyManager");
     }
+
+    // ============ Circuit Breaker Tests ============
+
+    function test_DeclarePolicyWithCircuitBreaker_Success() public {
+        address circuitBreaker = address(0xCB);
+
+        vm.prank(chainGovernor1);
+        policyManager.declarePolicyWithCircuitBreaker(
+            CHAIN_ID_OP,
+            ISovereignPolicy.OrderingStrategy.FCFS,
+            ISovereignPolicy.EnforcementType.Hybrid,
+            12 seconds,
+            30 seconds,
+            true,
+            false,
+            address(0),
+            "",
+            circuitBreaker
+        );
+
+        ISovereignPolicy.PolicyDeclaration memory policy = policyManager.getPolicy(CHAIN_ID_OP);
+        assertEq(policy.circuitBreaker, circuitBreaker);
+        assertFalse(policy.isPaused);
+    }
+
+    function test_SetPause_Success() public {
+        address circuitBreaker = address(0xCB);
+
+        vm.prank(chainGovernor1);
+        policyManager.declarePolicyWithCircuitBreaker(
+            CHAIN_ID_OP,
+            ISovereignPolicy.OrderingStrategy.FCFS,
+            ISovereignPolicy.EnforcementType.Hybrid,
+            12 seconds,
+            0,
+            false,
+            false,
+            address(0),
+            "",
+            circuitBreaker
+        );
+
+        // Pause the chain
+        vm.prank(circuitBreaker);
+        policyManager.setPause(CHAIN_ID_OP, true);
+
+        ISovereignPolicy.PolicyDeclaration memory policy = policyManager.getPolicy(CHAIN_ID_OP);
+        assertTrue(policy.isPaused);
+
+        // Check pause info
+        (bool isPaused, uint256 pauseTimestamp, uint256 unpauseTimestamp) =
+            policyManager.getChainPauseInfo(CHAIN_ID_OP);
+        assertTrue(isPaused);
+        assertEq(pauseTimestamp, block.timestamp);
+        assertEq(unpauseTimestamp, 0);
+    }
+
+    function test_SetPause_Unpause() public {
+        address circuitBreaker = address(0xCB);
+
+        vm.prank(chainGovernor1);
+        policyManager.declarePolicyWithCircuitBreaker(
+            CHAIN_ID_OP,
+            ISovereignPolicy.OrderingStrategy.FCFS,
+            ISovereignPolicy.EnforcementType.Hybrid,
+            12 seconds,
+            0,
+            false,
+            false,
+            address(0),
+            "",
+            circuitBreaker
+        );
+
+        // Pause
+        vm.prank(circuitBreaker);
+        policyManager.setPause(CHAIN_ID_OP, true);
+
+        // Advance time
+        vm.warp(block.timestamp + 1 hours);
+
+        // Unpause
+        vm.prank(circuitBreaker);
+        policyManager.setPause(CHAIN_ID_OP, false);
+
+        ISovereignPolicy.PolicyDeclaration memory policy = policyManager.getPolicy(CHAIN_ID_OP);
+        assertFalse(policy.isPaused);
+
+        (bool isPaused, , uint256 unpauseTimestamp) =
+            policyManager.getChainPauseInfo(CHAIN_ID_OP);
+        assertFalse(isPaused);
+        assertEq(unpauseTimestamp, block.timestamp);
+    }
+
+    function test_SetPause_RevertsIfNotCircuitBreaker() public {
+        address circuitBreaker = address(0xCB);
+
+        vm.prank(chainGovernor1);
+        policyManager.declarePolicyWithCircuitBreaker(
+            CHAIN_ID_OP,
+            ISovereignPolicy.OrderingStrategy.FCFS,
+            ISovereignPolicy.EnforcementType.Hybrid,
+            12 seconds,
+            0,
+            false,
+            false,
+            address(0),
+            "",
+            circuitBreaker
+        );
+
+        // Try to pause as random user
+        vm.prank(randomUser);
+        vm.expectRevert("Not circuit breaker");
+        policyManager.setPause(CHAIN_ID_OP, true);
+    }
+
+    function test_SetPause_RevertsIfNoCircuitBreaker() public {
+        // Declare policy without circuit breaker (default declarePolicy)
+        vm.prank(chainGovernor1);
+        policyManager.declarePolicy(
+            CHAIN_ID_OP,
+            ISovereignPolicy.OrderingStrategy.FCFS,
+            ISovereignPolicy.EnforcementType.Hybrid,
+            12 seconds,
+            0,
+            false,
+            false,
+            address(0),
+            ""
+        );
+
+        // Try to pause from a non-zero address when circuitBreaker is address(0)
+        // Should revert because msg.sender (randomUser) != circuitBreaker (address(0))
+        vm.prank(randomUser);
+        vm.expectRevert("Not circuit breaker");
+        policyManager.setPause(CHAIN_ID_OP, true);
+    }
+
+    function test_DeclarePolicy_DefaultCircuitBreakerIsZero() public {
+        vm.prank(chainGovernor1);
+        policyManager.declarePolicy(
+            CHAIN_ID_OP,
+            ISovereignPolicy.OrderingStrategy.FCFS,
+            ISovereignPolicy.EnforcementType.Hybrid,
+            12 seconds,
+            0,
+            false,
+            false,
+            address(0),
+            ""
+        );
+
+        ISovereignPolicy.PolicyDeclaration memory policy = policyManager.getPolicy(CHAIN_ID_OP);
+        assertEq(policy.circuitBreaker, address(0));
+        assertFalse(policy.isPaused);
+    }
+
+    function test_DefaultPolicy_HasNoCircuitBreaker() public view {
+        ISovereignPolicy.PolicyDeclaration memory policy = policyManager.getPolicy(999);
+        assertEq(policy.circuitBreaker, address(0));
+        assertFalse(policy.isPaused);
+    }
 }

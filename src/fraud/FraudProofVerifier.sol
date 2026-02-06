@@ -310,7 +310,7 @@ contract FraudProofVerifier is IFraudProofVerifier, IArbitrable {
             return _verifyBundleViolation(challenge.proofData);
         }
 
-        // MEV and Custom violations require subjective verification
+        // MEV, Custom, and UnjustifiedPause violations require subjective verification
         return false;
     }
 
@@ -333,11 +333,60 @@ contract FraudProofVerifier is IFraudProofVerifier, IArbitrable {
         if (policyManager != address(0)) {
             ISovereignPolicy.PolicyDeclaration memory policy =
                 ISovereignPolicy(policyManager).getPolicy(_chainId);
+
+            // If chain is currently paused via circuit breaker, the timing
+            // violation is invalid — the sequencer is immunized from liveness
+            // slashing during an official security halt.
+            if (policy.isPaused) {
+                return false;
+            }
+
+            // If the chain was paused during the gap period, check if the
+            // pause window overlaps with the block gap. This protects
+            // sequencers who halted the chain to stop an exploit.
+            if (_isPauseOverlap(_chainId, timestamp1, timestamp2)) {
+                return false;
+            }
+
             return gap > policy.maxBlockTime;
         }
 
         // Default: 12 second max block time
         return gap > 12;
+    }
+
+    /**
+     * @dev Checks if a pause window overlaps with a block timestamp gap.
+     *      Uses the most recent pause/unpause timestamps from the policy manager.
+     * @param _chainId The chain to check
+     * @param _timestamp1 Start of the gap (earlier block)
+     * @param _timestamp2 End of the gap (later block)
+     * @return True if the pause window overlaps with the gap
+     */
+    function _isPauseOverlap(uint256 _chainId, uint256 _timestamp1, uint256 _timestamp2)
+        internal
+        view
+        returns (bool)
+    {
+        // Query the policy manager for pause timing
+        // The interface returns (isPaused, pauseTimestamp, unpauseTimestamp)
+        (bool success, bytes memory data) = policyManager.staticcall(
+            abi.encodeWithSignature("getChainPauseInfo(uint256)", _chainId)
+        );
+
+        if (!success || data.length < 96) return false;
+
+        (, uint256 pauseTimestamp, uint256 unpauseTimestamp) =
+            abi.decode(data, (bool, uint256, uint256));
+
+        // No pause has ever occurred
+        if (pauseTimestamp == 0) return false;
+
+        // Determine pause window end: if still paused, use current time; otherwise use unpause time
+        uint256 pauseEnd = unpauseTimestamp == 0 ? block.timestamp : unpauseTimestamp;
+
+        // Check overlap: pause window [pauseTimestamp, pauseEnd] vs gap [_timestamp1, _timestamp2]
+        return pauseTimestamp < _timestamp2 && pauseEnd > _timestamp1;
     }
 
     function _verifyOrderingViolation(uint256 _chainId, bytes memory _proofData)

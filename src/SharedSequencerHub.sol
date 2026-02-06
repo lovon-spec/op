@@ -209,13 +209,16 @@ contract SharedSequencerHub is ISharedSequencerHub {
         // 1. Validate rotation window
         _validateRotationWindow();
 
-        // 2. Select next proposer from registry
+        // 2. Report liveness for outgoing proposer before rotation
+        _reportOutgoingProposerLiveness();
+
+        // 3. Select next proposer from registry
         address nextProposer = _selectNextProposer();
 
-        // 3. Execute the atomic loop - update ALL connected chains
+        // 4. Execute the atomic loop - update ALL connected chains
         uint256 chainsUpdated = _executeRotation(nextProposer, 0, _connectedChains.length);
 
-        // 4. Update state
+        // 5. Update state
         currentProposer = nextProposer;
         currentEpoch++;
         epochStartTime = block.timestamp;
@@ -237,9 +240,10 @@ contract SharedSequencerHub is ISharedSequencerHub {
             revert NoActiveChains();
         }
 
-        // First shard validates window and selects proposer
+        // First shard validates window, reports liveness, and selects proposer
         if (_shardIndex == 0) {
             _validateRotationWindow();
+            _reportOutgoingProposerLiveness();
             _pendingProposer = _selectNextProposer();
         } else {
             // Ensure previous shards are completed
@@ -290,6 +294,42 @@ contract SharedSequencerHub is ISharedSequencerHub {
         else {
             revert InvalidRotationWindow();
         }
+    }
+
+    /**
+     * @dev Reports liveness for the outgoing proposer based on epoch timing.
+     *      Uses the elapsed time relative to the epoch duration as a proxy for
+     *      block production. If the proposer handed off within the grace period,
+     *      they are considered fully live. If forced rotation was needed (past
+     *      grace period), their liveness is penalized proportionally.
+     */
+    function _reportOutgoingProposerLiveness() internal {
+        if (currentProposer == address(0) || proposerRegistry == address(0)) return;
+
+        uint256 epochEndTime = epochStartTime + epochDuration;
+        uint256 blocksExpected = epochDuration;
+        uint256 blocksProduced;
+
+        if (block.timestamp <= epochEndTime + gracePeriod) {
+            // Proposer rotated within grace period — full liveness credit
+            blocksProduced = blocksExpected;
+        } else {
+            // Forced rotation (past grace period) — penalize proportionally
+            // The further past the grace period, the worse the liveness score
+            uint256 overshoot = block.timestamp - (epochEndTime + gracePeriod);
+            if (overshoot >= blocksExpected) {
+                blocksProduced = 0;
+            } else {
+                blocksProduced = blocksExpected - overshoot;
+            }
+        }
+
+        IProposerRegistry(proposerRegistry).reportLiveness(
+            currentProposer,
+            currentEpoch,
+            blocksProduced,
+            blocksExpected
+        );
     }
 
     /**

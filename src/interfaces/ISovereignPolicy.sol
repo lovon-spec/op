@@ -50,6 +50,8 @@ interface ISovereignPolicy {
      * @param customPolicyContract Address of custom policy logic (optional)
      * @param policyData Additional encoded policy parameters
      * @param isActive Whether this policy is currently active
+     * @param circuitBreaker Address authorized to pause sequencing (e.g. security council multisig)
+     * @param isPaused Whether the chain is currently paused via circuit breaker
      */
     struct PolicyDeclaration {
         uint256 chainId;
@@ -62,6 +64,8 @@ interface ISovereignPolicy {
         address customPolicyContract;
         bytes policyData;
         bool isActive;
+        address circuitBreaker;
+        bool isPaused;
     }
 
     /**
@@ -82,6 +86,7 @@ interface ISovereignPolicy {
     event PolicyUpdated(uint256 indexed chainId);
     event PolicyDeactivated(uint256 indexed chainId);
     event PolicyViolationDetected(uint256 indexed chainId, bytes32 indexed violationType, bytes evidence);
+    event ChainPaused(uint256 indexed chainId, bool paused);
 
     // ============ View Functions ============
 
