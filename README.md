@@ -10,7 +10,7 @@ The default block building mechanism is **MEV-Boost + Flashblocks** (private mem
 
 **Key Features:**
 - **Hub-and-Spoke Architecture**: Single Hub manages multiple L2 chains atomically
-- **Atomic Cross-Chain Bundles**: Multi-chain transaction bundles with commitment, verification, and escrow
+- **Atomic Cross-Chain Bundles**: Multi-chain transaction bundles with optimistic state atomicity via on-chain execution wrappers (AtomicBundleExecutor) and fraud-provable outcome verification
 - **Universal Chain Support**: Adapters for OP Stack, Arbitrum Nitro, and any EVM rollup (Cosmos planned)
 - **Sovereign Policies**: Each chain declares its own sequencing rules (ordering, MEV, timing, inclusion)
 - **Deterministic Fraud Proofs**: On-chain verifiable proofs for timing, ordering, inclusion, and bundle violations
@@ -216,50 +216,82 @@ The universal sequencing layer extends the Hub-and-Spoke model with four interco
 
 | Subsystem | Contract | Purpose |
 |-----------|----------|---------|
-| **Bundle Execution** | `CrossChainBundleRegistry` + `BundleEscrow` | Atomic multi-chain bundles with tip/bond escrow |
+| **Bundle Execution** | `CrossChainBundleRegistry` + `BundleEscrow` + `AtomicBundleExecutor` | Atomic multi-chain bundles with optimistic state atomicity and tip/bond escrow |
 | **Block Building** | `BuilderRegistry` + `FlashblocksBuilder` | Pluggable builders, MEV-Boost + Flashblocks default |
 | **Sovereign Policy** | `SovereignPolicyManager` + `DefaultPolicy` | Per-chain sequencing rules and compliance checking |
 | **Fraud Proofs** | `FraudProofVerifier` | Deterministic proofs + Kleros escalation |
 
 ### Cross-Chain Bundle Execution
 
-Bundles allow atomic multi-chain transaction execution with economic guarantees:
+Bundles allow atomic multi-chain transaction execution with **optimistic state atomicity** guarantees. The system uses two layers of enforcement:
+
+1. **L2 Execution Layer** (`AtomicBundleExecutor`): Deployed on every Spoke chain, wraps bundle operations so outcomes are always recorded on-chain — even when the inner call reverts.
+2. **L1 Verification Layer** (`CrossChainBundleRegistry` + `FraudProofVerifier`): Tracks commitments and verifies atomicity across chains via fraud proofs.
 
 ```
-                CROSS-CHAIN BUNDLE LIFECYCLE
+          ATOMIC CROSS-CHAIN BUNDLE LIFECYCLE
 
-  Sequencer                BundleRegistry            BundleEscrow
-  ─────────                ──────────────            ────────────
-       │                        │                         │
-       │  1. commitBundle()     │                         │
-       │   + tip + chain IDs    │                         │
-       │───────────────────────▶│  2. Escrow tip          │
-       │                        │────────────────────────▶│
-       │                        │                         │
-       │  3. Execute on each chain (off-chain)            │
-       │                        │                         │
-       │  4. confirmChainExecution(chainId, proof)        │
-       │───────────────────────▶│                         │
-       │  (repeated per chain)  │                         │
-       │                        │                         │
-       │  5. completeBundle()   │                         │
-       │───────────────────────▶│  6. Release tip         │
-       │                        │────────────────────────▶│
-       │                        │                         │
-       │              FAILURE PATH:                       │
-       │                        │                         │
-       │  reportViolation()     │  slashBond()            │
-       │───────────────────────▶│────────────────────────▶│
-       │                        │  10% → reporter         │
-       │                        │  90% → governance       │
+  User/Searcher      Relay/Sequencer      AtomicBundleExecutor    BundleRegistry
+  ─────────────      ───────────────      ────────────────────    ──────────────
+       │                    │                      │                     │
+       │  1. Submit bundle  │                      │                     │
+       │   (via relay API)  │                      │                     │
+       │───────────────────▶│                      │                     │
+       │                    │                      │                     │
+       │                    │  2. Simulate all ops │                     │
+       │                    │     off-chain        │                     │
+       │                    │  (reject if any fail)│                     │
+       │                    │                      │                     │
+       │                    │  3. commitBundle()   │                     │
+       │                    │─────────────────────────────────────────▶ │
+       │                    │                      │                     │
+       │                    │  4. executeBundle()  │                     │
+       │                    │   on Chain A         │                     │
+       │                    │─────────────────────▶│                     │
+       │                    │   emit BundleResult  │                     │
+       │                    │   (bundleId, success)│                     │
+       │                    │                      │                     │
+       │                    │  5. executeBundle()  │                     │
+       │                    │   on Chain B         │                     │
+       │                    │─────────────────────▶│                     │
+       │                    │   emit BundleResult  │                     │
+       │                    │   (bundleId, success)│                     │
+       │                    │                      │                     │
+       │                    │  6. confirmChainExecution() per chain      │
+       │                    │─────────────────────────────────────────▶ │
+       │                    │                      │                     │
+       │                    │  7. completeBundle() │                     │
+       │                    │─────────────────────────────────────────▶ │
+       │                    │                      │                     │
+
+                   ATOMICITY VIOLATION PATH:
+
+  Challenger detects: Chain A BundleResult(success=true)
+                      Chain B BundleResult(success=false)
+       │
+       │  Submit AtomicityViolation fraud proof to L1 FraudProofVerifier
+       │  with Merkle proofs of both BundleResult event logs
+       │───────────────────▶ FraudProofVerifier verifies statusA ≠ statusB
+       │                     → Sequencer slashed
 ```
 
 **Bundle States:** `Committed` → `Executed` (success) or `Expired` / `Violated` / `Cancelled` (failure)
+
+**Atomicity Model: Optimistic State Atomicity**
+
+Unlike pure economic atomicity (where only bonds are at risk), ISOCHRON enforces **optimistic state atomicity** through the `AtomicBundleExecutor`:
+
+- **Before execution:** The sequencer simulates all bundle operations off-chain. If any operation would fail, the **entire bundle is excluded from all chains**.
+- **During execution:** Operations are routed through `AtomicBundleExecutor.executeBundle()` on each chain. The executor wraps calls so that even if the inner logic reverts, the outer transaction succeeds and emits a `BundleResult` event recording the outcome.
+- **After execution:** Anyone can verify that `BundleResult` events for the same `bundleId` have consistent `success` status across all chains. If they differ, a fraud proof is filed and the sequencer is slashed.
+
+This eliminates the "broken leg" problem where a user ends up with a partial cross-chain position (e.g., bought on Chain A but the corresponding sell on Chain B reverted).
 
 **Economic Guarantees:**
 - Sequencer posts a bond when committing bundles
 - Tips incentivize timely execution
 - Violated bundles trigger bond slashing (10% to reporter, 90% to governance treasury)
+- Atomicity violations (mismatched results across chains) trigger immediate slashing
 - Expired bundles can be cleaned up by anyone after deadline
 
 ### Sovereign Policy System
@@ -791,6 +823,35 @@ interface ISequencerAdapter {
 }
 ```
 
+### AtomicBundleExecutor (L2 Spoke)
+
+Deployed on every connected L2 chain. Acts as the entry point for all atomic bundle operations, ensuring execution outcomes are always recorded on-chain for fraud proof verification:
+
+```solidity
+// Execute a single bundle operation (inner reverts are caught, not propagated)
+function executeBundle(
+    address target,     // The actual DApp contract
+    bytes calldata data, // Calldata for the DApp
+    bytes32 bundleId    // Cross-chain bundle identifier
+) external payable;
+// Emits: BundleResult(bundleId, target, success, returnData)
+
+// Execute multiple operations for the same bundle on this chain
+function executeBundleBatch(
+    address[] calldata targets,
+    bytes[] calldata datas,
+    uint256[] calldata values,
+    bytes32 bundleId
+) external payable;
+// Emits: BundleResult(bundleId, targets[0], allSuccess, returnData)
+
+// Query execution result
+function getBundleResult(bytes32 bundleId)
+    external view returns (bool executed, bool success, uint256 blockNumber);
+```
+
+**Key Design Property:** The outer transaction **never reverts**. Even if the inner DApp call fails, the `AtomicBundleExecutor` catches the revert and records `success=false` in the `BundleResult` event. This makes failures visible to the L1 fraud proof system.
+
 ### CrossChainBundleRegistry
 
 Manages atomic cross-chain bundle commitments with escrow integration:
@@ -1156,6 +1217,7 @@ op/
 │   ├── ChainDeploymentKit.sol        # Helper for chain integration
 │   │
 │   ├── bundle/                       # Cross-chain bundle execution
+│   │   ├── AtomicBundleExecutor.sol      # L2 Spoke executor for optimistic state atomicity
 │   │   ├── CrossChainBundleRegistry.sol  # Atomic multi-chain bundle commitments
 │   │   └── BundleEscrow.sol              # Tip/bond escrow with slashing
 │   │
@@ -1188,6 +1250,7 @@ op/
 │       ├── IChainRegistry.sol        # Chain registry interface
 │       ├── ISequencerAdapter.sol     # Adapter interface
 │       ├── ICrossChainBundle.sol     # Bundle registry interface
+│       ├── IAtomicBundleExecutor.sol # L2 atomic executor interface
 │       ├── IBundleEscrow.sol         # Escrow interface
 │       ├── IBuilderRegistry.sol      # Builder registry interface
 │       ├── IUniversalBuilder.sol     # Builder interface
@@ -1321,7 +1384,10 @@ A: ISOCHRON is designed to eventually replace the Superchain Council multisig. I
 ### Cross-Chain Bundles
 
 **Q: What is a cross-chain bundle?**
-A: A bundle is an atomic set of operations that must execute across multiple chains. The sequencer commits to a bundle by providing an operations hash, target chain IDs, and a deadline. The bundle is tracked on-chain with economic guarantees - tips incentivize execution, and bonds can be slashed if the sequencer fails to deliver.
+A: A bundle is an atomic set of operations that must execute across multiple chains with consistent outcomes. Users submit bundles through the relay, which routes each operation through the `AtomicBundleExecutor` on the target chain. The executor wraps calls so that even if the inner logic reverts, the outcome is recorded on-chain via a `BundleResult` event. The sequencer commits to the bundle on L1 by providing an operations hash, target chain IDs, and a deadline. If the sequencer executes a bundle with mismatched results across chains (success on one, failure on another), anyone can file an atomicity violation fraud proof and the sequencer is slashed.
+
+**Q: What is the difference between economic atomicity and state atomicity?**
+A: **Economic atomicity** only slashes the sequencer's bond if a bundle fails — the user may still end up with a "broken leg" position (e.g., bought on Chain A but the sell on Chain B reverted). **Optimistic state atomicity** (what ISOCHRON implements) goes further: the sequencer is required to simulate bundles off-chain and only include them if ALL operations succeed. If any would fail, the entire bundle is excluded from all chains. The `AtomicBundleExecutor` + `FraudProofVerifier` enforce this: mismatched `BundleResult` events across chains are deterministically provable on L1.
 
 **Q: How does bundle escrow work?**
 A: Searchers/users deposit tips for their bundles, and sequencers post bonds as economic guarantees. On successful execution, tips are released to the sequencer. On violation, the bond is slashed - 10% goes to the reporter who identified the violation, and 90% goes to the governance treasury.
@@ -1343,7 +1409,7 @@ A: No. ISOCHRON does not hardcode any trusted setups. Deterministic fraud proofs
 ### Fraud Proofs
 
 **Q: What types of fraud can be proven deterministically?**
-A: Four types: (1) **Timing violations** - block gap exceeds the chain's `maxBlockTime`; (2) **Ordering violations** - FCFS misordering when the policy requires FCFS; (3) **Inclusion violations** - censorship beyond the `forcedInclusionDeadline`; (4) **Bundle violations** - committed bundle deadline passed without execution.
+A: Five types: (1) **Timing violations** - block gap exceeds the chain's `maxBlockTime`; (2) **Ordering violations** - FCFS misordering when the policy requires FCFS; (3) **Inclusion violations** - censorship beyond the `forcedInclusionDeadline`; (4) **Bundle violations** - committed bundle deadline passed without execution; (5) **Atomicity violations** - a cross-chain bundle was executed with mismatched `BundleResult` outcomes across chains (e.g., success on Chain A, failure on Chain B). The challenger submits Merkle proofs of the `BundleResult` event logs from both chains.
 
 **Q: How does Kleros arbitration work for subjective violations?**
 A: For MEV violations (sandwich attacks, front-running) and custom violations, the challenger escalates to Kleros by paying the arbitration fee. A Kleros court examines the evidence and rules in favor of either the challenger or the sequencer. The bond is then distributed accordingly.

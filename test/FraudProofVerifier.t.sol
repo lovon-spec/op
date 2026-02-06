@@ -562,4 +562,230 @@ contract FraudProofVerifierTest is Test {
         IFraudProofVerifier.Challenge memory challenge = verifier.getChallenge(challengeId);
         assertEq(uint256(challenge.status), uint256(IFraudProofVerifier.ChallengeStatus.Disputed));
     }
+
+    // ============ Atomicity Violation Tests ============
+
+    function test_VerifyAtomicityViolation_Accepts_MismatchedStatus() public {
+        // Bundle executed with success=true on Chain A, success=false on Chain B
+        bytes memory proofData = abi.encode(
+            bytes32(uint256(1)),   // bundleId
+            uint256(10),           // chainIdA (Optimism)
+            uint256(42161),        // chainIdB (Arbitrum)
+            true,                  // statusA (success on Chain A)
+            false,                 // statusB (failure on Chain B)
+            bytes(hex"aabbccdd"), // eventProofA (Merkle proof of BundleResult log)
+            bytes(hex"eeff0011")  // eventProofB (Merkle proof of BundleResult log)
+        );
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.AtomicityViolation,
+            proofData
+        );
+
+        uint256 challengerBalBefore = challenger.balance;
+
+        verifier.verifyDeterministicProof(challengeId);
+
+        assertEq(
+            uint256(verifier.getChallengeStatus(challengeId)),
+            uint256(IFraudProofVerifier.ChallengeStatus.Accepted)
+        );
+
+        // Challenger gets bond back
+        assertEq(challenger.balance, challengerBalBefore + CHALLENGE_BOND);
+    }
+
+    function test_VerifyAtomicityViolation_Accepts_ReverseDirection() public {
+        // Reverse: success=false on Chain A, success=true on Chain B
+        bytes memory proofData = abi.encode(
+            bytes32(uint256(42)),  // bundleId
+            uint256(10),           // chainIdA
+            uint256(42161),        // chainIdB
+            false,                 // statusA (failure on Chain A)
+            true,                  // statusB (success on Chain B)
+            bytes(hex"11223344"), // eventProofA
+            bytes(hex"55667788")  // eventProofB
+        );
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.AtomicityViolation,
+            proofData
+        );
+
+        verifier.verifyDeterministicProof(challengeId);
+
+        assertEq(
+            uint256(verifier.getChallengeStatus(challengeId)),
+            uint256(IFraudProofVerifier.ChallengeStatus.Accepted)
+        );
+    }
+
+    function test_VerifyAtomicityViolation_Rejects_SameStatus_BothTrue() public {
+        // Both chains succeeded — no violation
+        bytes memory proofData = abi.encode(
+            bytes32(uint256(1)),   // bundleId
+            uint256(10),           // chainIdA
+            uint256(42161),        // chainIdB
+            true,                  // statusA
+            true,                  // statusB (same as A)
+            bytes(hex"aabbccdd"), // eventProofA
+            bytes(hex"eeff0011")  // eventProofB
+        );
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.AtomicityViolation,
+            proofData
+        );
+
+        uint256 govBalBefore = governance.balance;
+
+        verifier.verifyDeterministicProof(challengeId);
+
+        assertEq(
+            uint256(verifier.getChallengeStatus(challengeId)),
+            uint256(IFraudProofVerifier.ChallengeStatus.Rejected)
+        );
+
+        // Bond goes to governance (invalid challenge)
+        assertEq(governance.balance, govBalBefore + CHALLENGE_BOND);
+    }
+
+    function test_VerifyAtomicityViolation_Rejects_SameStatus_BothFalse() public {
+        // Both chains failed — no violation (sequencer correctly excluded)
+        bytes memory proofData = abi.encode(
+            bytes32(uint256(1)),
+            uint256(10),
+            uint256(42161),
+            false,
+            false,
+            bytes(hex"aabbccdd"),
+            bytes(hex"eeff0011")
+        );
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.AtomicityViolation,
+            proofData
+        );
+
+        verifier.verifyDeterministicProof(challengeId);
+
+        assertEq(
+            uint256(verifier.getChallengeStatus(challengeId)),
+            uint256(IFraudProofVerifier.ChallengeStatus.Rejected)
+        );
+    }
+
+    function test_VerifyAtomicityViolation_Rejects_SameChainId() public {
+        // Same chain ID for both — invalid proof
+        bytes memory proofData = abi.encode(
+            bytes32(uint256(1)),
+            uint256(10),    // chainIdA
+            uint256(10),    // chainIdB same as A
+            true,
+            false,
+            bytes(hex"aabbccdd"),
+            bytes(hex"eeff0011")
+        );
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.AtomicityViolation,
+            proofData
+        );
+
+        verifier.verifyDeterministicProof(challengeId);
+
+        assertEq(
+            uint256(verifier.getChallengeStatus(challengeId)),
+            uint256(IFraudProofVerifier.ChallengeStatus.Rejected)
+        );
+    }
+
+    function test_VerifyAtomicityViolation_Rejects_ZeroBundleId() public {
+        bytes memory proofData = abi.encode(
+            bytes32(0),            // zero bundleId
+            uint256(10),
+            uint256(42161),
+            true,
+            false,
+            bytes(hex"aabbccdd"),
+            bytes(hex"eeff0011")
+        );
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.AtomicityViolation,
+            proofData
+        );
+
+        verifier.verifyDeterministicProof(challengeId);
+
+        assertEq(
+            uint256(verifier.getChallengeStatus(challengeId)),
+            uint256(IFraudProofVerifier.ChallengeStatus.Rejected)
+        );
+    }
+
+    function test_VerifyAtomicityViolation_Rejects_EmptyEventProof() public {
+        bytes memory proofData = abi.encode(
+            bytes32(uint256(1)),
+            uint256(10),
+            uint256(42161),
+            true,
+            false,
+            bytes(""),            // empty proof A
+            bytes(hex"eeff0011")
+        );
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.AtomicityViolation,
+            proofData
+        );
+
+        verifier.verifyDeterministicProof(challengeId);
+
+        assertEq(
+            uint256(verifier.getChallengeStatus(challengeId)),
+            uint256(IFraudProofVerifier.ChallengeStatus.Rejected)
+        );
+    }
+
+    function test_VerifyAtomicityViolation_Rejects_TooShortProofData() public {
+        // Less than 224 bytes of proof data
+        bytes memory proofData = abi.encode(bytes32(uint256(1)), uint256(10));
+
+        vm.prank(challenger);
+        bytes32 challengeId = verifier.submitChallenge{value: CHALLENGE_BOND}(
+            sequencer,
+            CHAIN_ID,
+            IFraudProofVerifier.ProofType.AtomicityViolation,
+            proofData
+        );
+
+        verifier.verifyDeterministicProof(challengeId);
+
+        assertEq(
+            uint256(verifier.getChallengeStatus(challengeId)),
+            uint256(IFraudProofVerifier.ChallengeStatus.Rejected)
+        );
+    }
 }

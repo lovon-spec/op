@@ -33,7 +33,8 @@ interface IFraudProofVerifier {
         BundleViolation,       // Committed cross-chain bundle not executed
         MEVViolation,          // MEV rules violated (sandwich, frontrun)
         CustomViolation,       // Chain-specific custom violation
-        UnjustifiedPause       // Circuit breaker pause was not justified (subjective, Kleros)
+        UnjustifiedPause,      // Circuit breaker pause was not justified (subjective, Kleros)
+        AtomicityViolation     // Bundle executed with mismatched results across chains
     }
 
     /// @notice Status of a fraud proof challenge

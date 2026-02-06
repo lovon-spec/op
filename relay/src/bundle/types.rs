@@ -20,6 +20,14 @@ pub struct BundleOperation {
 
     /// Raw signed transaction bytes
     pub raw_tx: Vec<u8>,
+
+    /// Target contract address (the DApp, not the executor)
+    /// The relay wraps this into an AtomicBundleExecutor.executeBundle() call
+    pub target: Option<Address>,
+
+    /// Original calldata for the target contract
+    /// Used to construct the executor wrapper call
+    pub target_calldata: Option<Vec<u8>>,
 }
 
 /// A cross-chain bundle submitted by a searcher/user.
@@ -90,6 +98,26 @@ pub struct ChainExecutionConfirmation {
     pub chain_id: u64,
     pub block_number: u64,
     pub tx_inclusion_proof: Vec<u8>,
+}
+
+/// Per-chain result from AtomicBundleExecutor, used for atomicity monitoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainExecutionResult {
+    /// The chain where this result was observed
+    pub chain_id: u64,
+    /// Whether the inner call succeeded
+    pub success: bool,
+    /// Block number where the BundleResult event was emitted
+    pub block_number: u64,
+    /// Merkle proof of the BundleResult event log (for fraud proofs)
+    pub event_proof: Vec<u8>,
+}
+
+/// AtomicBundleExecutor address registry per chain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AtomicExecutorConfig {
+    /// Chain ID to AtomicBundleExecutor address mapping
+    pub executors: std::collections::HashMap<u64, Address>,
 }
 
 impl CrossChainBundle {

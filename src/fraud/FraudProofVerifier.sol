@@ -296,6 +296,7 @@ contract FraudProofVerifier is IFraudProofVerifier, IArbitrable {
      *      - InclusionViolation: Transaction receipt + block headers showing delay
      *      - TimingViolation: Two consecutive block headers showing gap
      *      - BundleViolation: Bundle commitment + block data showing missing tx
+     *      - AtomicityViolation: BundleResult events from two chains with mismatched success status
      */
     function _verifyProof(Challenge storage challenge) internal view returns (bool) {
         ProofType pType = challenge.proofType;
@@ -308,6 +309,8 @@ contract FraudProofVerifier is IFraudProofVerifier, IArbitrable {
             return _verifyInclusionViolation(challenge.chainId, challenge.proofData);
         } else if (pType == ProofType.BundleViolation) {
             return _verifyBundleViolation(challenge.proofData);
+        } else if (pType == ProofType.AtomicityViolation) {
+            return _verifyAtomicityViolation(challenge.proofData);
         }
 
         // MEV, Custom, and UnjustifiedPause violations require subjective verification
@@ -452,6 +455,64 @@ contract FraudProofVerifier is IFraudProofVerifier, IArbitrable {
 
         // Bundle violation if deadline has passed
         return currentTime > deadline;
+    }
+
+    /**
+     * @dev Verifies an atomicity violation: a cross-chain bundle was executed with
+     *      mismatched success/failure results across two chains.
+     *
+     *      Proof structure:
+     *      - bytes32 bundleId: The bundle that was executed inconsistently
+     *      - uint256 chainIdA: First chain where bundle was executed
+     *      - uint256 chainIdB: Second chain where bundle was executed
+     *      - bool statusA: BundleResult success status on Chain A
+     *      - bool statusB: BundleResult success status on Chain B
+     *      - bytes eventProofA: Merkle proof of BundleResult event log on Chain A
+     *      - bytes eventProofB: Merkle proof of BundleResult event log on Chain B
+     *
+     *      The verifier checks that:
+     *      1. Both chains are different
+     *      2. The bundleId matches
+     *      3. The statuses differ (one true, one false)
+     *      4. The event proofs are valid (non-empty in this implementation;
+     *         full Merkle verification against L1 state roots in production)
+     *
+     *      This is the core mechanism for Optimistic State Atomicity enforcement.
+     *      The sequencer is forced to simulate bundles off-chain and only include
+     *      bundles where all operations succeed or all fail across all chains.
+     */
+    function _verifyAtomicityViolation(bytes memory _proofData) internal pure returns (bool) {
+        // Minimum proof size: bundleId(32) + chainIdA(32) + chainIdB(32) +
+        //                     statusA(32) + statusB(32) + eventProofA offset(32) +
+        //                     eventProofB offset(32) = 224 bytes minimum
+        if (_proofData.length < 224) return false;
+
+        (
+            bytes32 bundleId,
+            uint256 chainIdA,
+            uint256 chainIdB,
+            bool statusA,
+            bool statusB,
+            bytes memory eventProofA,
+            bytes memory eventProofB
+        ) = abi.decode(_proofData, (bytes32, uint256, uint256, bool, bool, bytes, bytes));
+
+        // Bundle ID must be non-zero
+        if (bundleId == bytes32(0)) return false;
+
+        // Chains must be different
+        if (chainIdA == chainIdB) return false;
+
+        // Both event proofs must be non-empty
+        // In production, these would be Merkle proofs verified against L1
+        // state roots of each chain's output oracle. The proofs demonstrate
+        // that the BundleResult event was emitted with the claimed status.
+        if (eventProofA.length == 0 || eventProofB.length == 0) return false;
+
+        // Core check: statuses must differ — one chain succeeded, the other failed.
+        // This is the atomicity violation. The sequencer included operations for
+        // bundleId on both chains, but the outcomes diverged.
+        return statusA != statusB;
     }
 
     function _sendValue(address payable _to, uint256 _amount) internal {

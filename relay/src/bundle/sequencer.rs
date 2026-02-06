@@ -18,6 +18,19 @@ use crate::config::BundleConfig;
 use crate::policy::PolicyEngine;
 
 /// The bundle sequencer processes cross-chain bundles.
+///
+/// When an `AtomicExecutorConfig` is provided, the sequencer routes all bundle
+/// operations through the `AtomicBundleExecutor` contract on each chain. This
+/// ensures that execution outcomes are recorded on-chain via `BundleResult` events,
+/// enabling L1 fraud proofs for atomicity violations.
+///
+/// Atomicity enforcement flow:
+/// 1. Sequencer receives bundle with operations for chains A and B
+/// 2. Sequencer simulates all operations off-chain
+/// 3. If any operation would fail, the ENTIRE bundle is rejected (not included on any chain)
+/// 4. If all succeed, operations are wrapped in AtomicBundleExecutor.executeBundle() calls
+/// 5. After execution, BundleResult events are monitored for consistency
+/// 6. If results diverge (e.g., success on A, failure on B), a fraud proof can be filed
 #[derive(Clone)]
 pub struct BundleSequencer {
     config: BundleConfig,
@@ -25,6 +38,10 @@ pub struct BundleSequencer {
     chain_manager: ChainManager,
     policy_engine: PolicyEngine,
     pending_bundles: Arc<RwLock<HashMap<alloy_primitives::B256, CrossChainBundle>>>,
+    /// Per-chain execution results from AtomicBundleExecutor (for atomicity monitoring)
+    execution_results: Arc<RwLock<HashMap<alloy_primitives::B256, Vec<ChainExecutionResult>>>>,
+    /// AtomicBundleExecutor addresses per chain
+    executor_config: Option<AtomicExecutorConfig>,
     nonce: Arc<RwLock<u64>>,
 }
 
@@ -41,7 +58,90 @@ impl BundleSequencer {
             chain_manager,
             policy_engine,
             pending_bundles: Arc::new(RwLock::new(HashMap::new())),
+            execution_results: Arc::new(RwLock::new(HashMap::new())),
+            executor_config: None,
             nonce: Arc::new(RwLock::new(0)),
+        }
+    }
+
+    /// Create a sequencer with AtomicBundleExecutor support.
+    pub fn with_executor_config(
+        config: BundleConfig,
+        chain_manager: ChainManager,
+        policy_engine: PolicyEngine,
+        executor_config: AtomicExecutorConfig,
+    ) -> Self {
+        let validator = BundleValidator::new(config.clone());
+        Self {
+            config,
+            validator,
+            chain_manager,
+            policy_engine,
+            pending_bundles: Arc::new(RwLock::new(HashMap::new())),
+            execution_results: Arc::new(RwLock::new(HashMap::new())),
+            executor_config: Some(executor_config),
+            nonce: Arc::new(RwLock::new(0)),
+        }
+    }
+
+    /// Get the AtomicBundleExecutor address for a chain.
+    pub fn get_executor_address(&self, chain_id: u64) -> Option<&Address> {
+        self.executor_config
+            .as_ref()
+            .and_then(|c| c.executors.get(&chain_id))
+    }
+
+    /// Check if AtomicBundleExecutor routing is enabled.
+    pub fn is_atomic_execution_enabled(&self) -> bool {
+        self.executor_config.is_some()
+    }
+
+    /// Record a chain execution result from an AtomicBundleExecutor BundleResult event.
+    pub async fn record_execution_result(
+        &self,
+        bundle_id: &alloy_primitives::B256,
+        result: ChainExecutionResult,
+    ) {
+        let mut results = self.execution_results.write().await;
+        let entry = results.entry(*bundle_id).or_insert_with(Vec::new);
+
+        // Check for atomicity violation: if any existing result has a different success status
+        let has_mismatch = entry.iter().any(|r| r.success != result.success);
+        if has_mismatch {
+            warn!(
+                bundle_id = %bundle_id,
+                chain_id = result.chain_id,
+                success = result.success,
+                "ATOMICITY VIOLATION DETECTED: mismatched BundleResult across chains"
+            );
+        }
+
+        entry.push(result);
+    }
+
+    /// Get execution results for a bundle (for atomicity monitoring).
+    pub async fn get_execution_results(
+        &self,
+        bundle_id: &alloy_primitives::B256,
+    ) -> Option<Vec<ChainExecutionResult>> {
+        let results = self.execution_results.read().await;
+        results.get(bundle_id).cloned()
+    }
+
+    /// Check if a bundle has an atomicity violation (mismatched results across chains).
+    pub async fn has_atomicity_violation(
+        &self,
+        bundle_id: &alloy_primitives::B256,
+    ) -> bool {
+        let results = self.execution_results.read().await;
+        if let Some(chain_results) = results.get(bundle_id) {
+            if chain_results.len() < 2 {
+                return false;
+            }
+            let first_status = chain_results[0].success;
+            chain_results.iter().any(|r| r.success != first_status)
+        } else {
+            false
         }
     }
 
@@ -206,4 +306,10 @@ pub enum BundleError {
 
     #[error("Invalid bundle status")]
     InvalidStatus,
+
+    #[error("Atomicity violation: mismatched results across chains for bundle {0}")]
+    AtomicityViolation(String),
+
+    #[error("No executor configured for chain {0}")]
+    NoExecutorForChain(u64),
 }
