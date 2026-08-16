@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {ISystemConfig} from "../../src/interfaces/ISystemConfig.sol";
+import {ISystemConfig} from "../../src/poc/opstack/interfaces/ISystemConfig.sol";
 
 /**
  * @title MockSystemConfig
- * @notice Mock OP Stack SystemConfig for testing KlerosSequencerManager.
+ * @notice Mock OP Stack SystemConfig for testing SharedSequencerHub.
  * @dev Includes both batcherHash and unsafeBlockSigner to match real OP Stack behavior.
  */
 contract MockSystemConfig is ISystemConfig {

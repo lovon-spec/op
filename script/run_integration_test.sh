@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================
-#  Constitutional L2 — Full System Integration Test
+#  ISOCHRON — Full System Integration Test
 # =============================================================
 #
 # A self-contained integration test that deploys every contract
@@ -76,14 +76,19 @@ CHALLENGER_KEY="0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edff
 DEPLOYER="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 GUARDIAN="0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
 
+# Operator keys for Active Handoff (current operator must call rotateOperator during grace period)
 BATCHER_1="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+BATCHER_1_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 SIGNER_1="0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"
 BATCHER_2="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+BATCHER_2_KEY="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
 SIGNER_2="0x976EA74026E726554dB657fA54763abd0C3a0aa9"
 BATCHER_3="0x90F79bf6EB2c4f870365E785982E1f101E93b906"
+BATCHER_3_KEY="0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"
 SIGNER_3="0x14dC79964da2C08b23698B3D3cc7Ca32193d9955"
 
 EPOCH=10 # seconds (matches DeployLocal)
+GRACE_PERIOD=600 # Active Handoff grace period
 
 # ── Helpers ──────────────────────────────────────────────────
 advance_time() {
@@ -156,7 +161,7 @@ print('')
 section "CONSTITUTIONAL L2 — FULL SYSTEM INTEGRATION TEST"
 
 echo "This integration test deploys all contracts and exercises every major"
-echo "subsystem of the Constitutional L2 governance stack."
+echo "subsystem of the ISOCHRON governance stack."
 
 # ─── Step 0 ──────────────────────────────────────────────────
 echo ""
@@ -197,7 +202,7 @@ echo "  ├───────────────────────
 echo "  │ SystemConfig       (MockSystemConfig)                    │"
 echo "  │   $SYSTEM_CONFIG │"
 echo "  ├──────────────────────────────────────────────────────────┤"
-echo "  │ Manager            (KlerosSequencerManager)              │"
+echo "  │ Manager            (legacy: KlerosSequencerManager)      │"
 echo "  │   $MANAGER │"
 echo "  └──────────────────────────────────────────────────────────┘"
 
@@ -255,25 +260,28 @@ echo "  batcherHash():      $BATCHER_HASH"
 echo "  unsafeBlockSigner(): $UNSAFE_SIGNER"
 echo "  owner():             $SC_OWNER"
 echo ""
-echo "  The owner is the KlerosSequencerManager — only it can"
+echo "  The owner is the sequencer manager (legacy: KlerosSequencerManager) — only it can"
 echo "  update batcherHash and unsafeBlockSigner via the adapter."
 
-# ─── Step 5: Rotation cycle ──────────────────────────────────
-section "STEP 5 · Epoch-Based Rotation (3 cycles)"
+# ─── Step 5: Rotation cycle (Active Handoff) ─────────────────
+section "STEP 5 · Epoch-Based Rotation with Active Handoff (3 cycles)"
 
-echo "Every $EPOCH seconds anyone can call rotateOperator()."
-echo "The manager validates the next candidate via O(1) reverse"
-echo "mapping, then delegates to the adapter which atomically"
-echo "sets BOTH batcherHash AND unsafeBlockSigner in SystemConfig."
+echo "Active Handoff Protocol: Only the current operator can trigger"
+echo "rotation during the grace period. This prevents L2 re-orgs by"
+echo "allowing operators to flush their batch queue before rotating."
 echo ""
 
+# Track which operator is current (starts with Operator 1 after first rotation)
+CURRENT_OP_KEY="$BATCHER_1_KEY"
+CURRENT_OP_NAME="Operator 1"
+
 for CYCLE in 1 2 3; do
-    subsection "Rotation $CYCLE"
+    subsection "Rotation $CYCLE (Active Handoff by $CURRENT_OP_NAME)"
 
     advance_time $((EPOCH + 1))
 
-    echo "  Calling rotateOperator()…"
-    send_tx "$DEPLOYER_KEY" "$MANAGER" "rotateOperator()"
+    echo "  Current operator ($CURRENT_OP_NAME) calling rotateOperator()..."
+    send_tx "$CURRENT_OP_KEY" "$MANAGER" "rotateOperator()"
 
     CURRENT_BATCH=$(_call "$MANAGER" "currentSequencer()(address)")
     BATCHER_HASH=$(_call "$SYSTEM_CONFIG" "batcherHash()(bytes32)")
@@ -282,6 +290,18 @@ for CYCLE in 1 2 3; do
     echo "  Current batcher:       $CURRENT_BATCH"
     echo "  SystemConfig batcherHash:      $BATCHER_HASH"
     echo "  SystemConfig unsafeBlockSigner: $UNSAFE_SIGNER"
+
+    # Update current operator key for next rotation
+    if [ "$CURRENT_BATCH" = "$BATCHER_1" ]; then
+        CURRENT_OP_KEY="$BATCHER_1_KEY"
+        CURRENT_OP_NAME="Operator 1"
+    elif [ "$CURRENT_BATCH" = "$BATCHER_2" ]; then
+        CURRENT_OP_KEY="$BATCHER_2_KEY"
+        CURRENT_OP_NAME="Operator 2"
+    elif [ "$CURRENT_BATCH" = "$BATCHER_3" ]; then
+        CURRENT_OP_KEY="$BATCHER_3_KEY"
+        CURRENT_OP_NAME="Operator 3"
+    fi
     echo ""
 done
 
@@ -289,14 +309,14 @@ done
 section "STEP 6 · Challenge & Remove Operator 2"
 
 echo "Operator 2 (batcher $BATCHER_2)"
-echo "has been caught violating the constitution (e.g. censoring"
-echo "transactions).  A Kleros jury ruled against them."
+echo "has been caught violating the sequencer SLA (e.g. missed handoff"
+echo "or sustained downtime).  An arbitrator jury (default: Kleros) ruled against them."
 echo ""
 
 echo "Step 6a: Mark operator as removed in registry…"
 send_tx "$CHALLENGER_KEY" "$REGISTRY" \
     "setOperatorClearingRequested(address,address)" "$BATCHER_2" "$SIGNER_2"
-echo "  Registry status set to Absent (removed by Kleros ruling)"
+echo "  Registry status set to Absent (removed by arbitrator ruling)"
 echo ""
 
 echo "Step 6b: Sync removal to manager (anyone can call)…"
@@ -306,21 +326,37 @@ send_tx "$CHALLENGER_KEY" "$MANAGER" \
 ACTIVE=$(_call "$MANAGER" "activeOperatorCount()(uint256)")
 echo "  Active operators now: $ACTIVE (was 3)"
 
-# ─── Step 7: Rotation after removal ──────────────────────────
-section "STEP 7 · Rotation After Removal"
+# ─── Step 7: Rotation after removal (Active Handoff) ─────────
+section "STEP 7 · Rotation After Removal (Active Handoff)"
 
 echo "The removed operator is gone from the active set."
 echo "Rotation continues round-robin through the remaining 2."
+echo "Current operator triggers rotation during grace period."
 echo ""
 
+# After step 5, operator 1 is current (we rotated 3 times: 1->2->3->1)
+# After step 6, operator 2 was removed from registry but operator 1 is still current
+CURRENT_OP_KEY="$BATCHER_1_KEY"
+CURRENT_OP_NAME="Operator 1"
+
 for CYCLE in 1 2; do
-    subsection "Post-removal rotation $CYCLE"
+    subsection "Post-removal rotation $CYCLE (by $CURRENT_OP_NAME)"
     advance_time $((EPOCH + 1))
 
-    send_tx "$DEPLOYER_KEY" "$MANAGER" "rotateOperator()"
+    echo "  Current operator ($CURRENT_OP_NAME) calling rotateOperator()..."
+    send_tx "$CURRENT_OP_KEY" "$MANAGER" "rotateOperator()"
 
     CURRENT_BATCH=$(_call "$MANAGER" "currentSequencer()(address)")
     echo "  Current batcher: $CURRENT_BATCH"
+
+    # Update current operator key for next rotation (only 1 and 3 remain)
+    if [ "$CURRENT_BATCH" = "$BATCHER_1" ]; then
+        CURRENT_OP_KEY="$BATCHER_1_KEY"
+        CURRENT_OP_NAME="Operator 1"
+    elif [ "$CURRENT_BATCH" = "$BATCHER_3" ]; then
+        CURRENT_OP_KEY="$BATCHER_3_KEY"
+        CURRENT_OP_NAME="Operator 3"
+    fi
     echo ""
 done
 
@@ -332,7 +368,7 @@ section "STEP 8 · Adapter Upgrade (V1 → V2)"
 
 echo "A new adapter has been developed (e.g. for an OP Stack"
 echo "hardfork).  It has been submitted to the Adapter Registry"
-echo "and passed the Kleros curation challenge period."
+echo "and passed the arbitrator curation challenge period (default: Kleros)."
 echo ""
 
 echo "Step 8a: Deploy MockAdapterV2…"
@@ -363,15 +399,27 @@ echo "  Manager adapter version: $NEW_VERSION"
 echo ""
 echo "  Ratchet enforced: 2000000 > 1000000"
 
-# ─── Step 9: Rotation with new adapter ───────────────────────
-section "STEP 9 · Rotation With V2 Adapter"
+# ─── Step 9: Rotation with new adapter (Active Handoff) ──────
+section "STEP 9 · Rotation With V2 Adapter (Active Handoff)"
 
 echo "The V2 adapter is now active.  Let's verify rotation still"
 echo "works correctly through the new adapter."
+echo "Current operator triggers rotation during grace period."
 echo ""
 
+# Get current operator to determine which key to use
+CURRENT_BATCH=$(_call "$MANAGER" "currentSequencer()(address)")
+if [ "$CURRENT_BATCH" = "$BATCHER_1" ]; then
+    CURRENT_OP_KEY="$BATCHER_1_KEY"
+    CURRENT_OP_NAME="Operator 1"
+elif [ "$CURRENT_BATCH" = "$BATCHER_3" ]; then
+    CURRENT_OP_KEY="$BATCHER_3_KEY"
+    CURRENT_OP_NAME="Operator 3"
+fi
+
 advance_time $((EPOCH + 1))
-send_tx "$DEPLOYER_KEY" "$MANAGER" "rotateOperator()"
+echo "  $CURRENT_OP_NAME calling rotateOperator() with V2 adapter..."
+send_tx "$CURRENT_OP_KEY" "$MANAGER" "rotateOperator()"
 
 CURRENT_BATCH=$(_call "$MANAGER" "currentSequencer()(address)")
 BATCHER_HASH=$(_call "$SYSTEM_CONFIG" "batcherHash()(bytes32)")
@@ -401,8 +449,9 @@ IS_PAUSED=$(_call "$MANAGER" "paused()(bool)")
 echo "  paused() = $IS_PAUSED"
 echo ""
 
-echo "Step 10b: Attempt rotation while paused…"
-advance_time $((EPOCH + 1))
+echo "Step 10b: Attempt rotation while paused (using Dead Man's Switch)..."
+# Advance past grace period so anyone can try to rotate
+advance_time $((EPOCH + GRACE_PERIOD + 1))
 if "$CAST" send "$MANAGER" "rotateOperator()" \
     --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" 2>/dev/null; then
     echo "  ERROR: should have reverted!"
@@ -425,6 +474,7 @@ echo ""
 echo "  [x] Operator Registry   — 3 operators with (batcher, signer) tuples"
 echo "  [x] Adapter Registry    — V1 registered; V2 registered and upgraded"
 echo "  [x] SystemConfig        — batcherHash + unsafeBlockSigner updated atomically"
+echo "  [x] Active Handoff      — current operator triggers rotation during grace period"
 echo "  [x] Epoch Rotation      — round-robin through active operator set"
 echo "  [x] Challenge & Removal — operator 2 removed, rotation skips them"
 echo "  [x] Adapter Upgrade     — V1 -> V2 via ratchet (version must increase)"

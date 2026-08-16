@@ -1,8 +1,8 @@
-# Constitutional L2 - Makefile
+# ISOCHRON - Makefile
 #
 # Common commands for development, testing, and deployment
 
-.PHONY: all build test clean install deploy-local demo help
+.PHONY: all build test clean install deploy-local integration-test help
 
 # Default target
 all: build test
@@ -49,16 +49,17 @@ coverage:
 anvil:
 	anvil --port 8545 --block-time 2
 
-# Deploy contracts to local Anvil
-deploy-local:
-	forge script script/DeployLocal.s.sol:DeployLocal \
+# Deploy ISOCHRON architecture to local Anvil
+deploy-kssn:
+	forge script script/DeployKSSN.s.sol:DeployKSSN \
 		--rpc-url http://127.0.0.1:8545 \
 		--broadcast
 
-# Run the interactive demo
-demo:
-	forge script script/Demo.s.sol:Demo \
+# Run the integration test script
+integration-test:
+	forge script script/IntegrationTest.s.sol:IntegrationTest \
 		--rpc-url http://127.0.0.1:8545 \
+		--broadcast \
 		-vvvv
 
 # =============================================================
@@ -134,7 +135,7 @@ sizes:
 # =============================================================
 
 help:
-	@echo "Constitutional L2 - Development Commands"
+	@echo "ISOCHRON - Development Commands"
 	@echo ""
 	@echo "Setup:"
 	@echo "  make install      - Install dependencies"
@@ -150,9 +151,9 @@ help:
 	@echo "  make coverage     - Generate coverage report"
 	@echo ""
 	@echo "Local Development:"
-	@echo "  make anvil        - Start local Anvil node"
-	@echo "  make deploy-local - Deploy to local Anvil"
-	@echo "  make demo         - Run interactive demo"
+	@echo "  make anvil            - Start local Anvil node"
+	@echo "  make deploy-kssn      - Deploy ISOCHRON Hub-and-Spoke to local Anvil (legacy target name)"
+	@echo "  make integration-test - Run ISOCHRON integration test"
 	@echo ""
 	@echo "Docker (Full OP Stack):"
 	@echo "  make docker-up    - Start all services"

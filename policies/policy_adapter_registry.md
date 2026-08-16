@@ -2,18 +2,18 @@
 
 ## Overview
 
-This document defines the acceptance policy for the **Adapter Registry**, a Kleros Curate list that governs which OP Stack adapters can be used by KlerosSequencerManager to rotate sequencers.
+This document defines the acceptance policy for the **Adapter Registry**, an arbitrator registry (Kleros Curate by default) that governs which rollup adapters can be used by SharedSequencerHub to rotate sequencers.
 
 ## Purpose
 
-The adapter pattern enables the Constitutional L2 to survive OP Stack hardforks without requiring changes to the core KlerosSequencerManager contract. Adapters are hot-swapped via the `upgradeAdapter()` function, which is permissionless but gated by:
+The adapter pattern enables ISOCHRON to survive rollup upgrades without requiring changes to the core SharedSequencerHub contract. Adapters are hot-swapped via governance updates, which are permissionless but gated by:
 
-1. **Kleros Arbitration**: Adapter must be registered in the Adapter Registry
+1. **Arbitrator Arbitration (default: Kleros)**: Adapter must be registered in the Adapter Registry
 2. **Ratchet Versioning**: New adapter version must be strictly greater than current
 
 ## Registry Type
 
-- **Registry**: Kleros Curate (GeneralizedTCR)
+- **Registry**: Kleros Curate (GeneralizedTCR, default arbitrator registry)
 - **Court**: Blockchain Technical (Court ID: 4)
 - **Challenge Period**: Recommended 5-7 days for security
 
@@ -33,8 +33,8 @@ An adapter MUST meet ALL of the following criteria to be accepted:
 
 ### 1. Implementation Requirements
 
-- [ ] Implements `IOpStackAdapter` interface correctly
-- [ ] `rotateSequencer()` function updates both batcher hash and unsafe block signer
+- [ ] Implements `ISequencerAdapter` interface correctly
+- [ ] `getRotationCalldata()` function returns correct calldata for the rollup-specific rotation
 - [ ] `version()` returns a unique, monotonically increasing version number
 - [ ] `adapterInfo()` returns accurate name and description
 
@@ -43,15 +43,16 @@ An adapter MUST meet ALL of the following criteria to be accepted:
 - [ ] No backdoors or privileged functions beyond rotation logic
 - [ ] No self-destruct capability
 - [ ] No delegatecall to external contracts
+- [ ] No state mutations (adapter functions must be view/pure)
 - [ ] No arbitrary storage writes
 - [ ] Reverts on invalid inputs (zero addresses)
 - [ ] Proper error handling with descriptive revert reasons
 
 ### 3. Compatibility Requirements
 
-- [ ] Compatible with current OP Stack SystemConfig interface
-- [ ] Uses correct batcher hash format (V0: `bytes32(uint256(uint160(address)))`)
-- [ ] Atomic rotation - both values updated or transaction reverts
+- [ ] Compatible with the target rollup configuration contract
+- [ ] Handles payload encoding/decoding without ambiguity
+- [ ] Atomic rotation - all required fields updated or transaction reverts
 
 ### 4. Code Quality Requirements
 
@@ -71,19 +72,19 @@ An adapter MUST meet ALL of the following criteria to be accepted:
 An adapter MUST be rejected if ANY of the following apply:
 
 - Contains malicious code or backdoors
-- Modifies storage other than intended adapter state
+- Contains state-modifying functions (adapters must be view/pure)
 - Makes external calls to untrusted contracts
 - Has unverified source code
 - Version number is not greater than existing registered adapters
 - Does not properly implement the rotation logic
-- Contains upgrade mechanisms that bypass Kleros governance
+- Contains upgrade mechanisms that bypass arbitrator governance (default Kleros)
 
 ## Removal (Clearing) Criteria
 
 A registered adapter MAY be removed if:
 
 - A critical vulnerability is discovered
-- The adapter becomes incompatible with OP Stack updates
+- The adapter becomes incompatible with rollup updates
 - A superior adapter is available and community consensus supports removal
 
 **Note**: The manager accepts adapters with `ClearingRequested` status to allow emergency upgrades while removal is being processed.
